@@ -32,71 +32,6 @@ public sealed partial class SwivalSubagentRunner
     internal static string ExtractFailureReason(string output, int tailChars = 600) =>
         DistillFailure(output, tailChars).Reason;
 
-    // Shared core for ExtractFailureReason and BuildNonzeroExitReason. Returns the
-    // distilled reason AND whether it anchored on a genuine failure marker
-    // (strong/weak signal) rather than falling back to the tail / placeholder. The
-    // flag is what BuildNonzeroExitReason uses to decide whether swival's own output
-    // is diagnostic, or whether it must consult the proxy log instead of echoing a
-    // tail that is really just the prompt.
-    private static (string Reason, bool HasMarker) DistillFailure(string output, int tailChars)
-    {
-        var lines = output.Replace("\r\n", "\n").Split('\n');
-        var kept = new List<string>(lines.Length);
-        var strongFailure = -1;
-        var weakFailure = -1;
-        foreach (var raw in lines)
-        {
-            var line = raw.Trim();
-            if (line.Length == 0)
-                continue;
-            // Drop nono's standard per-run advisories.
-            if (line.Contains("is blocked by '", StringComparison.Ordinal) &&
-                line.Contains("use --bypass-protection", StringComparison.Ordinal))
-                continue;
-            // Drop pure banner/decoration rows (rules, box-drawing, separators).
-            if (line.Trim('=', '-', '─', '━', '•', '*', ' ', '\t').Length == 0)
-                continue;
-            // Drop "Verified N pack(s)" — nono prints it every run regardless of outcome.
-            if (VerifiedPacksLine.IsMatch(line))
-                continue;
-            // Drop a BARE nono advisory token line (e.g. "deny_read_user_home") that printed
-            // without the full "is blocked by … use --bypass-protection" phrase (already
-            // handled above). Match only a line that is ONLY such a token, so a real error
-            // that merely contains the substring is never dropped.
-            if (BareDenyAdvisoryLine.IsMatch(line))
-                continue;
-            // Drop nono's STANDING system-services / keychain advisory and its remediation
-            // hint lines. Unlike the "is blocked by … use --bypass-protection" WARNs above,
-            // nono prints this every run regardless of outcome AND trails it AFTER the test
-            // command's own summary, so without dropping it the tail lands on the advisory
-            // instead of the real failure. This is VR's own sandbox layer's output, so
-            // filtering it is provider-agnostic (no test framework is parsed).
-            if (IsNonoSystemServiceAdvisory(line))
-                continue;
-            if (strongFailure < 0 && HasStrongFailureSignal(line))
-                strongFailure = kept.Count;
-            if (weakFailure < 0 && HasWeakFailureSignal(line))
-                weakFailure = kept.Count;
-            kept.Add(line);
-        }
-
-        if (kept.Count == 0)
-            return (NoDiagnosticOutput, false);
-
-        // Strong signal wins outright; the weak keyword pass is only a fallback so
-        // benign pre-failure lines (e.g. "… 0 errors") can never lead the reason
-        // when a real fatal line exists.
-        var firstFailure = strongFailure >= 0 ? strongFailure : weakFailure;
-
-        // Anchor on the failure-looking line (the start of the error block),
-        // dropping the startup banner that precedes it; otherwise fall back to the
-        // tail of everything that survived filtering.
-        var relevant = firstFailure >= 0
-            ? string.Join('\n', kept.Skip(firstFailure))
-            : string.Join('\n', kept);
-        return (TrimForTail(relevant, tailChars), firstFailure >= 0);
-    }
-
     // Leads the reason when swival yields no usable diagnostic and the failure is
     // (or is presumed) a model-backend error — see BuildNonzeroExitReason.
     private const string ModelCallFailedPrefix = "model call failed";
@@ -171,28 +106,6 @@ public sealed partial class SwivalSubagentRunner
 
         return false; // every surviving line came from our prompt — a prompt echo
     }
-
-    // High-confidence markers: when present, anchor here regardless of any earlier
-    // benign line that merely mentions an error keyword.
-    private static bool HasStrongFailureSignal(string line) =>
-        line.Contains("cannot find binary path", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("command execution failed", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("command not found", StringComparison.OrdinalIgnoreCase) ||
-        // A real test failure is exactly what we want to surface. "Failed " at line
-        // start matches this codebase's failing-test format (see ExtractFailureIds);
-        // \bFAIL\b (uppercase) matches bun/jest "FAIL path/to/test". NOT "N fail" —
-        // a benign "0 failed" summary must never anchor.
-        line.StartsWith("Failed ", StringComparison.Ordinal) ||
-        FailToken.IsMatch(line);
-
-    // Weak keywords, matched only as whole words so substrings like "0 errors" in a
-    // benign info line do not get mis-selected. Used only when no strong signal is
-    // found anywhere in the surviving output.
-    private static readonly Regex WeakFailureKeywords = new(
-        @"\b(error|fatal|traceback|exception|critical)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static bool HasWeakFailureSignal(string line) => WeakFailureKeywords.IsMatch(line);
 
     // nono's standing system-services / keychain advisory and its remediation hint
     // lines (the "Next steps:" block and bare --allow/--read/--write flag suggestions
@@ -282,10 +195,6 @@ public sealed partial class SwivalSubagentRunner
     // A line that is ONLY a bare nono advisory token like "deny_read_user_home".
     private static readonly Regex BareDenyAdvisoryLine = new(
         @"^deny_[a-z0-9_]+\s*$", RegexOptions.Compiled);
-    // Uppercase FAIL as a whole word (bun/jest/vitest failure rows). Case-SENSITIVE
-    // so "failed" inside prose / "Command execution failed" is not matched here.
-    private static readonly Regex FailToken = new(
-        @"\bFAIL\b", RegexOptions.Compiled);
     // A bare nono CLI-flag remediation hint, e.g. "--allow ~/…", "--read-file ~/…",
     // "--write ~/…". Anchored at line start (line is pre-trimmed) so a real diagnostic
     // that merely contains such a token mid-line is never dropped.

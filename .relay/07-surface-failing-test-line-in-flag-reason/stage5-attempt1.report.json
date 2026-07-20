@@ -1,0 +1,361 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-20T03:44:32.924564+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 07-surface-failing-test-line-in-flag-reason\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Anchor verify flag reasons on the failing test line, not the log tail\n\nWhen a stage-10/11 verify goes red, everything a human sees \u2014 the LATEST RUN\nFAILED banner, the flag reason, NEEDS-REVIEW \u2014 is built from\n`ExtractFailureReason`'s distillation of the test log. Test frameworks that\nrun suites concurrently (Swift Testing in the patternsmith incident) print\nthe failing test mid-log and keep streaming passing lines after it, no\ncurrent failure anchor matches their lowercase `failed \u2026with N issue` rows,\nand the distiller falls back to the last-600-chars tail. The surfaced\n\"reason\" was `\u2026fter 0.198 seconds.` \u2014 a mid-word fragment of a PASSING\ntest's duration line \u2014 while the actual failure never appeared in the GUI.\nMake the first line of a distilled reason be the failing line itself.\n\n### Evidence (2026-07-19 patternsmith `better-explain-the-1-stuff` flag)\n\n- Flag reason shown in GUI + NEEDS-REVIEW: `verify failed after 3 fix-verify\n  attempts \u2014 last: \u2026fter 0.198 seconds. (see .relay/better-explain-the-1-\n  stuff/stage11-attempt3.verify-output.txt)`. The fragment is the tail of\n  `\udbc4\udc5b Test contextSnippetExtractsSurroundingLines() passed after 0.198\n  seconds.` \u2014 a passing test.\n- The real failure sat mid-log in the 746-line verify output: `\udbc2\udc84  Test\n  everySourceFileUnder200Lines() recorded an issue at\n  FileSizeTests.swift:19:9: Expectation failed: (offenders \u2192\n  [\"Sources/RegexUI/ViewModels/AppModel.swift \u2014 210 lines\"]).isEmpty \u2192\n  false`, plus the run summary `\udbc2\udc84  Test run with 244 tests in 25 suites\n  failed after 0.437 seconds with 1 issue.` near EOF.\n- `ProcessRunners.Diagnostics.cs:32` `ExtractFailureReason` \u2192\n  `DistillFailure`. Strong anchors (`:177-186`): `cannot find binary path`,\n  `command execution failed`, `command not found`, line-start `Failed `,\n  uppercase `\\bFAIL\\b` (bun/jest). Weak anchors (`:191-193`): whole-word\n  `error|fatal|traceback|exception|critical`. Swift Testing failure rows\n  (`recorded an issue`, `Expectation failed`, lowercase `failed after \u2026\n  with 1 issue`) match NONE of these \u2014 lowercase fail is deliberately\n  unanchored so a benign `0 failed` summary can never anchor.\n- With no anchor, `DistillFailure` (`:94-97`) joins ALL surviving lines and\n  `TrimForTail` (`ProcessRunners.Helpers.cs:125-128`) keeps the LAST 600\n  chars with a `\u2026` prefix, entering mid-line. `RelayDriver.VerifyFix.cs:236-\n  238` then puts only the reason's FIRST line (capped at 200 chars) into the\n  flag \u2014 so even though the `Test run \u2026 failed` summary was inside the tail\n  window, the surfaced line was the mid-word passing-test fragment.\n- Anchoring alone is NOT enough: even when an anchor matches,\n  `kept.Skip(firstFailure)` \u2192 `TrimForTail` still keeps the tail of the\n  anchored block. In a concurrent log the failure line is followed by\n  hundreds of passing lines, so tail-keeping would evict it again. The head\n  of the anchored block must win.\n- Downstream consumers of the same reason string:\n  `RelayDriver.VerifyObservability.cs:35-36` (verify events + artifacts),\n  `RelayDriver.VerifyFix.cs:186,189-192` (per-attempt signatures \u2014 see\n  companion task `08-identical-failure-advisory-robust-signatures`),\n  `RelayDriver.VerifyFix.cs:232-244` (flag reason / NEEDS-REVIEW),\n  `RelayDriver.FailureOutput.cs:28` (fix-verify agent prompt tail). Fixing\n  the distiller fixes all four.\n\n### What to build\n\n1. **Failure-row anchors for concurrent-runner output.** Extend the strong\n   marker list with shapes that match real failure rows and cannot match\n   benign summaries: `recorded an issue`, `Expectation failed`, a\n   `failed after <digits\u2026> with <digits> issue(s)` shape, and a\n   `Test run \u2026 failed` summary shape. Follow the existing philosophy \u2014 a\n   marker list (like the bun/jest `\\bFAIL\\b` precedent), not a\n   per-framework log parser. `0 failed`, `0 errors`, and `passed after \u2026`\n   must remain unanchorable, same as the existing contract documented at\n   `ProcessRunners.Diagnostics.cs:183-186`.\n2. **Head-first extraction when anchored.** When an anchor exists, the\n   distilled reason starts AT the first anchor line and keeps FOLLOWING\n   lines up to the char budget (head of the anchored block), instead of\n   `TrimForTail`'s tail-keep. The unanchored fallback keeps today's tail\n   behavior. Result: the reason's first line is the failing line, so the\n   200-char flag cut, the NEEDS-REVIEW headline, and the GUI banner all\n   stay informative without further changes.\n3. **Multiple failing rows (optional).** When several distinct anchor lines\n   exist (multiple failing tests), prefer a budget-capped join of the anchor\n   lines over one contiguous block, so the reason names each failing test.\n   Skip if it complicates the head-first change \u2014 one failing line is\n   already the win.\n4. **Fixture regression test.** Reconstruct the incident's log shape as a\n   test fixture (interleaved `passed after` lines, one mid-log\n   `recorded an issue` block, a passing tail, `Test run \u2026 failed` near EOF,\n   a trailing `{ \"session\": }` epilogue) and assert the distilled reason's\n   first line names `everySourceFileUnder200Lines`.\n\n### Constraints\n\n- Marker extension only \u2014 no per-framework parsers. Do not rely solely on\n  the `\udbc2\udc84`/`\udbc4\udc5b` glyphs (private-use SF Symbols); word-shape markers must\n  carry the match on their own.\n- Existing anchors and their tests keep passing. `BuildNonzeroExitReason`\n  shares `DistillFailure` \u2014 its marker-vs-prompt-echo behavior must not\n  regress.\n- `ProcessRunners.Diagnostics.cs` is ~294 lines against the 300-line file\n  guard \u2014 the new markers/extraction likely need a partial-class split.\n- Reason strings stay within existing budgets (600-char distill cap,\n  200-char flag first-line cap); no consumer signature changes.\n\n### Tests (red first)\n\n- Incident fixture (above): first line of the reason contains\n  `everySourceFileUnder200Lines` and does not contain `passed after`; the\n  `(see \u2026verify-output.txt)` pointer behavior is unchanged.\n- Anchored-but-buried regression: a log whose failure line is followed by\n  more than 600 chars of passing lines still yields the failure line FIRST.\n- Benign guard: output containing only `Executed 0 tests, with 0 failures`\n  plus passing lines anchors nothing and keeps today's tail fallback.\n- Existing strong-marker fixtures (`command not found`, uppercase `FAIL`)\n  behave exactly as before.\n\n### Verification\n\n- `./visual-relay check` fully green.\n- Manual (optional): force a mid-log test failure in a sandbox project, run\n  a verify, confirm the GUI banner and NEEDS-REVIEW name the failing test.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/ProcessRunners.Diagnostics.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.FailureDistiller.cs\ntests/VisualRelay.Tests/ExtractFailureReasonConcurrentTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Fix ExtractFailureReason/DistillFailure to produce head-first failure-anchored reasons instead of tail-only fallback, by extending the strong-marker list with Swift Testing patterns and switching from TrimForTail (tail-keep) to head-first extraction when any anchor matches. This ensures the flag reason, NEEDS-REVIEW headline, and GUI banner show the actual failing test line. A fixture regression test mirrors the patternsmith incident (concurrent-test log with interleaved passed/failed lines).\",\n  \"options\": [\n    \"Option A (recommended): Head-first extraction with new anchors \u2014 extend strong markers with `recorded an issue`, `Expectation failed`, `failed after \u2026 with \u2026 issue(s)`, `Test run \u2026 failed`; when anchored, extract from first anchor line forward (budget-capped) instead of tail-only; unanchored fallback unchanged; optionally join multiple distinct anchor lines. Needs partial-class split (new ProcessRunners.FailureDistiller.cs) due to ~294-line file guard.\",\n    \"Option B: Post-extraction re-anchor \u2014 keep tail-based DistillFailure as-is, then re-scan the full log for the first anchor line and prepend it to the reason. Minimal refactoring but doesn't cleanly satisfy 'first line = failing line' \u2014 the tail fragment remains in the budget. Simpler but less satisfying.\",\n    \"Option C: Three-tier line-oriented extractor \u2014 Tier 1 (head-first, strong anchors), Tier 2 (head-first, weak anchors), Tier 3 (tail fallback). Clean stratification and naturally supports multi-failure, but more churn and changes weak-anchor behavior too, requiring broader regression coverage.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The core issue is in `ProcessRunners.Diagnostics.cs` (294 lines, at the 300-line guard). `DistillFailure` (lines 41-98) filters noise lines, then anchors on strong markers (`HasStrongFailureSignal`, line 177-186: `cannot find binary path`, `command execution failed`, `command not found`, `line.StartsWith(\\\"Failed \\\")`, `\\\\bFAIL\\\\b` uppercase). When anchored (line 94-95), it joins ALL surviving lines from the anchor onward and passes them to `TrimForTail` (in `Helpers.cs`, line 125-129), which keeps only the LAST 600 chars. In concurrent test output (Swift Testing), the failure row is mid-log followed by hundreds of passing lines, so tail-keeping evicts the actual failure. The distiller then falls back to the unanchored tail (line 96), which hits none of the current markers because Swift Testing uses lowercase `failed \u2026with N issue` and `recorded an issue` \u2014 not uppercase `FAIL`, not `Failed ` at line start. The flag reason in `VerifyFix.cs:232-244` takes only the first line (capped at 200 chars), producing a mid-word fragment of a passing test's duration line.\\n\\nThe fix needs: (1) extend `HasStrongFailureSignal` with Swift Testing markers (`recorded an issue`, `Expectation failed`, `failed after \u2026 with \u2026 issue(s)`, `Test run \u2026 failed`) \u2014 these must not match `0 failed`, `0 errors`, `passed after \u2026`; (2) when anchored, extract HEAD-first from the anchor line forward (budget-capped) instead of tail-only, so the failure line is the first line of the reason; (3) unanchored fallback keeps today's tail behavior; (4) a new partial class file (e.g. `ProcessRunners.FailureDistiller.cs`) to stay under the 300-line guard since Diagnostics.cs is already at 294 lines.\\n\\nExisting tests that must keep passing: 6 `ExtractFailureReason_*` tests in `SwivalSubagentRunnerToolPreflightTests.cs`, 4 in `ExtractFailureReasonDistillTests.cs`, 5 `BuildNonzeroExitReason_*` tests in `ProxyLogFailureReasonTests.cs`, 2 `TrimForTail_*` tests in `VerifyOutputTailAndPathTests.cs`, and `RelayDriverVerifyFixDistillTests.cs`. The head-first change preserves existing tests because their anchored blocks (traceback, single-line errors) all fit within the 600-char budget when taken head-first.\\n\\nDownstream consumers of the reason string: `RelayDriver.VerifyObservability.cs:35-36`, `RelayDriver.FailureOutput.cs:28`, `RelayDriver.VerifyFix.cs:186,189-192,232-244`. All benefit from the same fix \u2014 no consumer signature changes needed.\\n\\n`BuildNonzeroExitReason` shares `DistillFailure` and relies on the `HasMarker` boolean for marker-vs-prompt-echo routing \u2014 that contract must not regress.\",\n  \"constraints\": [\n    \"Marker extension only \u2014 no per-framework parsers. Do not rely on PUA glyphs (\udbc2\udc84/\udbc4\udc5b); word-shape markers must carry the match themselves.\",\n    \"New markers must NOT anchor on benign summaries: `0 failed`, `0 errors`, `passed after \u2026`, `Executed 0 tests, with 0 failures` must remain unanchorable.\",\n    \"Existing anchors and their tests must keep passing: `cannot find binary path`, `command execution failed`, `command not found`, `Failed ` at line start, `\\\\bFAIL\\\\b` uppercase, and weak keywords (`error|fatal|traceback|exception|critical`).\",\n    \"`BuildNonzeroExitReason` shares `DistillFailure` \u2014 its marker-vs-prompt-echo behavior must not regress.\",\n    \"`ProcessRunners.Diagnostics.cs` is ~294 lines against the 300-line file guard \u2014 the new markers/extraction need a partial-class split into a new file.\",\n    \"Reason strings stay within existing budgets: 600-char distill cap (ExtractFailureReason default), 200-char flag first-line cap (VerifyFix.cs:236-238).\",\n    \"Unanchored fallback must keep the existing tail-behavior (TrimForTail) unchanged.\",\n    \"When anchored, the first line of the distilled reason must be the failing test line itself (head-first extraction from the anchor).\",\n    \"The `(see \u2026verify-output.txt)` pointer behavior is unchanged.\",\n    \"All existing `ExtractFailureReason_*`, `BuildNonzeroExitReason_*`, and `TrimForTail_*` tests must pass without modification.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Confirmed root cause with two interacting mechanisms in ProcessRunners.Diagnostics.cs, plus one amplifying consumer:\\n\\n1. UNANCHORED: HasStrongFailureSignal (lines 177-186) matches five patterns \u2014 'cannot find binary path', 'command execution failed', 'command not found', line-start 'Failed ', and uppercase '\\\\bFAIL\\\\b' \u2014 plus HasWeakFailureSignal (lines 191-193) matches word-boundary 'error|fatal|traceback|exception|critical'. Swift Testing's concurrent-runner failure rows \u2014 'recorded an issue', 'Expectation failed', lowercase 'failed after \u2026 with N issue(s)', 'Test run \u2026 failed' \u2014 match NONE of these. The lowercase 'failed' is deliberately excluded from weak keywords (see comment at lines 183-186: 'a benign \\\"0 failed\\\" summary must never anchor'), which also excludes the real Swift Testing failure summary. With no anchor matched, DistillFailure falls through to the unanchored path (line 96): string.Join('\\\\n', kept) \u2192 TrimForTail. TrimForTail (ProcessRunners.Helpers.cs:125-128) keeps only the LAST tailChars (600) characters, prepending '\u2026' when truncated. In a 746-line concurrent test log where the real failure sits mid-log and hundreds of passing lines follow, the kept tail is a fragment of a passing test's duration line.\\n\\n2. ANCHORED-BUT-BURIED: Even when an anchor DOES match, DistillFailure at lines 94-95 still does: string.Join('\\\\n', kept.Skip(firstFailure)) \u2192 TrimForTail(relevant, tailChars). TrimForTail keeps the TAIL of the anchored block. In concurrent output the failure line is followed by hundreds of passing lines, so the 600-char tail evicts the anchor line again. The head of the anchored block must win, not the tail.\\n\\n3. FIRST-LINE-ONLY CONSUMER: RelayDriver.VerifyFix.cs:236-238 takes lastReason.Split('\\\\n')[0] capped at 200 chars for the flag reason. Even when the tail accidentally includes the 'Test run \u2026 failed' summary, the first line of the tail is typically a mid-word fragment of whatever passing-test duration line the tail window started with (e.g. '\u2026fter 0.198 seconds.' from '\u2026 Test contextSnippetExtractsSurroundingLines() passed after 0.198 seconds.').\\n\\n4. Downstream consumers of the same broken reason string: RelayDriver.VerifyObservability.cs:35-36 (verify_result events), RelayDriver.FailureOutput.cs:28 (fix-verify agent prompt tail), RelayDriver.VerifyFix.cs:186,189-192 (per-attempt verify signatures), RelayDriver.VerifyFix.cs:232-244 (flag reason/NEEDS-REVIEW). Fixing the distiller fixes all four.\\n\\n5. File guard: ProcessRunners.Diagnostics.cs is 294 lines against a 300-line guard. A partial-class split (like ProcessRunners.LaunchFailure.cs already used for the same reason) is needed for new markers/extraction logic.\",\n  \"excerpts\": [\n    \"ProcessRunners.Diagnostics.cs:41-97 DistillFailure \u2014 lines 94-97: when anchored, joins kept.Skip(firstFailure) then TrimForTail (tail-keep); when unanchored, joins all kept then TrimForTail. Both paths use tail-keeping, so any failure followed by >600 chars of output is evicted.\",\n    \"ProcessRunners.Diagnostics.cs:177-186 HasStrongFailureSignal \u2014 five patterns: 'cannot find binary path', 'command execution failed', 'command not found', line.StartsWith('Failed '), \\\\bFAIL\\\\b uppercase. Swift Testing rows ('recorded an issue', 'Expectation failed', lowercase 'failed after \u2026 with \u2026 issue(s)') match none.\",\n    \"ProcessRunners.Diagnostics.cs:188-193 HasWeakFailureSignal \u2014 word-boundary regex for error|fatal|traceback|exception|critical. Lowercase 'failed' is deliberately excluded (comment lines 183-186: 'a benign \\\"0 failed\\\" summary must never anchor').\",\n    \"ProcessRunners.Helpers.cs:125-128 TrimForTail \u2014 keeps the LAST tailChars characters, prepending '\u2026' when truncated. The real error is assumed to be at the tail, which is true for sandbox-banner output but false for concurrent test output.\",\n    \"RelayDriver.VerifyFix.cs:232-244 \u2014 puts only the reason's first line (capped at 200 chars) into the flag. With a tail-only reason starting mid-word on a passing test's duration line, the surfaced flag reason is a fragment like '\u2026fter 0.198 seconds.'\",\n    \"RelayDriver.VerifyObservability.cs:35-36 \u2014 calls ExtractFailureReason for verify_result events and artifacts.\",\n    \"RelayDriver.FailureOutput.cs:28 \u2014 calls ExtractFailureReason for the fix-verify agent's in-prompt tail.\",\n    \"ProcessRunners.LaunchFailure.cs:1-6 \u2014 precedent for partial-class split from Diagnostics.cs to stay under the 300-line file guard.\",\n    \"Existing tests in SwivalSubagentRunnerToolPreflightTests.cs (7 ExtractFailureReason_* tests), ExtractFailureReasonDistillTests.cs (4), ProxyLogFailureReasonTests.cs (5 BuildNonzeroExitReason_* tests), VerifyOutputTailAndPathTests.cs (2 TrimForTail_* tests), RelayDriverVerifyFixDistillTests.cs (1) \u2014 all produce anchored blocks fitting within 600 chars when taken head-first, so a head-first change preserves them.\"\n  ],\n  \"repro\": \"Reproduction scenario matching the patternsmith incident:\\nInput: a 746-line concurrent test log where line ~300 is '\u2026 Test everySourceFileUnder200Lines() recorded an issue at FileSizeTests.swift:19:9: Expectation failed: (offenders \u2192 [\u2026]).isEmpty \u2192 false', followed by ~400 lines of 'Test \u2026 passed after \u2026' lines, then near EOF '\u2026 Test run with 244 tests in 25 suites failed after 0.437 seconds with 1 issue.', then a trailing '{\\\"session\\\": \u2026}' epilogue.\\n\\nCurrent behavior: DistillFailure finds no anchor (none of the 5 strong or 4 weak patterns match), joins all surviving lines, TrimForTail keeps last 600 chars \u2014 which is a fragment like '\u2026fter 0.198 seconds.' from a passing test's duration line. VerifyFix.cs takes that fragment's first 200 chars as the flag reason.\\n\\nExpected: reason's first line is '\u2026 Test everySourceFileUnder200Lines() recorded an issue \u2026' (the failing test name survives).\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Summary\\n\\nExtend `HasStrongFailureSignal` with three Swift Testing word-shape markers (`recorded an issue`, `Expectation failed`, and a `\\\\bfailed\\\\s+after\\\\s+\\\\d+\u2026with\\\\s+\\\\d+\\\\s+issue` regex) that match real failure rows but cannot match benign `0 failed` or `passed after` summaries. Switch `DistillFailure` from tail-keep (`TrimForTail`) to head-keep (`TrimForHead`) when any anchor matches \u2014 so the failure line is the first line of the distilled reason. Unanchored fallback keeps today's tail behavior. Move `DistillFailure`, `HasStrongFailureSignal`, and `FailToken` into a new partial-class file `ProcessRunners.FailureDistiller.cs` to stay under the 300-line file guard. Add 3 fixture regression tests.\\n\\n## Step-by-step\\n\\n### Step 1: Create `ProcessRunners.FailureDistiller.cs`\\n\\nNew file at `src/VisualRelay.Core/Execution/ProcessRunners.FailureDistiller.cs` with:\\n- `namespace VisualRelay.Core.Execution; partial class SwivalSubagentRunner`\\n- `DistillFailure` moved from Diagnostics.cs lines 41-98, with the anchored path at lines 91-97 changed to branch: when `firstFailure >= 0`, join `kept.Skip(firstFailure)` and pass to new `TrimForHead`; when unanchored, join all `kept` and pass to `TrimForTail` (unchanged).\\n- `HasStrongFailureSignal` moved from lines 177-186, extended with 3 new markers: `line.Contains(\\\"recorded an issue\\\", Ordinal)`, `line.Contains(\\\"Expectation failed\\\", Ordinal)`, and `SwiftTestFailureRow.IsMatch(line)`.\\n- `FailToken` regex moved from lines 287-288 (unchanged).\\n- New `SwiftTestFailureRow` compiled regex: `@\\\"\\\\bfailed\\\\s+after\\\\s+\\\\d+(?:\\\\.\\\\d+)?\\\\s+seconds?\\\\s+with\\\\s+\\\\d+\\\\s+issue\\\"`.\\n- New `TrimForHead` helper: keeps first `headChars` chars, appends `\\\"\u2026\\\"` when truncated.\\n\\n### Step 2: Edit `ProcessRunners.Diagnostics.cs`\\n\\nRemove three blocks, keeping everything else intact:\\n- `DistillFailure` method (lines 41-98)\\n- `HasStrongFailureSignal` method (lines 177-186)\\n- `FailToken` field (lines 287-288)\\n\\n### Step 3: Create `ExtractFailureReasonConcurrentTests.cs`\\n\\nNew file at `tests/VisualRelay.Tests/ExtractFailureReasonConcurrentTests.cs` with 3 test methods:\\n1. `ConcurrentTestLog_FirstLineNamesFailingTest` \u2014 patternsmith incident fixture (~5 setup lines + 200 passing loop + summary + epilogue). Asserts first line contains `everySourceFileUnder200Lines`, does NOT contain `passed after`, reason contains `recorded an issue`.\\n2. `AnchoredButBuried_FailureLineSurvivesLongPassingTail` \u2014 `recorded an issue` line followed by 300+ `passed after` lines. Asserts first line names the failure test and `recorded an issue`, does NOT contain `passed after`.\\n3. `BenignZeroFailedAndPassing_KeepsTailFallback` \u2014 benign-only output. Asserts nothing anchors, tail fallback keeps wall-clock cause, `0 tests` not present.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/ProcessRunners.Diagnostics.cs\",\n    \"+src/VisualRelay.Core/Execution/ProcessRunners.FailureDistiller.cs\",\n    \"+tests/VisualRelay.Tests/ExtractFailureReasonConcurrentTests.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "The tests compile and fail exactly as expected. The two incident-regression tests correctly demonstrate the bug:\n\n1. **`ConcurrentTestLog_FirstLineNamesFailingTest`** \u2014 fails with `\u2026fter 0.091 seconds.` (mid-word passing-test fragment), `everySourceFileUnder200Lines` not found. This mirrors the patternsmith incident.\n\n2. **`AnchoredButBuried_FailureLineSurvivesLongPassingTail`** \u2014 fails with tail fragment, `buriedFailure` not found. Confirms the tail-keep evicts the failure line.\n\n3. **`BenignZeroFailedAndPassing_KeepsTailFallback`** \u2014 passes (existing behavior, unanchored fallback unchanged).\n\n4. **`ExistingStrongMarker_CommandNotFound_StillBehavesAsBefore`** \u2014 passes.\n\n5. **`ExistingStrongMarker_UppercaseFail_StillBehavesAsBefore`** \u2014 passes.\n\nAll 5 tests compiled, and the 2 targeted regression tests are red \u2014 the required pre-implementation state.\n\n```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/ExtractFailureReasonConcurrentTests.cs\"\n  ],\n  \"rationale\": \"5 test methods written: 2 incident-regression tests (ConcurrentTestLog_FirstLineNamesFailingTest, AnchoredButBuried_FailureLineSurvivesLongPassingTail) demonstrating the bug \u2014 both fail with mid-word passing-test tail fragments instead of the actual failure line. 1 benign-guard test (BenignZeroFailedAndPassing_KeepsTailFallback) passes confirming unanchored fallback unchanged. 2 back-compat tests (ExistingStrongMarker_CommandNotFound, ExistingStrongMarker_UppercaseFail) pass confirming existing anchors preserved. All compile and produce the expected red/green split.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 10,
+    "tool_calls_total": 18,
+    "tool_calls_succeeded": 18,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 11,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 10,
+    "total_llm_time_s": 74.795,
+    "prompt_cache": {
+      "cached_tokens": 229120,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 14.85,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.522,
+      "prompt_tokens_est": 9657,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Diagnostics.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 18437
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.LaunchFailure.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1654
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12878
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.565,
+      "prompt_tokens_est": 17697,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ExtractFailureReason_",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.203,
+      "result_length": 1312
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "DistillFailure",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.176,
+      "result_length": 341
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TrimForTail_",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.175,
+      "result_length": 214
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.434,
+      "prompt_tokens_est": 18259,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ExtractFailureReasonDistillTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6685
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SwivalSubagentRunnerToolPreflightTests.cs",
+        "offset": 120,
+        "limit": 150
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7681
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/VerifyOutputTailAndPathTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5729
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.289,
+      "prompt_tokens_est": 23263,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "BuildNonzeroExitReason_"
+      },
+      "succeeded": true,
+      "duration_s": 0.176,
+      "result_length": 593
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 17362
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.125,
+      "prompt_tokens_est": 27781,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverVerifyFixDistillTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4632
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ProxyLogFailureReasonTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9252
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 36.209,
+      "prompt_tokens_est": 31365,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ExtractFailureReasonConcurrentTests.cs",
+        "content": "using VisualRelay.Core.Execution;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Regression tests for concurrent-runner (Swift Testing style) verify-output\n/// distilling: mid-log failure rows must anchor the reason so the GUI banner,\n/// NEEDS-REVIEW headline, and flag reason actually name the failing test.\n/// </summary>\npublic sealed class ExtractFailureReasonConcurrentTests\n{\n    // \u2500\u2500 Incident fixture \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void ConcurrentTestLog_FirstLineNamesFailingTest()\n    {\n        // Reconstruct the patternsmith incident's log shape:\n        // - A small setup prefix\n        // - ~200 \"Test \u2026 passed after \u2026\" lines\n        // - One mid-log \"Test \u2026 recorded an issue \u2026 Expectation failed: \u2026\"\n        // - Another ~200 \"Test \u2026 passed after \u2026\" lines (passing tail)\n        // - A \"Test run \u2026 failed after \u2026 with 1 issue.\" summary near EOF\n        // - A trailing JSON session epilogue\n        // The real failure is in the MIDDLE of a 746-line concurrent log.\n        var lines = new List<string>();\n\n        // Setup / banner lines\n        lines.Add(\"Build complete!\");\n        lines.Add(\"Test run started\u2026\");\n\n        // ~200 passing tests BEFORE the failure (mid-log)\n        for (var i = 1; i <= 200; i++)\n            lines.Add($\"Test passingTest{i:D4}() passed after 0.{i % 100:D3} seconds.\");\n\n        // The real failure line \u2014 mid-log, the one that must survive\n        lines.Add(\"Test everySourceFileUnder200Lines() recorded an issue at FileSizeTests.swift:19:9: Expectation failed: (offenders \u2192 [\\\"Sources/RegexUI/ViewModels/AppModel.swift \u2014 210 lines\\\"]).isEmpty \u2192 false\");\n\n        // ~200 passing tests AFTER the failure (passing tail)\n        for (var i = 201; i <= 400; i++)\n            lines.Add($\"Test passingTest{i:D4}() passed after 0.{i % 100:D3} seconds.\");\n\n        // The run summary near EOF\n        lines.Add(\"Test run with 244 tests in 25 suites failed after 0.437 seconds with 1 issue.\");\n\n        // A trailing JSON epilogue (session / telemetry)\n        lines.Add(\"{\\\"session\\\": {\\\"id\\\": \\\"abc123\\\", \\\"total\\\": 244}}\");\n\n        var output = string.Join('\\n', lines);\n\n        var reason = SwivalSubagentRunner.ExtractFailureReason(output);\n\n        // The first line of the reason MUST name the failing test.\n        Assert.Contains(\"everySourceFileUnder200Lines\", reason, StringComparison.Ordinal);\n\n        // The first line must NOT be a mid-word fragment of a passing test's duration.\n        Assert.DoesNotContain(\"passed after\", reason.Split('\\n')[0], StringComparison.Ordinal);\n\n        // The reason must contain the actual failure anchor text.\n        Assert.Contains(\"recorded an issue\", reason, StringComparison.Ordinal);\n\n        // The reason should also contain the run summary (nearby in the anchored block).\n        Assert.Contains(\"Test run\", reason, StringComparison.Ordinal);\n    }\n\n    // \u2500\u2500 Anchored-but-buried regression \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void AnchoredButBuried_FailureLineSurvivesLongPassingTail()\n    {\n        // A \"recorded an issue\" failure line followed by MORE than 600 chars of\n        // passing lines. The failure must still be the FIRST line of the reason;\n        // tail-keeping would evict it entirely.\n        var lines = new List<string>\n        {\n            \"Test buriedFailure() recorded an issue at Tests.swift:5:1: Expectation failed: (x \u2192 1) == (expected \u2192 2)\",\n        };\n\n        // > 1000 chars of passing-test noise after the failure\n        for (var i = 1; i <= 50; i++)\n            lines.Add($\"Test passing{i:D4}() passed after 0.{i:D3} seconds. Padding to make this line longer so the tail definitely exceeds 600 chars. Extra filler here.\");\n\n        var output = string.Join('\\n', lines);\n\n        var reason = SwivalSubagentRunner.ExtractFailureReason(output);\n\n        // The first line must be the failure test name \u2014 not a mid-word passing fragment.\n        Assert.Contains(\"buriedFailure\", reason, StringComparison.Ordinal);\n        Assert.Contains(\"recorded an issue\", reason, StringComparison.Ordinal);\n\n        // The first line must NOT be from a \"passed after\" line.\n        Assert.DoesNotContain(\"passed after\", reason.Split('\\n')[0], StringComparison.Ordinal);\n    }\n\n    // \u2500\u2500 Benign guard \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void BenignZeroFailedAndPassing_KeepsTailFallback()\n    {\n        // Output containing only \"0 failed\" summaries and passing lines \u2014\n        // nothing should anchor. The distiller falls back to the existing\n        // tail behavior (TrimForTail).\n        var output = string.Join('\\n', new[]\n        {\n            \"Verified 1 pack(s)\",\n            \"Executed 0 tests, with 0 failures (0 unexpected) in 0.000 seconds\",\n            \"Test Files  12 passed (12)\",\n            \"Tests  340 passed | 0 failed\",\n            \"wall-clock ceiling exceeded: 61s > 60s budget\",\n        });\n\n        var reason = SwivalSubagentRunner.ExtractFailureReason(output);\n\n        // The non-test gate line (the real cause) survives as the tail.\n        Assert.Contains(\"wall-clock ceiling exceeded\", reason, StringComparison.Ordinal);\n\n        // Benign summaries must NOT be present \u2014 they were noise-dropped or\n        // are just part of the tail.\n        Assert.DoesNotContain(\"Verified 1 pack(s)\", reason, StringComparison.Ordinal);\n\n        // The \"0 failed\" / \"0 failures\" summary must NOT anchor.\n        // (Today: benign. After the change: still benign \u2014 the new markers\n        // must not match these.)\n    }\n\n    // \u2500\u2500 Existing strong-marker unchanged \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void ExistingStrongMarker_CommandNotFound_StillBehavesAsBefore()\n    {\n        // The existing strong marker \"command not found\" must anchor and\n        // lead the reason exactly as it does today. The head-first change\n        // preserves this because the anchored block fits within the budget.\n        var output = string.Join('\\n', new[]\n        {\n            \"WARN '/Users/me/.ssh' is blocked by 'deny_credentials'; use --bypass-protection /Users/me/.ssh to allow access\",\n            \"nono: command not found: swival\",\n        });\n\n        var reason = SwivalSubagentRunner.ExtractFailureReason(output);\n\n        Assert.Contains(\"command not found\", reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"bypass-protection\", reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"deny_credentials\", reason, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public void ExistingStrongMarker_UppercaseFail_StillBehavesAsBefore()\n    {\n        // Uppercase \\bFAIL\\b (bun/jest output) must anchor and lead the\n        // reason exactly as before.\n        var output = string.Join('\\n', new[]\n        {\n            \"bun test v1.x\",\n            \"FAIL src/__tests__/JobFinder.test.ts\",\n            \"  Expected 3 but got 0\",\n        });\n\n        var reason = SwivalSubagentRunner.ExtractFailureReason(output);\n\n        Assert.Contains(\"FAIL\", reason, StringComparison.Ordinal);\n        Assert.Contains(\"JobFinder\", reason, StringComparison.Ordinal);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 102
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.672,
+      "prompt_tokens_est": 33755,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2661
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TargetedTestCommand|targeted_test_command|TestCommand",
+        "include": "*.cs",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.065,
+      "result_length": 10762
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.095,
+      "prompt_tokens_est": 37319,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/xunit.runner.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 221
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.063,
+      "prompt_tokens_est": 37468,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~ExtractFailureReasonConcurrentTests\" --no-restore 2>&1 | tail -60",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 14.046,
+      "result_length": 3364
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 10.822,
+      "prompt_tokens_est": 38516,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
