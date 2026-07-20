@@ -1,0 +1,897 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-20T03:18:23.512029+00:00",
+  "task": "# Relay stage 2: Research\nTask: 06-windowless-control-handler-tests\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Make the control-API handler tests windowless and leave the headless UI collection\n\n`ControlServerKestrelHandlerTests` are in-memory handler tests (\"no sockets,\nno ports\") yet every request helper inflates a full `MainWindow` on the single\nshared headless dispatcher \u2014 the serial lane all ~380 `[AvaloniaFact]` tests\nqueue through. The handler tests don't render anything: the window exists only\nbecause `ControlApi`'s constructor demands one (it serves the `/screenshot`\nroute). Give `ControlApi` a windowless mode, drop these tests to plain\n`[Fact]`, and shrink the serial floor every UI test shares.\n\n### Evidence (2026-07-19 slow-test investigation)\n\n- `tests/VisualRelay.Tests/ControlServerKestrelHandlerTests.cs:17-33` \u2014 the\n  class is `[Collection(\"Headless\")]`; `InvokeAsync` builds\n  `new MainWindowViewModel(...)`, `new MainWindow { DataContext = vm }`, and\n  `new ControlApi(vm, window)` PER CALL, then exercises\n  `ControlServer.BuildHandler` against a `DefaultHttpContext`. The class doc\n  itself says \"no sockets, no ports\".\n- The \"Headless\" collection is one serial xunit collection sharing one\n  dispatcher thread across ~60 files / ~380 tests (`HeadlessTestApp.cs`,\n  `HeadlessCollectionDefinition.cs`) \u2014 every needless `MainWindow` XAML\n  inflate lengthens the queue for all of them.\n- Measured: `UnknownRoute_Returns404_Json` reported 20s in the 2026-07-18/19\n  host run, 0.0s in the 2026-07-12 host run (pure queue variance), and 0.25s\n  in a solo class run (first-test app/XAML init; siblings 0.01-0.02s).\n- Repo convention, AGENTS.md:35-43: UI tests instantiate the minimal slice,\n  and `SplitGuardVerificationTests.WholeAppBoot.cs:130`\n  (`NoTestFile_BootsWholeAppOutsideAllowlist`) enforces an allowlist for\n  whole-app boots. Plain-`[Fact]` precedent for VM construction off the\n  dispatcher: `MainWindowViewModelTests`.\n\n### What to build\n\n1. **Windowless `ControlApi`.** Make the window collaborator optional at the\n   `ControlApi` seam (nullable parameter or `Func<MainWindow?>` \u2014 pick\n   whichever matches its current field usage; verify the window is consumed\n   only by the screenshot path before proceeding, and if any other route\n   touches it, route that access through the same null-guard). When absent,\n   `/screenshot` returns `503` with a one-line JSON body naming the reason\n   (`window unavailable`). Production wiring in `App.axaml.cs` continues to\n   pass the real window, so shipped behavior is unchanged.\n2. **Windowless tests.** `ControlServerKestrelHandlerTests.InvokeAsync` stops\n   constructing `MainWindow` and passes the windowless form; the class drops\n   `[Collection(\"Headless\")]` and its facts become plain `[Fact]`\n   (`MainWindowViewModel` construction does not need the dispatcher).\n3. **Allowlist shrink.** Remove the class from the whole-app allowlist in\n   `SplitGuardVerificationTests.WholeAppBoot.cs` so the guard forbids it from\n   regressing to a `MainWindow` boot.\n4. **Screenshot coverage mapping.** The screenshot route keeps real-window\n   coverage wherever it lives today (check `ControlServerKestrelTests` /\n   screenshot-related tests); add the new 503 unit test for the windowless\n   branch. Record the name-by-name mapping in the run summary.\n5. **Bounded audit.** List (run summary only, no fixes beyond clear cases) any\n   other `[Collection(\"Headless\")]` class that constructs `MainWindow` yet\n   never renders or asserts on visuals \u2014 candidates for a follow-up task.\n\n### Constraints\n\n- Production `/screenshot` behavior unchanged; only the no-window branch is\n  new, and only tests exercise it.\n- Coverage is non-negotiable: no test deleted, skipped, or weakened; every\n  reshaped test keeps its name or is mapped name-by-name.\n- Keep files under the 300-line guard.\n\n### Tests (red first)\n\n- New unit test: handler built with no window \u2192 `GET /screenshot` returns 503\n  with the documented body; every other existing route test passes unchanged\n  through the windowless helper.\n- Guard: `NoTestFile_BootsWholeAppOutsideAllowlist` stays green AFTER the\n  allowlist entry is removed (proving the class no longer boots the app).\n\n### Verification\n\n- `./visual-relay check` fully green.\n- Manual: `./visual-relay launch` then `curl -s\n  http://127.0.0.1:8765/screenshot -o /tmp/vr.png` still returns a PNG.\n\n### Commit-message evidence\n\nMeasure before and after while implementing (solo class time, plus the\nHeadless-collection total if measurable), then put one filled-in evidence\nbullet in the commit message body, following the attached\n`commit-message-evidence.md`. Never pre-fill that bullet \u2014 numbers are\nmeasured at implementation time and go into the eventual commit message,\nnowhere else.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### commit-message-evidence.md (1306 bytes)\n# Commit-message evidence for test-speed changes\n\nAny commit that changes how long tests take must carry, in its commit-message\nbody, exactly one bullet of this shape, blanks filled with real measurements:\n\n- test time dropped from <before> to <after>, saving <delta> (<scope>)\n\nHow to fill it in:\n\n- `<before>` / `<after>`: numbers you measured yourself, on this machine, with\n  the same command, once right before starting and once right after finishing.\n  Never copy them from a task description, an estimate, or a prediction.\n- `<delta>`: the difference between the two.\n- `<scope>`: what the numbers cover: `full-suite wall time`, `single test`, or\n  `<TestClass> file total`.\n- A finished example:\n  `- test time dropped from 80s to 60s, saving 20s (full-suite wall time)`\n\nRules:\n\n- The filled-in bullet belongs in the commit message body, never in a task\n  file. A task file states the requirement; only the commit records numbers.\n- Exactly one evidence bullet per commit. The commit hook allows at most 3\n  body bullets of at most 20 words each, all `- ` hyphen bullets, no em\n  dashes; keep the evidence bullet well inside those limits.\n- If you cannot measure a real improvement, say so in your run summary and do\n  not invent numbers. A commit with no measured effect gets no evidence bullet.\n\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"ControlServerKestlerHandlerTests (and presumably an integration-test sibling ControlServerKestrelTests) sit in the serial Headless collection (~380 tests). Every handler-test invocation inflates a MainWindow XAML tree just to satisfy ControlApi's constructor, even though none of those handler tests render or screenshot anything. The goal is to make MainWindow optional in ControlApi, drop handler tests to plain [Fact], and remove them from the whole-app allowlist \u2014 all without changing production /screenshot behavior or deleting/weakening a single test.\",\n  \"options\": [\n    \"Nullable MainWindow? field + null-guard on screenshot path: Add an optional constructor parameter MainWindow? window = null; store as nullable; the screenshot handler checks null and returns 503. Production wiring in App.axaml.cs passes the real window as it does today. Minimal diff; no new types; tight coupling to MainWindow remains but matches the task's explicit suggestion.\",\n    \"Func<MainWindow?> factory delegate: Change constructor to accept Func<MainWindow?>? windowFactory; screenshot handler calls _windowFactory?.Invoke() at request time (lazy). Tests pass null; production passes () => mainWindow. Decouples construction from window availability but may feel over-engineered for a field available at construction time in production.\",\n    \"Extract IScreenshotService interface: Pull screenshot-capture logic behind IScreenshotService { Task<byte[]?> CaptureAsync(); }. ControlApi takes IScreenshotService? screenshotService; real implementation wraps MainWindow; tests pass null. Cleanest separation of concerns and future-proof, but larger diff risks exceeding the 300-line guard and introduces scope creep.\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"findings\": string, \"constraints\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have a comprehensive understanding of the entire codebase. Here is the complete research report:\n\n```json\n{\n  \"findings\": \"The `ControlApi` primary constructor stores `Window window` but the field is consumed **exclusively** by the screenshot path in `ControlScreenshot.cs` (lines 22, 25, 56, 57, 59, 60 \u2014 `window.RenderScaling`, `window.ClientSize`, `window.Width`, `window.Height`, and `rtb.Render(window)`). Neither `ControlApi.cs` (275 lines), `ControlApi.State.cs` (138 lines), nor `ControlApi.Tabs.cs` (71 lines) reference the window field. `ControlServerKestrelHandlerTests.cs` (191 lines, 8 `[AvaloniaFact]` tests) builds `new MainWindow` per `InvokeAsync` call but never renders or screenshots \u2014 it tests health, token auth, 404, and index page routes via `DefaultHttpContext`. `MainWindowViewModelTests` already uses plain `[Fact]` proving VM construction off-dispatcher works. The whole-app allowlist entry at `WholeAppBoot.cs:28` permits `ControlServerKestrelHandlerTests`. `HandleScreenshotAsync` in `ControlServer.Routing.cs` would NRE on null PNG, so the routing layer needs null handling. `App.axaml.cs:61` always passes the real window. Screenshot coverage with real windows lives in `ControlApiTests.CaptureScreenshot_RunsAndEncodesPng_WhenBytesProduced`, `ControlApiTests.CaptureScreenshot_WithPath_WritesFileAndReturnsResolvedPath`, `ScreenshotAndStateTests.Screenshot_ReturnsPngContentType`, and `ScreenshotAndStateTests.Screenshot_WithPath_ReturnsXScreenshotPathHeader`. For the bounded audit: `ControlIndexPageTestsEndToEnd`, `ControlApiConfirmGatedTests`, and `ControlApiTabSelectionTests` are Headless-collection classes that construct `MainWindow` but never render/assert on visuals \u2014 they pass it only to satisfy `ControlApi`'s constructor.\",\n  \"constraints\": [\n    \"Production `/screenshot` behavior unchanged; only the no-window branch is new, and only tests exercise it.\",\n    \"No test deleted, skipped, or weakened; every reshaped test keeps its name or is mapped name-by-name.\",\n    \"Files must stay under 300-line guard (current files are 191, 275, 76, 138, 71 lines \u2014 all safe).\",\n    \"Keep files under the 300-line guard.\",\n    \"Coverage is non-negotiable: no test deleted, skipped, or weakened; every reshaped test keeps its name or is mapped name-by-name.\",\n    \"Production `/screenshot` behavior unchanged; only the no-window branch is new, and only tests exercise it.\",\n    \"The Guard test `NoTestFile_BootsWholeAppOutsideAllowlist` must stay green AFTER the allowlist entry is removed.\",\n    \"New 503 unit test for windowless screenshot branch must be added.\",\n    \"Commit message evidence must be measured at implementation time (before/after numbers) \u2014 not pre-filled.\",\n    \"`ControlApi` primary constructor takes `MainWindowViewModel viewModel, Window window` \u2014 change `Window` to nullable with default null.\",\n    \"`HandleScreenshotAsync` in `ControlServer.Routing.cs` must handle null PNG to return 503 with JSON body `{\\\"error\\\":\\\"window unavailable\\\"}`.\",\n    \"`ControlServerKestrelHandlerTests` must drop `[Collection(\\\"Headless\\\")]` and change `[AvaloniaFact]` to `[Fact]`.\",\n    \"`ControlServerKestrelHandlerTests.InvokeAsync` must stop constructing `MainWindow` and pass windowless `ControlApi`.\",\n    \"Allowlist entry for `ControlServerKestrelHandlerTests` must be removed from `WholeAppBootAllowlist`.\",\n    \"Screenshot tests that require a real window (`ControlApiTests`, `ScreenshotAndStateTests`) remain in Headless collection with `[AvaloniaFact]`.\",\n    \"Audit candidates: `ControlIndexPageTestsEndToEnd`, `ControlApiConfirmGatedTests`, `ControlApiTabSelectionTests` \u2014 these construct `MainWindow` but never render or assert on visuals.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 23,
+    "tool_calls_total": 53,
+    "tool_calls_succeeded": 53,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 25,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 16,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 23,
+    "total_llm_time_s": 148.317,
+    "prompt_cache": {
+      "cached_tokens": 778240,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 1.936,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.139,
+      "prompt_tokens_est": 5662,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlServerKestrelHandlerTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8449
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/ControlServerKestrelHandlerTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8449
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.462,
+      "prompt_tokens_est": 9914,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/ControlApi.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.156,
+      "result_length": 42
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/ControlServer.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.143,
+      "result_length": 45
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/MainWindow.xaml*"
+      },
+      "succeeded": true,
+      "duration_s": 0.142,
+      "result_length": 29
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/App.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.142,
+      "result_length": 32
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.485,
+      "prompt_tokens_est": 10069,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlApi.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13964
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlServer.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5303
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/App.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10167
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.17,
+      "prompt_tokens_est": 16777,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "screenshot",
+        "path": "src/VisualRelay.App",
+        "case_insensitive": true
+      },
+      "succeeded": true,
+      "duration_s": 0.047,
+      "result_length": 1779
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "window",
+        "path": "src/VisualRelay.App/Services/ControlApi.cs",
+        "case_insensitive": true
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 408
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/ControlServerKestrelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.146,
+      "result_length": 52
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.836,
+      "prompt_tokens_est": 17534,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlScreenshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2956
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlApi.Tabs.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3268
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlServer.Routing.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6490
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.678,
+      "prompt_tokens_est": 20749,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlServerKestrelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11972
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/HeadlessTestApp.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.143,
+      "result_length": 42
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/HeadlessCollectionDefinition.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.141,
+      "result_length": 55
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/SplitGuardVerificationTests*"
+      },
+      "succeeded": true,
+      "duration_s": 0.14,
+      "result_length": 323
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.331,
+      "prompt_tokens_est": 23891,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/HeadlessTestApp.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1868
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/HeadlessCollectionDefinition.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 567
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SplitGuardVerificationTests.WholeAppBoot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9141
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.513,
+      "prompt_tokens_est": 26719,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/AGENTS.md",
+        "offset": 30,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1457
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/MainWindowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.141,
+      "result_length": 51
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SplitGuardVerificationTests.Headless.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5310
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.06,
+      "prompt_tokens_est": 28526,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1552
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "\\bwindow\\b",
+        "path": "src/VisualRelay.App/Services/ControlApi.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 138
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "\\bwindow\\b",
+        "path": "src/VisualRelay.App/Services/ControlScreenshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 790
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 10.54,
+      "prompt_tokens_est": 29315,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.App/Services/ControlApi*"
+      },
+      "succeeded": true,
+      "duration_s": 0.142,
+      "result_length": 139
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlRoutes.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1924
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "\\bwindow\\.",
+        "path": "src/VisualRelay.App/Services"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 476
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 2.609,
+      "prompt_tokens_est": 30963,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlApi.State.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6237
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.cs",
+        "limit": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 628
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.64,
+      "prompt_tokens_est": 32739,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "new MainWindow",
+        "path": "tests",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.183,
+      "result_length": 26746
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "\\[Collection\\(\"Headless\"\\)\\]",
+        "path": "tests",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.088,
+      "result_length": 11697
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 8.254,
+      "prompt_tokens_est": 43282,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlIndexPageTests.cs",
+        "offset": 90,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3341
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlServerTests.cs",
+        "offset": 85,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3348
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 3.053,
+      "prompt_tokens_est": 45706,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlServerTests.cs",
+        "offset": 165
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6176
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 9.001,
+      "prompt_tokens_est": 47347,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "new MainWindow",
+        "path": "tests/VisualRelay.Tests/ControlApiConfirmGatedTests.cs",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 616
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "new MainWindow",
+        "path": "tests/VisualRelay.Tests/ControlApiTabSelectionTests.cs",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 555
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "screenshot|Screenshot|Render|Visual|window\\.(Show|ClientSize|RenderScaling|Width|Height)",
+        "path": "tests/VisualRelay.Tests/ControlApiConfirmGatedTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 294
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 3.759,
+      "prompt_tokens_est": 48513,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlApiConfirmGatedTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13184
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlApiTabSelectionTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4783
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 15.76,
+      "prompt_tokens_est": 53128,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "\\bwindow\\b",
+        "path": "src/VisualRelay.App/Services/ControlApi.State.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 17
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "\\bwindow\\b",
+        "path": "src/VisualRelay.App/Services/ControlApi.Tabs.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 17
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 8.532,
+      "prompt_tokens_est": 54569,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": ".relay/scratch/06-findings.json",
+        "content": "{\n  \"findings\": \"FULL CODEBASE ANALYSIS for task 06-windowless-control-handler-tests\",\n  \"constraints\": []\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 70
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 28.62,
+      "prompt_tokens_est": 55442,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me compile all findings into the structured response. I've thoroughly investigated the codebase.\n\nKey findings:\n1. `ControlApi`'s primary constructor takes `MainWindowViewModel viewModel, Window window` \u2014 the `window` parameter is used EXCLUSIVELY in `ControlScreenshot.cs` (lines 22, 25, 56, 57, 59, 60). Neither `ControlApi.cs`, `ControlApi.State.cs`, nor `ControlApi.Tabs.cs` reference the window field.\n\n2. `ControlServerKestrelHandlerTests.cs` (191 lines) has 8 `[AvaloniaFact]` tests, all building `new MainWindow` + `new ControlApi(vm, window)` per call, but none render or screenshot. They test health, token auth, 404, and index page routes.\n\n3. `HandleScreenshotAsync` in `ControlServer.Routing.cs` calls `api.CaptureScreenshotAsync(path)` and would NRE if png is null, so the routing layer needs null handling.\n\n4. `App.axaml.cs` line 61 passes real window: `new ControlApi(viewModel, window)` \u2014 unchanged.\n\n5. The allowlist entry for `ControlServerKestrelHandlerTests` exists at WholeAppBoot.cs:28.\n\n6. `MainWindowViewModelTests` uses plain `[Fact]` proving construction off-dispatcher works.\n\n7. Other Headless-collection classes that construct `MainWindow` without rendering: `ControlIndexPageTestsEndToEnd`, `ControlApiConfirmGatedTests`, `ControlApiTabSelectionTests`.\n\nFor the implementation plan:\n- Make `Window? window = null` in ControlApi primary constructor (nullable with default null)\n- In `ControlScreenshot.cs`, check `if (window is null) return (null, null)` at the top of `CaptureOnUiThread`\n- In `ControlServer.Routing.cs`, change `HandleScreenshotAsync` to check for null png \u2192 return 503\n- In handler tests: drop `MainWindow` construction, drop `[Collection(\"Headless\")]`, change `[AvaloniaFact]` to `[Fact]`\n- Remove allowlist entry\n- Add new test for windowless screenshot \u2192 503",
+        "thought_number": 1,
+        "total_thoughts": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.958,
+      "prompt_tokens_est": 58510,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlApiTests.cs",
+        "offset": 1,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2291
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CaptureScreenshot|Screenshot",
+        "path": "tests/VisualRelay.Tests/ControlApiTests.cs",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1606
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 3.053,
+      "prompt_tokens_est": 59633,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlApiTests.cs",
+        "offset": 227
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2342
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "InternalsVisibleTo",
+        "path": "src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.02,
+      "result_length": 194
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 12.047,
+      "prompt_tokens_est": 60418,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ControlServerKestrelHandlerTests",
+        "path": "tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.09,
+      "result_length": 4805
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ControlServerKestrelHandlerTests",
+        "path": "src"
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 17
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 9.818,
+      "prompt_tokens_est": 62890,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

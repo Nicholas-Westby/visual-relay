@@ -25,7 +25,6 @@ public sealed partial class SplitGuardVerificationTests
             ["ControlApiTabSelectionTests"] = "control API tab selection exercised against the live app",
             ["ControlServerTests"] = "control server routes exercised against a booted app",
             ["ControlServerKestrelTests"] = "kestrel control server exercised against a booted app",
-            ["ControlServerKestrelHandlerTests"] = "kestrel control handler exercised against a booted app",
             ["ControlIndexPageTests"] = "control index page served by the live app",
             ["SettingsPanelUiTests"] = "CogOpensSettingsPanel verifies the cog→modal open/close wiring",
             ["SettingsModalUiTests"] = "cog opens the owned settings modal; whole-app dialog plumbing",

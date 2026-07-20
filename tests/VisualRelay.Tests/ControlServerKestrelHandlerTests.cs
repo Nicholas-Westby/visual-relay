@@ -3,8 +3,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
-using VisualRelay.App.Views;
-
 namespace VisualRelay.Tests;
 
 /// <summary>
@@ -14,7 +12,6 @@ namespace VisualRelay.Tests;
 /// <see cref="HttpContext"/> and is exercised via
 /// <see cref="DefaultHttpContext"/>.
 /// </summary>
-[Collection("Headless")]
 public sealed class ControlServerKestrelHandlerTests
 {
     private static async Task<(HttpContext Context, ControlApi Api, MainWindowViewModel Vm)> InvokeAsync(
@@ -22,8 +19,7 @@ public sealed class ControlServerKestrelHandlerTests
         Dictionary<string, string>? requestHeaders = null)
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow { DataContext = vm };
-        var api = new ControlApi(vm, window);
+        var api = new ControlApi(vm);
         var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token,
             InstanceId: "h-" + Guid.NewGuid().ToString("N"),
             Pid: Environment.ProcessId,
@@ -71,7 +67,7 @@ public sealed class ControlServerKestrelHandlerTests
 
     // ── Health ──────────────────────────────────────────────────────────
 
-    [AvaloniaFact]
+    [Fact]
     public async Task HealthEndpoint_Returns200_WithJsonBody()
     {
         var (context, _, _) = await InvokeAsync("GET", "/health");
@@ -98,7 +94,7 @@ public sealed class ControlServerKestrelHandlerTests
 
     // ── Token auth ──────────────────────────────────────────────────────
 
-    [AvaloniaFact]
+    [Fact]
     public async Task Token_WhenConfigured_Returns401_WithoutHeader()
     {
         var (context, _, _) = await InvokeAsync("GET", "/health", token: "letmein");
@@ -111,7 +107,7 @@ public sealed class ControlServerKestrelHandlerTests
         Assert.Equal("unauthorized", doc.RootElement.GetProperty("error").GetString());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task Token_WhenConfigured_Returns200_WithCorrectHeader()
     {
         var (context, _, _) = await InvokeAsync(
@@ -124,7 +120,7 @@ public sealed class ControlServerKestrelHandlerTests
         Assert.Equal("ok", doc.RootElement.GetProperty("status").GetString());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task Token_GatesAllRoutes_IncludingHealth()
     {
         // /health is also gated — an unauthorized caller learns nothing.
@@ -133,7 +129,7 @@ public sealed class ControlServerKestrelHandlerTests
         Assert.Equal(401, context.Response.StatusCode);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task Token_WithoutToken_AllRoutesSucceed()
     {
         // No token configured → no auth; every route passes through.
@@ -144,7 +140,7 @@ public sealed class ControlServerKestrelHandlerTests
 
     // ── 404 ─────────────────────────────────────────────────────────────
 
-    [AvaloniaFact]
+    [Fact]
     public async Task UnknownRoute_Returns404_Json()
     {
         var (context, _, _) = await InvokeAsync("GET", "/nonexistent");
@@ -157,7 +153,7 @@ public sealed class ControlServerKestrelHandlerTests
         Assert.Equal("not found", doc.RootElement.GetProperty("error").GetString());
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task WrongMethodOnRoute_Returns404()
     {
         // POST /health is not a valid route (only GET).
@@ -168,7 +164,7 @@ public sealed class ControlServerKestrelHandlerTests
 
     // ── Index page ──────────────────────────────────────────────────────
 
-    [AvaloniaFact]
+    [Fact]
     public async Task IndexPage_Returns200_WithHtmlContentType()
     {
         var (context, _, _) = await InvokeAsync("GET", "/");
@@ -181,11 +177,25 @@ public sealed class ControlServerKestrelHandlerTests
         Assert.Contains("<title>Visual Relay — Control API</title>", body, StringComparison.Ordinal);
     }
 
-    [AvaloniaFact]
+    [Fact]
     public async Task IndexPage_NonGet_Returns404()
     {
         var (context, _, _) = await InvokeAsync("POST", "/");
 
         Assert.Equal(404, context.Response.StatusCode);
+    }
+
+    // ── Screenshot without window ────────────────────────────────────────
+
+    [Fact]
+    public async Task Screenshot_WithoutWindow_Returns503_WithErrorBody()
+    {
+        var (context, _, _) = await InvokeAsync("GET", "/screenshot");
+
+        Assert.Equal(503, context.Response.StatusCode);
+        Assert.Equal("application/json", context.Response.ContentType);
+
+        using var doc = await ReadJsonBodyAsync(context);
+        Assert.Equal("window unavailable", doc.RootElement.GetProperty("error").GetString());
     }
 }

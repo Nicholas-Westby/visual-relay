@@ -12,17 +12,21 @@ public sealed partial class ControlApi
     /// is ALSO written there and the resolved path is returned so the server can
     /// surface it via the X-Screenshot-Path header.
     /// </summary>
-    public Task<(byte[] Png, string? WrittenPath)> CaptureScreenshotAsync(string? path) =>
-        Dispatcher.UIThread.InvokeAsync(() => CaptureOnUiThread(path)).GetTask();
+    public Task<(byte[] Png, string? WrittenPath)> CaptureScreenshotAsync(string? path)
+    {
+        if (window is null)
+            return Task.FromResult<(byte[], string?)>((null!, null));
+        return Dispatcher.UIThread.InvokeAsync(() => CaptureOnUiThread(path)).GetTask();
+    }
 
     private (byte[] Png, string? WrittenPath) CaptureOnUiThread(string? path)
     {
         var pixelSize = ResolvePixelSize();
         // Match the window's render scaling so the capture is crisp on HiDPI.
-        var dpi = window.RenderScaling > 0 ? 96 * window.RenderScaling : 96;
+        var dpi = window!.RenderScaling > 0 ? 96 * window.RenderScaling : 96;
 
         using var rtb = new RenderTargetBitmap(pixelSize, new Vector(dpi, dpi));
-        rtb.Render(window);
+        rtb.Render(window!);
 
         using var memory = new MemoryStream();
         rtb.Save(memory);
@@ -53,7 +57,7 @@ public sealed partial class ControlApi
     /// </summary>
     private PixelSize ResolvePixelSize()
     {
-        var clientSize = window.ClientSize;
+        var clientSize = window!.ClientSize;
         var scaling = window.RenderScaling > 0 ? window.RenderScaling : 1.0;
 
         var width = clientSize.Width > 0 ? clientSize.Width : window.Width;

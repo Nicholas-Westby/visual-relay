@@ -21,7 +21,7 @@ namespace VisualRelay.App.Services;
 /// </summary>
 public sealed partial class ControlApi(
     MainWindowViewModel viewModel,
-    Window window,
+    Window? window = null,
     IReadOnlyCollection<string>? confirmGatedCommands = null)
 {
     /// <summary>

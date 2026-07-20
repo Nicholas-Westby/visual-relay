@@ -114,6 +114,13 @@ public sealed partial class ControlServer
         var path = context.Request.Query["path"].FirstOrDefault();
         var (png, writtenPath) = await api.CaptureScreenshotAsync(path);
 
+        if (png is null)
+        {
+            context.Response.StatusCode = 503;
+            await WriteJsonAsync(context, Json.Object(("error", "window unavailable")));
+            return;
+        }
+
         if (writtenPath is not null)
         {
             context.Response.Headers["X-Screenshot-Path"] = writtenPath;
