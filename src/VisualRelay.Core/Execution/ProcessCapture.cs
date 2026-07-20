@@ -50,12 +50,13 @@ internal static partial class ProcessCapture
         CancellationToken killToken = default,
         Action<string>? onActivity = null,
         IReadOnlySet<string>? envRemove = null,
+        bool reapProcessTree = true,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
         Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments);
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, reapProcessTree, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
     }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -68,6 +69,7 @@ internal static partial class ProcessCapture
         CancellationToken killToken = default,
         Action<string>? onActivity = null,
         IReadOnlySet<string>? envRemove = null,
+        bool reapProcessTree = true,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
         Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
@@ -78,7 +80,7 @@ internal static partial class ProcessCapture
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, reapProcessTree, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -90,6 +92,7 @@ internal static partial class ProcessCapture
         CancellationToken killToken = default,
         Action<string>? onActivity = null,
         IReadOnlySet<string>? envRemove = null,
+        bool reapProcessTree = true,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
         Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
@@ -152,17 +155,8 @@ internal static partial class ProcessCapture
 
         try
         {
-            // ReSharper disable once AccessToDisposedClosure — killRegistration is
-            // disposed (end of this try) strictly before 'process' (end of method),
-            // and CancellationTokenRegistration.Dispose() waits for the in-flight
-            // callback to return. The callback body is instant (fire-and-forget task
-            // start), so Dispose() blocks only briefly. However, the background
-            // graceful-stop task may still be running after Dispose() returns and
-            // could encounter a disposed 'process'; GracefulStopThenKillAsync guards
-            // every process access via SafeHasExited (catches ObjectDisposedException).
-            // ReSharper disable once UseAwaitUsing — sync Dispose() is REQUIRED here: it
-            // blocks until any running Kill callback finishes (the guarantee above);
-            // DisposeAsync() does not provide that synchronous wait.
+            // killRegistration Dispose() blocks until in-flight callback returns;
+            // GracefulStopThenKillAsync guards disposed process via SafeHasExited.
             using var killRegistration = killToken.CanBeCanceled
                 ? killToken.Register(() => { _ = GracefulStopThenKillAsync(process, stageGroupId, tp); })
                 : default;
@@ -177,12 +171,14 @@ internal static partial class ProcessCapture
             }
 
             await exitedTcs.Task;
-            // Process exited: REAP FIRST (process-group kill targets this stage's
-            // descendants, tree-kill backstops) so survivors release the inherited
-            // pipe write-ends, THEN bounded-drain — WaitForExitAsync now EOFs fast.
-            if (stageGroupId.HasValue)
-                try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
-            try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
+            if (reapProcessTree)
+            {
+                // Reap descendants so survivors release inherited pipe
+                // write-ends; then bounded-drain → WaitForExitAsync EOFs fast.
+                if (stageGroupId.HasValue)
+                    try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
+                try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
+            }
             await Task.WhenAny(process.WaitForExitAsync(CancellationToken.None), Task.Delay(TimeSpan.FromMilliseconds(DrainGraceMs), tp, CancellationToken.None));
             lock (outputLock) { return (process.ExitCode, output.ToString(), false); }
         }

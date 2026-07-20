@@ -1,16 +1,25 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
 /// Centralized git process factory that pins a stable git binary at first use
 /// and sanitizes the environment so nix-store churn on macOS cannot rot git
-/// invocations mid-run. Each instance caches resolution independently;
-/// production creates one instance and injects it everywhere git is called.
+/// invocations mid-run. Resolution is cached process-wide via Lazy&lt;string&gt;;
+/// the first instance pays the probe, all later ones reuse the resolved path.
 /// </summary>
 public sealed class GitInvoker : IGitInvoker
 {
+    private static readonly Lazy<string> _cachedGitBinary = new(() =>
+    {
+        Interlocked.Increment(ref _probeCount);
+        return ResolveGitBinary();
+    });
+    private static int _probeCount;
+    internal static int ProbeCount => Volatile.Read(ref _probeCount);
+
     private readonly object _lock = new();
     private string? _gitBinary;
     private IReadOnlySet<string>? _envRemove;
@@ -56,7 +65,8 @@ public sealed class GitInvoker : IGitInvoker
             sanitizedEnv,
             killToken,
             onActivity,
-            _envRemove);
+            _envRemove,
+            reapProcessTree: false);
     }
 
     /// <summary>
@@ -112,7 +122,7 @@ public sealed class GitInvoker : IGitInvoker
             if (_gitBinary is not null)
                 return _gitBinary;
 
-            _gitBinary = ResolveGitBinary();
+            _gitBinary = _cachedGitBinary.Value;
 
             // When the pinned binary lives outside /nix/store — i.e. the
             // system git at /usr/bin/git — strip DEVELOPER_DIR / SDKROOT
