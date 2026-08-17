@@ -11,26 +11,13 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
     /// for the 2026-06-10 wedge).
     /// </summary>
     [Fact]
-    public void PerModelTimeout_AllTenModelsHaveExplicitCeiling()
+    public void PerModelTimeout_EveryTemplateModelHasExplicitCeiling()
     {
         var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
         var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
+        var models = BackendConfigGeneratorTestHelpers.ParseModelNames(yaml);
 
-        string[] allModels =
-        [
-            "glm-5.2",
-            "kimi-k2",
-            "deepseek-v4-pro",
-            "deepseek-v4-flash",
-            "hf-qwen3-coder-next",
-            "hf-qwen3-vl-235b",
-            "hf-qwen3-vl-30b",
-            "claude-opus-1m",
-            "claude-sonnet",
-            "gpt-5",
-        ];
-
-        foreach (var model in allModels)
+        foreach (var model in models)
             Assert.True(timeouts.ContainsKey(model),
                 $"model '{model}' must have an explicit per-model timeout");
     }

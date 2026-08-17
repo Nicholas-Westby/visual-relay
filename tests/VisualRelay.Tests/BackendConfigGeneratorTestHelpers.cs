@@ -186,6 +186,37 @@ internal static class BackendConfigGeneratorTestHelpers
     }
 
     /// <summary>
+    /// Extracts every <c>model_name:</c> value from the <c>model_list:</c>
+    /// section of a litellm-config YAML string.
+    /// </summary>
+    public static HashSet<string> ParseModelNames(string yaml)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        var lines = yaml.Split('\n');
+        var inModelList = false;
+
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd('\r');
+
+            if (line == "model_list:") { inModelList = true; continue; }
+            if (!inModelList) continue;
+
+            // Exit on a top-level (non-indented) key — router_settings:,
+            // litellm_settings:, or anything else at column 0 that isn't a
+            // comment or blank line.
+            if (line.Length > 0 && !line.StartsWith(' ') && !line.StartsWith('#'))
+                break;
+
+            // Each model entry starts with "  - model_name: <name>".
+            if (line.StartsWith("  - model_name: "))
+                result.Add(line["  - model_name: ".Length..].Trim());
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Extracts <c>model = "…"</c> values from a swival.toml profile string,
     /// keyed by profile name (e.g. <c>"balanced"</c> → <c>"balanced"</c>).
     /// </summary>
