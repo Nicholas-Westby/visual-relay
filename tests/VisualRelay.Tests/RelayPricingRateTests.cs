@@ -115,13 +115,12 @@ public sealed class RelayPricingRateTests
     }
 
     [Fact]
-    public void HfQwen3CoderNext_VerificationPlaceholder()
+    public void HfQwen3CoderNext_VerifiedNovitaRates()
     {
-        // Qwen3-Coder-480B-A35B-Instruct via Novita — rate not yet verified (2026-07-07).
-        // Using the existing unverified entry (0.30/1.30). This test documents the
-        // current rate and will break when it is updated, serving as a reminder.
+        // Qwen3-Coder-480B-A35B-Instruct via Novita serverless — VERIFIED 2026-08-17
+        // (0.38/1.55), superseding the earlier unverified 0.30/1.30 placeholder.
         // uncached=1000, output=ceil(4/4)+50=51.
-        // cost = (1000*0.30 + 51*1.30) / 1_000_000 = (300 + 66.3) / 1_000_000 = 0.0003663.
+        // cost = (1000*0.38 + 51*1.55) / 1_000_000 = (380 + 79.05) / 1_000_000 = 0.00045905.
         using var document = JsonDocument.Parse(
             """
             {
@@ -138,7 +137,7 @@ public sealed class RelayPricingRateTests
 
         Assert.True(cost.Priced);
         Assert.Equal("hf-qwen3-coder-next", cost.Model);
-        Assert.Equal(0.0003663, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00045905, cost.CostUsd, precision: 10);
     }
 
     // ── Effective-rate helpers ─────────────────────────────────────

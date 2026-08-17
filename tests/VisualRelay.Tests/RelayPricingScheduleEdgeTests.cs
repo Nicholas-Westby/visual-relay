@@ -55,7 +55,7 @@ public sealed class RelayPricingScheduleEdgeTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00023912, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class RelayPricingScheduleEdgeTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement, offPeak);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00023912, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -115,16 +115,16 @@ public sealed class RelayPricingScheduleEdgeTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement, peak);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00047824, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00079736, cost.CostUsd, precision: 10);
     }
 
     [Fact]
     public void CheapModel_PeakMultipliesCacheWriteTokens()
     {
         // uncached=3000, cached=1000, cache-write=500, output=ceil(64/4)+3*50=166.
-        // cheap rates: input 0.14, cached 0.0028, cache-write 0.14, output 0.28.
-        // base = (3000*0.14 + 1000*0.0028 + 500*0.14 + 166*0.28) / 1_000_000 = 0.00053928.
-        // peak = 2× = 0.00107856.
+        // cheap rates: input 0.22, cached 0.007, cache-write 0.22, output 0.66.
+        // base = (3000*0.22 + 1000*0.007 + 500*0.22 + 166*0.66) / 1_000_000 = 0.00088656.
+        // peak = 2× = 0.00177312.
         using var document = JsonDocument.Parse(
             """
             {
@@ -146,6 +146,6 @@ public sealed class RelayPricingScheduleEdgeTests
 
         Assert.True(cost.Priced);
         Assert.Equal(500, cost.CacheWriteTokens);
-        Assert.Equal(0.00107856, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00177312, cost.CostUsd, precision: 10);
     }
 }

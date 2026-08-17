@@ -119,19 +119,46 @@ public sealed partial class CostPerModelTests
     [Fact]
     public void PopulateModelCostRows_UnpricedAssignmentYieldsCard()
     {
+        // Deliberately synthetic: every model a user can actually select is priced
+        // (see AllSelectableModelsArePriced below), so a real name here would only
+        // test the unpriced path until that model gained rates.
+        const string unpriced = "not-a-real-model-xyz";
         var assignments = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["vision"] = "hf-qwen3-vl-30b",
+            ["vision"] = unpriced,
         };
 
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows(assignments);
 
-        var card = vm.ModelCostRows.Single(r => r.ModelKey == "hf-qwen3-vl-30b");
+        var card = vm.ModelCostRows.Single(r => r.ModelKey == unpriced);
         Assert.Contains("vision", card.TierBadges);
         Assert.False(card.IsPriced, "unpriced model must have IsPriced=false");
         Assert.True(card.IsActive);
         Assert.Empty(card.InputDisplay);
+    }
+
+    // ── Pricing coverage ────────────────────────────────────────────────
+
+    [Fact]
+    public void PopulateModelCostRows_AllSelectableModelsArePriced()
+    {
+        // Every model offerable in the tier dropdowns must carry a rate, or the
+        // cost panel and run estimates silently under-report when one is picked.
+        var vm = new MainWindowViewModel();
+        vm.PopulateModelCostRows();
+
+        var priced = vm.ModelCostRows
+            .Where(r => r.IsPriced)
+            .Select(r => r.ModelKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var selectable = BackendConfigGenerator.SelectableModelsByTier
+            .SelectMany(kv => kv.Value)
+            .Distinct(StringComparer.Ordinal);
+
+        foreach (var model in selectable)
+            Assert.Contains(model, priced);
     }
 
     // ── Idempotency ─────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ public sealed class RelayPricingScheduleTests
     {
         // 2026-07-15T01:00:00Z = 09:00 Asia/Shanghai — first peak window start (inclusive).
         // uncached=1500, cached=100, output=ceil(12/4)+2*50=103.
-        // base cost = 0.00023912; peak = 2× = 0.00047824.
+        // base cost = 0.00039868; peak = 2× = 0.00079736.
         using var document = JsonDocument.Parse(
             """
             {
@@ -36,7 +36,7 @@ public sealed class RelayPricingScheduleTests
 
         Assert.True(cost.Priced);
         Assert.Equal("cheap", cost.Model);
-        Assert.Equal(0.00047824, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00079736, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public sealed class RelayPricingScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00023912, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public sealed class RelayPricingScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00023912, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -123,7 +123,7 @@ public sealed class RelayPricingScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00023912, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -152,7 +152,7 @@ public sealed class RelayPricingScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00023912, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
     }
 
     // ── Peak window: balanced (DeepSeek) model ───────────────────
@@ -162,7 +162,7 @@ public sealed class RelayPricingScheduleTests
     {
         // 2026-07-15T06:00:00Z = 14:00 Asia/Shanghai — second peak window start (inclusive).
         // Same token counts as the existing balanced test: uncached=1500, cached=2000, output=200.
-        // base cost = 0.00083375; peak = 2× = 0.0016675.
+        // base cost = 0.00143; peak = 2× = 0.00286.
         using var document = JsonDocument.Parse(
             $$"""
             {
@@ -184,7 +184,7 @@ public sealed class RelayPricingScheduleTests
         Assert.Equal(1_500, cost.PromptTokens);
         Assert.Equal(2_000, cost.CachedTokens);
         Assert.Equal(200, cost.OutputTokens);
-        Assert.Equal(0.0016675, cost.CostUsd, precision: 10);
+        Assert.Equal(0.00286, cost.CostUsd, precision: 10);
     }
 
     // ── Non-DeepSeek model unaffected by peak windows ────────────

@@ -14,7 +14,7 @@ public sealed partial class CostPerModelTests
         vm.PopulateModelCostRows();
 
         var row = vm.ModelCostRows.Single(r => r.ModelKey == "hf-qwen3-coder-next");
-        Assert.Equal("$0.3 per 1M tokens (same as input)", row.CachedInputDisplay);
+        Assert.Equal("$0.38 per 1M tokens (same as input)", row.CachedInputDisplay);
     }
 
     [Fact]
@@ -25,7 +25,7 @@ public sealed partial class CostPerModelTests
 
         var row = vm.ModelCostRows.Single(r => r.ModelKey == "deepseek-v4-flash");
         Assert.EndsWith("(same as input)", row.CacheWriteDisplay, StringComparison.Ordinal);
-        Assert.StartsWith("$0.14", row.CacheWriteDisplay, StringComparison.Ordinal);
+        Assert.StartsWith("$0.22", row.CacheWriteDisplay, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public sealed partial class CostPerModelTests
 
         var flash = vm.ModelCostRows.Single(r => r.ModelKey == "deepseek-v4-flash");
         var w = flash.Windows[0];
-        Assert.StartsWith("$0.0056", w.PeakCachedInputDisplay, StringComparison.Ordinal);
+        Assert.StartsWith("$0.014", w.PeakCachedInputDisplay, StringComparison.Ordinal);
     }
 
     [Fact]

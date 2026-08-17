@@ -55,7 +55,7 @@ public sealed partial class RelayCostEstimatorTests
         Assert.Equal("cheap", cheapCost.Model);
         Assert.Equal("deepseek-v4-flash", concreteCost.Model);
         Assert.Equal(cheapCost.CostUsd, concreteCost.CostUsd);
-        Assert.Equal(0.00023912, cheapCost.CostUsd, precision: 10);
+        Assert.Equal(0.00039868, cheapCost.CostUsd, precision: 10);
     }
 
     [Fact]
