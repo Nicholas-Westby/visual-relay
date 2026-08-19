@@ -175,7 +175,9 @@ public sealed partial class SettingsPanelUiTests
         Assert.True(vm.IsSettingsOpen);
 
         // KeyStates must be repopulated after OpenSettingsAsync opens the dialog.
-        Assert.Equal(5, vm.KeyStates.Count);
+        // Counted off AllProviderKeys rather than a literal: the point is "one
+        // state per provider", not "five providers".
+        Assert.Equal(MainWindowViewModel.AllProviderKeys.Count, vm.KeyStates.Count);
         Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").IsSet);
         Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "DEEPSEEK_API_KEY").IsSet);
 

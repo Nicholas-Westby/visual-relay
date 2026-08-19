@@ -49,6 +49,20 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
     }
 
     [Fact]
+    public void PerModelTimeout_FrontierGlm53Has480s()
+    {
+        var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
+        var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
+
+        Assert.True(timeouts.TryGetValue("glm-5.3", out var t),
+            "glm-5.3 must have a per-model timeout");
+        // 480s (8 min) — same frontier ceiling as glm-5.2 and kimi-k2. GLM 5.3
+        // always reasons before emitting content, so its first-token latency is
+        // at least as long as the 412s observed worst-case healthy Review.
+        Assert.Equal(480, t);
+    }
+
+    [Fact]
     public void PerModelTimeout_DeepSeekModelsKeep75s()
     {
         var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
@@ -96,11 +110,12 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
         var present = new HashSet<string>
         {
             "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY",
-            "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ZAI_API_KEY",
         };
         var (yaml, _) = BackendConfigGeneratorTestHelpers.Generate(present);
         var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
 
+        Assert.Equal(480, timeouts["glm-5.3"]);
         Assert.Equal(480, timeouts["glm-5.2"]);
         Assert.Equal(480, timeouts["kimi-k2"]);
         Assert.Equal(75, timeouts["deepseek-v4-pro"]);

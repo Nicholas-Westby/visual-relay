@@ -47,7 +47,7 @@ public sealed partial class CostPerModelTests
         Assert.True(balancedCard.IsActive);
 
         var frontierCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("frontier"));
-        Assert.Equal("glm-5.2", frontierCard.ModelKey);
+        Assert.Equal("glm-5.3", frontierCard.ModelKey);
         Assert.True(frontierCard.IsActive);
 
         var visionCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("vision"));

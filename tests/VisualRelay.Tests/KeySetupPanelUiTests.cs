@@ -40,8 +40,8 @@ public sealed class KeySetupPanelUiTests
         Assert.True(vm.IsSettingsOpen);
         Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
 
-        Assert.Equal(5, MainWindowViewModel.AllProviderKeys.Count);
-        Assert.Equal(5, vm.KeyStates.Count);
+        Assert.Equal(6, MainWindowViewModel.AllProviderKeys.Count);
+        Assert.Equal(6, vm.KeyStates.Count);
 
         var hf = vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN");
         Assert.True(hf.IsSet);
@@ -49,7 +49,7 @@ public sealed class KeySetupPanelUiTests
         Assert.DoesNotContain("(not set)", hf.DisplayValue, StringComparison.Ordinal);
 
         Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "DEEPSEEK_API_KEY").IsSet);
-        foreach (var k in new[] { "MOONSHOT_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY" })
+        foreach (var k in new[] { "ZAI_API_KEY", "MOONSHOT_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY" })
         {
             Assert.False(vm.KeyStates.First(s => s.Row.EnvVarName == k).IsSet);
             Assert.Equal("(not set)", vm.KeyStates.First(s => s.Row.EnvVarName == k).DisplayValue);

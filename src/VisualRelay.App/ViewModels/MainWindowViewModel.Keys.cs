@@ -10,50 +10,8 @@ namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
-    /// <summary>Immutable descriptor for a provider-key row.</summary>
-    public sealed record ProviderKeyRow(
-        string DisplayName,
-        string EnvVarName,
-        string GetKeyUrl);
-
-    /// <summary>Canonical five-provider list in display order.</summary>
-    public static readonly IReadOnlyList<ProviderKeyRow> AllProviderKeys =
-    [
-        new("Hugging Face (Recommended)", "HF_TOKEN", "https://huggingface.co/settings/tokens"),
-        new("DeepSeek (Recommended)", "DEEPSEEK_API_KEY", "https://platform.deepseek.com/api_keys"),
-        new("Moonshot (Recommended)", "MOONSHOT_API_KEY", "https://platform.moonshot.ai/console/api-keys"),
-        new("Anthropic (Expensive)", "ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys"),
-        new("OpenAI (Expensive)", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"),
-    ];
-
     /// <summary>Observable per-provider state, rebuilt by <see cref="RefreshKeyStatesAsync"/>.</summary>
     public ObservableCollection<ProviderKeyState> KeyStates { get; } = [];
-
-    /// <summary>
-    /// Per-row observable state for a single provider key.
-    /// Exposed as a nested class so the DataTemplate can bind directly.
-    /// </summary>
-    public sealed partial class ProviderKeyState : ObservableObject
-    {
-        public ProviderKeyRow Row { get; }
-
-        [ObservableProperty]
-        private bool _isSet;
-
-        [ObservableProperty]
-        private string _displayValue = string.Empty;
-
-        /// <summary>Password-masked value typed/pasted by the user before saving.</summary>
-        [ObservableProperty]
-        private string _pendingValue = string.Empty;
-
-        public ProviderKeyState(ProviderKeyRow row, bool isSet, string displayValue)
-        {
-            Row = row;
-            _isSet = isSet;
-            _displayValue = displayValue;
-        }
-    }
 
     /// <summary>Set when a Run was blocked by the HF gate so pasting a token can resume it.</summary>
     private string? _pendingHfRunTaskId;

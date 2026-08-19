@@ -131,8 +131,8 @@ public static class BackendConfigStep
             fileKeys = [];
         }
 
-        // Process env: check the five known provider-key vars through the accessor.
-        foreach (var k in new[] { "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY" })
+        // Process env: check every known provider-key var through the accessor.
+        foreach (var k in BackendConfigGenerator.ProviderKeyNames)
             if (KeyEnvFile.GetEnv(k, env) is not null)
                 present.Add(k);
 

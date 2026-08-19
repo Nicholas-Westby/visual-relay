@@ -59,9 +59,10 @@ public sealed partial class RelayCostEstimatorTests
     }
 
     [Fact]
-    public void EstimateReport_TierAliasFrontier_PricesAtGlm52Rates()
+    public void EstimateReport_TierAliasFrontier_PricesAtGlmRates()
     {
-        // "frontier" resolves to "glm-5.2": input 1.40, cached 0.26, output 4.40.
+        // "frontier" resolves to "glm-5.3": input 1.40, cached 0.26, output 4.40 —
+        // identical to the glm-5.2 it replaced, so this total is unchanged.
         // uncached=2000, cached=500, output=ceil(40/4)+50=60.
         // cost = (2000*1.40 + 500*0.26 + 60*4.40) / 1_000_000 = 0.003194.
         using var document = JsonDocument.Parse(

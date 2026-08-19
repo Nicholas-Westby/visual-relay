@@ -46,6 +46,12 @@ internal static class RelayPricing
             // deepseek-v4-pro → DeepSeek-V4-Pro-0813 (api-docs.deepseek.com, 2026-08-17);
             // off-peak base rates; same cache-write rationale as -flash above.
             ["deepseek-v4-pro"] = new(0.66, 1.98, 0.022, 0.66) { Windows = DeepseekPeakWindows },
+            // GLM 5.3 first-party on Z.AI (docs.z.ai/guides/overview/pricing,
+            // 2026-08-19); identical published rates to GLM 5.2 below, so the
+            // frontier default moving to 5.3 costs the same per token.
+            // CacheWrite falls back to Input (1.40) — Z.AI publishes no separate
+            // cache-write rate and lists cache writes as free for now.
+            ["glm-5.3"] = new(1.40, 4.40, 0.26),
             // GLM 5.2 via HF (zai-org), 2026-08-17; CacheWrite falls back to Input (1.40)
             ["glm-5.2"] = new(1.40, 4.40, 0.26),
             // Qwen3-VL-235B-A22B-Instruct (openrouter.ai, 2026-08-17)

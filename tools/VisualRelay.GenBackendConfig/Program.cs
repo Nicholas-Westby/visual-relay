@@ -18,7 +18,7 @@ var present = new HashSet<string>();
 var fileKeys = KeyEnvFile.Read();
 foreach (var (key, _) in fileKeys)
     present.Add(key);
-foreach (var key in new[] { "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY" })
+foreach (var key in BackendConfigGenerator.ProviderKeyNames)
     if (Environment.GetEnvironmentVariable(key) is not null)
         present.Add(key);
 

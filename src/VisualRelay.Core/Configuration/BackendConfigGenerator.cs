@@ -45,6 +45,7 @@ public static partial class BackendConfigGenerator
         ],
         ["frontier"] =
         [
+            ("glm-5.3", "ZAI_API_KEY"),
             ("glm-5.2", "HF_TOKEN"),
             ("kimi-k2", "MOONSHOT_API_KEY"),
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),

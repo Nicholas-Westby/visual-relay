@@ -4,16 +4,20 @@ public static partial class BackendConfigGenerator
 {
     /// <summary>
     /// Curated per-tier lists of selectable models (≤6 each). Only real
-    /// <c>model_list</c> models from the five in-use providers. Defaults
+    /// <c>model_list</c> models from the six in-use providers. Defaults
     /// match today's auto-resolution.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> SelectableModelsByTier =
         new Dictionary<string, IReadOnlyList<string>>
         {
+            // hf-qwen3-coder-next is deliberately absent: the ≤6 cap has no
+            // room for it once glm-5.3 heads the list, it is the weakest
+            // option a frontier tier could pick, and the auto-resolved
+            // frontier chain still reaches it (and the fallback tier) anyway.
             ["frontier"] = new List<string>
             {
-                "glm-5.2", "kimi-k2", "deepseek-v4-pro",
-                "claude-opus-1m", "gpt-5", "hf-qwen3-coder-next",
+                "glm-5.3", "glm-5.2", "kimi-k2",
+                "deepseek-v4-pro", "claude-opus-1m", "gpt-5",
             },
             ["balanced"] = new List<string>
             {

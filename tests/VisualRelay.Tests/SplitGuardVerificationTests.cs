@@ -195,7 +195,12 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 176→177 on 2026-07-19: provision-task-specs-into-planning-worktrees
         // added RunPlanPhase_PendingTaskSpecProvisionedIntoStage1Input (+1) to the
         // PlanPhaseRunnerTests family.
-        const int baseline = 177;
+        // Bumped 177→178 on 2026-08-19: default-to-glm-5-3-via-zai added
+        // PerModelTimeout_FrontierGlm53Has480s (+1) to the
+        // BackendConfigGeneratorPerModelTimeoutTests family. The new
+        // BackendConfigGeneratorZaiFrontierTests.cs is a standalone class
+        // outside the tracked prefixes, so its facts are not counted here.
+        const int baseline = 178;
 
         string[] prefixes =
         [
