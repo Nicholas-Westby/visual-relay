@@ -1,0 +1,573 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-08-19T19:31:36.445529+00:00",
+  "task": "# Relay stage 6: Implement\nTask: show-model-host-in-live-tiers\nWorking directory: /Users/admin/Dev/visual-relay\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Show where each Live Tiers model is hosted\n\nSettings shows each tier's resolved model (`frontier` \u2192 `glm-5.2`) but never says\nwhich provider serves it. That distinction is operationally real: some models are\nreached through the Hugging Face Inference Providers aggregator and some through a\nvendor's own first-party API, and the two differ in pricing, availability, and\nwhich key gates them. A reader of the settings screen cannot tell `glm-5.2`\n(Hugging Face) from `deepseek-v4-pro` (DeepSeek first-party).\n\nThe provider name is already computed and already unit-tested \u2014 it is simply not\nrendered.\n\n### Evidence (2026-08-19)\n\n- `src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs:71-77` \u2014 the\n  `ProviderNames` map turns each required env var into a display name\n  (`HF_TOKEN` \u2192 \"Hugging Face\", `DEEPSEEK_API_KEY` \u2192 \"DeepSeek\", and so on).\n  `GetTierRows` (line 96) sets `TierConfigRow.ProviderName` from it.\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs:227-236` \u2014 the row\n  view-model already copies `ProviderName` across.\n- `src/VisualRelay.App/Views/Controls/SettingsPanel.axaml:204-254` \u2014 the Live\n  Tiers `DataTemplate` binds `Tier`, `KeyPresent`, and `SelectedModel`, but\n  nothing binds `ProviderName`. Commit `e576e19` dropped the column when it\n  changed the grid from four columns to `Auto,Auto,*`.\n- `tests/VisualRelay.Tests/KeySetupPanelUiTests.cs:179-195` asserts the provider\n  names on the row view-models, so the data path is covered and correct; only the\n  view lost it.\n- Two blockers must be cleared before a line can be added:\n  `src/VisualRelay.App/Views/Controls/SettingsPanel.axaml` is exactly 300 lines\n  and `src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs` is 298 \u2014 the\n  file-size guard fails above 300.\n- The displayed model and `ProviderName` can disagree. `TryApplyOverride`\n  (`BackendConfigGenerator.Selectable.cs`) ignores an override whose key is\n  absent and lets auto-resolution proceed, but `MainWindowViewModel.Keys.cs:219-224`\n  still displays that override whenever it appears in `SelectableModels`. With\n  only `HF_TOKEN` set and `tierModelOverrides.frontier = \"gpt-5\"`, the row shows\n  `gpt-5` while `ProviderName` describes the auto-resolved `glm-5.2`.\n- `PersistTierOverrideAsync` (`MainWindowViewModel.Keys.cs:257`) writes config\n  and does not rebuild `LitTierRows`, so a label bound to a value set only at\n  build time would go stale the moment the user picks a different model.\n\n### What to build\n\n1. Add `BackendConfigGenerator.Providers.cs` (a new partial file, following\n   `BackendConfigGenerator.Selectable.cs`) and move the `ProviderNames`\n   dictionary into it so the main file loses lines rather than gains them. Add:\n\n       public static string? ProviderFor(string model)\n\n   returning the display name for `\"fallback\"` (Hugging Face), for any model in\n   `ModelToKey`, and for any model in `ModelToRequiredKey` \u2014 and `null` for\n   anything else. It must not route through `GetRequiredKey`: that helper\n   defensively defaults unknown names to `HF_TOKEN`, which would label the\n   `claude` row's `\"(key missing)\"` placeholder as Hugging Face.\n\n2. Make the row view-model's provider follow the model actually displayed.\n   In `MainWindowViewModel.Keys.cs`, set\n   `ProviderName = BackendConfigGenerator.ProviderFor(selected) ?? row.ProviderName`\n   so the `null` case preserves today's behaviour for `\"(key missing)\"`. In\n   `MainWindowViewModel.TierModelRow.cs`, extend `OnSelectedModelChanged` to also\n   update `ProviderName` when `ProviderFor(value)` is non-null, so the label\n   tracks the ComboBox without waiting for a refresh or a backend restart.\n\n3. Extract the Live Tiers section (`SettingsPanel.axaml:204-254`) into a new\n   `LiveTiersSettings` user control under `Views/Controls/`, modelled exactly on\n   `TimeoutSettings.axaml` / `TimeoutSettings.axaml.cs` (same `UserControl` shell,\n   `x:DataType=\"vm:MainWindowViewModel\"`, no code-behind beyond\n   `InitializeComponent`). Replace the removed block in `SettingsPanel.axaml` with\n   `<controls:LiveTiersSettings/>`, placed where the Border was. Keep the\n   `LitTierItems` name on the `ItemsControl`.\n\n4. In the extracted template, render the provider as a muted label to the right of\n   the model, in the established secondary style (`Foreground=\"#7F8794\"`, the same\n   font size as the model text). Prefix it so it reads as routing rather than as\n   the model's author \u2014 \"via Hugging Face\", not \"Hugging Face\" \u2014 because\n   `glm-5.2` is a Z.AI model reached through Hugging Face. Give the model column a\n   fixed width instead of `Auto` so the labels start at the same x on every row:\n   each row is its own Grid, so `Auto` columns do not align across rows. The width\n   must fit the longest selectable model name (`hf-qwen3-coder-next`) without\n   clipping the ComboBox chevron.\n\n5. Point the existing Live Tiers test lookups at the new control. Add a helper to\n   `SettingsTestHelpers` that finds the `LitTierItems` `ItemsControl` by walking\n   the dialog's visual descendants, and use it at all five current call sites\n   (four in `SettingsPanelUiTests.TierModelOverrides.cs`, one in\n   `KeySetupPanelUiTests.cs:211`). `panel.FindControl` cannot cross into the new\n   control's name scope. `KeySetupPanelUiTests.cs` is also at exactly 300 lines,\n   so that edit must not grow it.\n\n6. Update `LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots`\n   (`KeySetupPanelUiTests.cs:198-226`) for the new column count, replacing the\n   \"no child at column 3\" assertion with one that requires the provider\n   `TextBlock` in that slot and checks its text.\n\n7. Add tests covering the two ways the label can lie:\n   - with `HF_TOKEN` only and `tierModelOverrides.frontier = \"gpt-5\"`, the\n     `frontier` row must report OpenAI, not Hugging Face;\n   - assigning a new `SelectedModel` on a `TierModelRow` (for example\n     `frontier` from `glm-5.2` to `kimi-k2`) must move `ProviderName` to\n     Moonshot with no refresh call.\n   Add a `ProviderFor` unit test in the Core test suite covering the\n   `\"fallback\"` alias, a `Chains` model, a `SelectableModelsByTier`-only model\n   (`gpt-5`), and an unknown name returning `null`.\n\n### Out of scope\n\n- Naming the upstream vendor behind a Hugging Face route (for example\n  \"via Hugging Face (Z.AI)\"). That needs a new model\u2192vendor table with no\n  existing source of truth, and a second table to keep from drifting.\n- Any change to tier resolution, to `Chains`, to `SelectableModelsByTier`, or to\n  `tools/backend/litellm-config.yaml`. Resolution behaviour must be identical\n  before and after; this task only renders what is already resolved.\n- The cost-per-model panel, which has its own model list and its own tests.\n- Reconciling the override/auto-resolve disagreement in step 2's evidence at the\n  resolution layer. The label must describe the model on screen; whether that\n  model should be on screen at all is a separate question.\n\n\n## Manifest\nsrc/VisualRelay.Core/Configuration/BackendConfigGenerator.Providers.cs\nsrc/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs\nsrc/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml\nsrc/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml.cs\nsrc/VisualRelay.App/Views/Controls/SettingsPanel.axaml\ntests/VisualRelay.Tests/SettingsTestHelpers.cs\ntests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs\ntests/VisualRelay.Tests/KeySetupPanelUiTests.cs\ntests/VisualRelay.Tests/TierModelProviderTests.cs\ntests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Show the resolved provider on each Live Tiers row in Settings. The provider is already computed and unit-tested (BackendConfigGenerator.ProviderNames -> TierConfigRow.ProviderName -> row view-model) but the DataTemplate never binds it; commit e576e19 dropped the column. The slice: (1) new partial BackendConfigGenerator.Providers.cs holding ProviderNames plus static ProviderFor(model) mapping 'fallback' and every model in ModelToKey/ModelToRequiredKey to its display name, else null \u2014 deliberately bypassing GetRequiredKey, whose defensive HF_TOKEN default would mislabel the claude '(key missing)' row; (2) row view-model keeps ProviderName following the displayed model \u2014 build-time 'ProviderFor(selected) ?? row.ProviderName' plus OnSelectedModelChanged so the label tracks the ComboBox with no refresh; (3) extract SettingsPanel.axaml:204-254 into a LiveTiersSettings UserControl (TimeoutSettings shell, x:DataType vm:MainWindowViewModel, name LitTierItems preserved) because SettingsPanel.axaml, BackendConfigGenerator.cs (298) and KeySetupPanelUiTests.cs are all at the 300-line guard; (4) render a muted 'via Hugging Face' label (Foreground #7F8794, model font size) in a fixed-width model column so labels align across rows and hf-qwen3-coder-next plus the chevron still fits; (5) tests: visual-descendants LitTierItems helper in SettingsTestHelpers (FindControl cannot cross the new name scope) replacing five lookups without growing KeySetupPanelUiTests, column-3 assertion swapped for a provider TextBlock check, an override-lie test (HF_TOKEN only + frontier override gpt-5 reports OpenAI, not Hugging Face), a TierModelRow SelectedModel-change test (glm-5.2 -> kimi-k2 -> Moonshot, no refresh), and a Core ProviderFor unit test (fallback / Chains model / gpt-5 / unknown -> null). Out of scope: upstream-vendor naming, resolution/Chains/litellm-config changes, the cost panel, and reconciling the override/auto-resolve disagreement at the resolution layer.\",\n  \"options\": [\n    \"Spec-conformant: execute the 7-step plan exactly \u2014 partial Providers.cs, imperative ProviderName wiring at build + OnSelectedModelChanged, LiveTiersSettings UserControl extraction, muted 4th column with fixed-width model column, visual-descendants test helper, and the five new/updated tests. Lowest risk and matches the TimeoutSettings precedent and evidence; cost is the most moving parts, with three files pinned to the 300-line guard.\",\n    \"Declarative ProviderName: same UI/control/test work, but make TierModelRow.ProviderName a computed property derived from SelectedModel via ProviderFor (null falls back to the stored row name), removing both imperative call sites and the whole stale-label bug class (including PersistTierOverrideAsync paths). Existing row-vm assertions still hold since values match, but the row model's property semantics change and any test that assigns ProviderName must be revisited.\",\n    \"No UserControl extraction: move the Live Tiers DataTemplate into a ResourceDictionary (or compact SettingsPanel elsewhere) to shed lines under the guard instead of extracting a control, adding the provider column there. FindControl('LitTierItems') keeps working, so no visual-descendants helper and no test-lookup churn; it diverges from the TimeoutSettings precedent, adds a static-resource indirection, and leaves the template coupled to the panel.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The provider name is already computed and unit-tested but never rendered. BackendConfigGenerator.cs:71-77 holds ProviderNames (HF_TOKEN\u2192Hugging Face, DEEPSEEK_API_KEY\u2192DeepSeek, OPENAI_API_KEY\u2192OpenAI, ANTHROPIC_API_KEY\u2192Anthropic, MOONSHOT_API_KEY\u2192Moonshot); GetTierRows (~line 96/134) sets TierConfigRow.ProviderName from it. MainWindowViewModel.Keys.cs:227-236 copies ProviderName into TierModelRow at build time, and PersistTierOverrideAsync (~250) writes config + refreshes cost rows but never rebuilds LitTierRows, so a build-time-only label goes stale on model change. TierModelRow.cs (37 lines, nested ObservableObject partial) has [ObservableProperty] _providerName; OnSelectedModelChanged only invokes OnSelectedModelPersist and uses only CommunityToolkit.Mvvm.ComponentModel (a Core using must be added for ProviderFor). SettingsPanel.axaml:204-254 renders the Live Tiers Border with ItemsControl x:Name='LitTierItems' (x:DataType='vm:MainWindowViewModel+TierModelRow'), Grid 'Auto,Auto,*', dot/Tier/ComboBox columns \u2014 nothing binds ProviderName; commit e576e19 dropped the 4th column. GetRequiredKey (Selectable.cs:63, internal) defensively defaults unknown names to HF_TOKEN, so ProviderFor must bypass it to avoid mislabeling the claude '(key missing)' row; ModelToRequiredKey currently has only gpt-5\u2192OPENAI_API_KEY. BackendConfigGenerator is already public static partial across Selectable.cs (112) and TierResolution.cs (19), so a Providers.cs partial fits. TimeoutSettings.axaml/.axaml.cs is the confirmed extraction shell: partial UserControl with InitializeComponent-only code-behind, x:DataType='vm:MainWindowViewModel', x:Name='Root', Border #12151C/#252A33/CornerRadius4/Padding10 \u2192 StackPanel Spacing6; sibling controls ObsidianSettings/CostPerModel/SandboxPaths and BoolNotConverter.Instance confirm conventions. Tests: KeySetupPanelUiTests.cs:198-226 asserts one row per tier, row-VM ProviderNames at 179/184/194, and 'no child at column 3' at ~221 (this becomes the provider-TextBlock assertion); 4 FindControl('LitTierItems') sites in TierModelOverrides.cs (25/59/90/128) and 1 in KeySetupPanelUiTests.cs:211; SettingsTestHelpers.cs (166) has no visual-descendants walker yet; SettingsModalUiTests.cs finds 'Live Tiers' by text (unaffected). FileSizeGuard (tools/VisualRelay.Guards) flags *.cs/*.axaml over 300 lines under src/tests/tools, exactly 300 OK; TreatWarningsAsErrors + AnalysisLevel latest are on. Pinned files: SettingsPanel.axaml (300), BackendConfigGenerator.cs (298), Keys.cs (299), KeySetupPanelUiTests.cs (300).\",\n  \"constraints\": [\n    \"SettingsPanel.axaml, BackendConfigGenerator.cs, MainWindowViewModel.Keys.cs, and KeySetupPanelUiTests.cs are all at the 300-line file-size guard; every edit must keep them \u2264300 lines and KeySetupPanelUiTests.cs must not grow at all (the LitTierItems helper call must be net-shorter than the FindControl line it replaces).\",\n    \"ProviderFor must not route through GetRequiredKey, whose defensive HF_TOKEN default would label the claude row's '(key missing)' placeholder as Hugging Face; it must return null for unknown models so 'ProviderFor(selected) ?? row.ProviderName' preserves current behavior.\",\n    \"panel.FindControl cannot cross into the new LiveTiersSettings control's name scope, so tests must find LitTierItems via a visual-descendants walker added to SettingsTestHelpers, used at all five existing call sites.\",\n    \"The extracted LiveTiersSettings control must follow the TimeoutSettings shell exactly: same UserControl root, x:DataType='vm:MainWindowViewModel', no code-behind beyond InitializeComponent, and must keep x:Name='LitTierItems' and x:DataType='vm:MainWindowViewModel+TierModelRow' (nested-type syntax) in the template.\",\n    \"The model column needs a fixed width (not Auto) wide enough for 'hf-qwen3-coder-next' plus the ComboBox chevron (MinWidth 160 is insufficient) so the 'via Hugging Face' muted labels (#7F8794, same font size as the model text) align across rows, since each row is its own Grid.\",\n    \"TreatWarningsAsErrors and AnalysisLevel latest are enabled; TierModelRow.cs needs a VisualRelay.Core.Configuration using for ProviderFor and everything must compile clean (Avalonia compiled bindings require the x:DataType).\",\n    \"Out of scope: upstream-vendor naming behind Hugging Face routes, any change to tier resolution/Chains/SelectableModelsByTier/tools/backend/litellm-config.yaml (resolution behavior must be identical), the cost-per-model panel, and reconciling the override/auto-resolve disagreement at the resolution layer \u2014 the label must describe the model on screen.\",\n    \"Protected paths llm-tasks/, .relay/, .swival/ are never part of the diff; throwaway artifacts go in .relay/scratch/.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Root cause: the provider name is computed end-to-end but never rendered. BackendConfigGenerator.cs:71-78 defines the private ProviderNames map (HF_TOKEN\u2192'Hugging Face', DEEPSEEK_API_KEY\u2192'DeepSeek', MOONSHOT_API_KEY\u2192'Moonshot', ANTHROPIC_API_KEY\u2192'Anthropic', OPENAI_API_KEY\u2192'OpenAI'); GetTierRows sets TierConfigRow.ProviderName from it (lines 113 and 134); MainWindowViewModel.Keys.cs:227-236 copies it into TierModelRow.ProviderName; TierModelRow.cs:16-17 exposes [ObservableProperty] _providerName. But the Live Tiers DataTemplate in SettingsPanel.axaml:204-254 only binds Tier, KeyPresent, and SelectedModel in a three-column 'Auto,Auto,*' Grid (line 224) \u2014 nothing binds ProviderName. Commit e576e19 dropped the 4th column when the grid shrank to three columns.\\n\\nTwo ways the label can lie, even after a column is added:\\n(1) Override vs auto-resolve disagreement. MainWindowViewModel.Keys.cs:219-225 chooses 'selected' = the config override whenever that override appears in row.SelectableModels \u2014 regardless of whether the override's key is present. But TryApplyOverride (BackendConfigGenerator.Selectable.cs:74-111) ignores an override whose key is absent and lets auto-resolution proceed. With only HF_TOKEN set and tierModelOverrides.frontier='gpt-5', the row displays gpt-5 while row.ProviderName still describes the auto-resolved glm-5.2 (Hugging Face). Fix: ProviderName = BackendConfigGenerator.ProviderFor(selected) ?? row.ProviderName, so the label describes the model actually shown and null preserves the '(key missing)' fallback.\\n(2) Stale label on model change. OnSelectedModelChanged (TierModelRow.cs:32-35) only fires OnSelectedModelPersist, and PersistTierOverrideAsync (Keys.cs:257-280) writes config without rebuilding LitTierRows. A label computed only at build time would go stale the instant the user picks a different model in the ComboBox. Fix: OnSelectedModelChanged must also update ProviderName when ProviderFor(value) is non-null.\\n\\nProviderFor must be a new public static on BackendConfigGenerator that maps 'fallback'\u2192Hugging Face, every ModelToKey entry, and every ModelToRequiredKey entry (gpt-5\u2192OpenAI), returning null otherwise. It must NOT route through GetRequiredKey (Selectable.cs:63-69), whose defensive 'unknown \u2192 HF_TOKEN' default would label the claude '(key missing)' row as Hugging Face.\\n\\nFile-size guard: tools/VisualRelay.Guards/FileSizeGuard.cs flags *.cs/*.axaml over 300 lines under src/tests/tools. Pinned files measured today: SettingsPanel.axaml=300, BackendConfigGenerator.cs=298, MainWindowViewModel.Keys.cs=299, KeySetupPanelUiTests.cs=300. So the change must shed lines, not add them: move ProviderNames into a new partial BackendConfigGenerator.Providers.cs; extract SettingsPanel.axaml:204-254 into a new LiveTiersSettings UserControl (TimeoutSettings shell: InitializeComponent-only code-behind, x:DataType='vm:MainWindowViewModel', keep x:Name='LitTierItems' and the nested-type template x:DataType='vm:MainWindowViewModel+TierModelRow'); replace the block with <controls:LiveTiersSettings/>. The model column needs a fixed width (not Auto) because each row is its own Grid, so Auto columns do not align across rows; the width must fit the longest selectable model 'hf-qwen3-coder-next' plus the ComboBox chevron (MinWidth 160 is insufficient). The provider renders as a muted 4th-column label 'via Hugging Face' (Foreground '#7F8794', same font size as model text).\\n\\nTests: all five 'LitTierItems' lookups use panel.FindControl \u2014 SettingsPanelUiTests.TierModelOverrides.cs:25/59/90/128 and KeySetupPanelUiTests.cs:211 \u2014 and FindControl cannot cross into the new control's name scope, so SettingsTestHelpers (166 lines, already using Avalonia.VisualTree) needs a visual-descendants finder. LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots (KeySetupPanelUiTests.cs:198-226) filters Grid.ColumnDefinitions.Count==3 and asserts 'no child at column 3'; it must become a 4-column grid with a provider TextBlock in that slot and a text check. New tests: HF_TOKEN-only + tierModelOverrides.frontier='gpt-5' \u21d2 frontier row ProviderName 'OpenAI'; assigning SelectedModel 'glm-5.2'\u2192'kimi-k2' on a frontier TierModelRow \u21d2 ProviderName 'Moonshot' with no refresh call; a Core ProviderFor test for 'fallback', a Chains model, gpt-5, and unknown\u2192null. Note: SplitGuardVerificationTests.FactCount_AcrossOversizedFiles_MatchesBaseline counts [Fact]s across oversized-family prefixes including 'BackendConfigGeneratorSelectableTests', so the new ProviderFor unit test should live in a new standalone file (e.g. BackendConfigGeneratorProvidersTests.cs, which does not match any prefix) to avoid a 177\u2192178 baseline bump, or the baseline must be bumped.\",\n  \"excerpts\": [\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs:70-78 \u2014 private static readonly IReadOnlyDictionary<string, string> ProviderNames = new Dictionary<string, string> { [\\\"HF_TOKEN\\\"] = \\\"Hugging Face\\\", [\\\"DEEPSEEK_API_KEY\\\"] = \\\"DeepSeek\\\", [\\\"MOONSHOT_API_KEY\\\"] = \\\"Moonshot\\\", [\\\"ANTHROPIC_API_KEY\\\"] = \\\"Anthropic\\\", [\\\"OPENAI_API_KEY\\\"] = \\\"OpenAI\\\" };\",\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs:131-140 \u2014 rows.Add(new TierConfigRow(Tier: tier, Model: model, ProviderName: ProviderNames[requiredKey], KeyPresent: presentKeys.Contains(requiredKey), ...)\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs:219-236 \u2014 var selected = overrides is not null && overrides.TryGetValue(row.Tier, out var ov) && row.SelectableModels.Contains(ov, StringComparer.Ordinal) ? ov : row.Model; ... ProviderName = row.ProviderName,\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs:32-35 \u2014 partial void OnSelectedModelChanged(string value) { _ = OnSelectedModelPersist?.Invoke(value); }\",\n    \"src/VisualRelay.App/Views/Controls/SettingsPanel.axaml:223-248 \u2014 <DataTemplate x:DataType=\\\"vm:MainWindowViewModel+TierModelRow\\\"> <Grid ColumnDefinitions=\\\"Auto,Auto,*\\\" ...> ... <ComboBox ... SelectedItem=\\\"{Binding SelectedModel, Mode=TwoWay}\\\" .../> <TextBlock ... Text=\\\"{Binding SelectedModel}\\\" .../> \u2014 no ProviderName binding anywhere.\",\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs:63-69 \u2014 internal static string GetRequiredKey(string model) { if (model == \\\"fallback\\\") return \\\"HF_TOKEN\\\"; if (ModelToKey.TryGetValue(model, out var key)) return key; return ModelToRequiredKey.GetValueOrDefault(model, \\\"HF_TOKEN\\\"); }\",\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs:49-52 \u2014 private static readonly Dictionary<string, string> ModelToRequiredKey = new() { [\\\"gpt-5\\\"] = \\\"OPENAI_API_KEY\\\", };\",\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs:74-84 \u2014 var ovKey = GetRequiredKey(ov); if (!presentKeys.Contains(ovKey)) return false; // Key absent \u2192 override ignored, auto-resolve proceeds.\",\n    \"tests/VisualRelay.Tests/KeySetupPanelUiTests.cs:211-224 \u2014 var itemsControl = panel.FindControl<ItemsControl>(\\\"LitTierItems\\\")!; ... var grids = itemsControl.GetVisualDescendants().OfType<Grid>().Where(g => g.ColumnDefinitions.Count == 3).ToList(); ... foreach (var child in grid.Children) Assert.NotEqual(3, Grid.GetColumn(child));\",\n    \"tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs:24-26 (and 59, 90, 128) \u2014 var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First(); var litTierItems = panel.FindControl<ItemsControl>(\\\"LitTierItems\\\");\",\n    \"tools/VisualRelay.Guards/FileSizeGuard.cs:19,49-68 \u2014 Extensions = [\\\".cs\\\", \\\".axaml\\\"]; Enumerate(...) returns files whose File.ReadAllLines length > limit (default 300).\"\n  ],\n  \"repro\": \"1. Launch the app, create/open a repo, and put only 'HF_TOKEN=hf-xxx' in visual-relay/.env. Open Settings \u2192 Live Tiers: every row shows a resolved model (e.g. frontier \u2192 glm-5.2) with no provider text and no 'via \u2026' label; a reader cannot distinguish glm-5.2 (Hugging Face route) from deepseek-v4-pro (DeepSeek first-party).\\n2. Write .relay/config.json containing {\\\"tierModelOverrides\\\":{\\\"frontier\\\":\\\"gpt-5\\\"}} while still having only HF_TOKEN. Reopen Settings (or call vm.OpenSettingsAsync()): the frontier row's ComboBox displays gpt-5, but the row's ProviderName (currently asserted only at the VM layer, e.g. KeySetupPanelUiTests.cs:179) is 'Hugging Face' \u2014 the provider of the auto-resolved glm-5.2, because TryApplyOverride dropped the absent-key override while the VM still displayed it. After the fix, the rendered label must read 'via OpenAI'.\\n3. In Live Tiers, change the frontier ComboBox from glm-5.2 to kimi-k2: a build-time-only provider label stays 'via Hugging Face' because OnSelectedModelChanged/PersistTierOverrideAsync never rebuild LitTierRows or recompute ProviderName. After the fix, the label must move to 'via Moonshot' immediately with no refresh or backend restart.\\n4. Verify via tests: dotnet test --filter 'LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots' currently expects a 3-column grid and 'no child at column 3'; after the change it must expect 4 columns and a provider TextBlock in column 3. The five existing 'LitTierItems' lookups must go through a new visual-descendants helper because panel.FindControl cannot cross into the extracted LiveTiersSettings name scope.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"Implement the provider label without changing resolution behaviour.\\n\\nCORE\\n1. NEW src/VisualRelay.Core/Configuration/BackendConfigGenerator.Providers.cs \u2014 move the ProviderNames dictionary here from BackendConfigGenerator.cs and add:\\n   public static string? ProviderFor(string model) {\\n     if (model == 'fallback') return ProviderNames['HF_TOKEN'];\\n     if (ModelToKey.TryGetValue(model, out var key)) return ProviderNames[key];\\n     if (ModelToRequiredKey.TryGetValue(model, out key)) return ProviderNames[key];\\n     return null;\\n   }\\n   It must NOT call GetRequiredKey (whose unknown-name -> HF_TOKEN default would mislabel the claude '(key missing)' row).\\n2. src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs \u2014 delete the ProviderNames block (lines 70-79 including the trailing blank line) so the file shrinks from 298 to ~288 lines.\\n\\nVIEW-MODEL\\n3. src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs:231 \u2014 replace `ProviderName = row.ProviderName,` with `ProviderName = BackendConfigGenerator.ProviderFor(selected) ?? row.ProviderName,` (null fallback preserves the '(key missing)' Anthropic row). File stays 299 lines.\\n4. src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs \u2014 add `using VisualRelay.Core.Configuration;` and extend OnSelectedModelChanged to set ProviderName when ProviderFor(value) is non-null before invoking OnSelectedModelPersist, so the label tracks the ComboBox with no refresh.\\n\\nVIEW\\n5. NEW src/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml + .axaml.cs \u2014 TimeoutSettings shell (UserControl, x:DataType='vm:MainWindowViewModel', x:Name='Root', Border #12151C/#252A33/CornerRadius4/Padding10 -> StackPanel Spacing6). Keep ItemsControl x:Name='LitTierItems' and DataTemplate x:DataType='vm:MainWindowViewModel+TierModelRow'. Row Grid becomes ColumnDefinitions='Auto,72,180,*' (dot Auto, tier fixed 72, model fixed 180, provider *). Provider renders as `<TextBlock Grid.Column='3' Text=\\\"{Binding ProviderName, StringFormat='via {0}'}\\\" Foreground='#7F8794' FontSize='12' VerticalAlignment='Center'/>`. Drop the ComboBox MinWidth 160 (fixed 180 column fits hf-qwen3-coder-next + chevron).\\n6. src/VisualRelay.App/Views/Controls/SettingsPanel.axaml \u2014 replace the Live Tiers Border (lines 204-254) with `<controls:LiveTiersSettings/>` where the Border was; file drops from 300 to ~250 lines.\\n\\nTESTS\\n7. tests/VisualRelay.Tests/SettingsTestHelpers.cs \u2014 add `FindLitTierItems(Visual root)` that returns the named LitTierItems ItemsControl via GetVisualDescendants (FindControl cannot cross the new name scope).\\n8. tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs \u2014 replace all four `panel.FindControl<ItemsControl>('LitTierItems')` sites with `SettingsTestHelpers.FindLitTierItems(panel)`.\\n9. tests/VisualRelay.Tests/KeySetupPanelUiTests.cs \u2014 swap line 211 to the helper (1-for-1) and update LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots: filter ColumnDefinitions.Count == 4, replace the 'no child at column 3' assertion with a direct-child TextBlock in column 3 whose text StartsWith 'via ' (net -1 line, file stays <=300).\\n10. NEW tests/VisualRelay.Tests/TierModelProviderTests.cs \u2014 [Fact] HF_TOKEN-only + tierModelOverrides.frontier='gpt-5' (via RelayConfigWriter.UpsertTierModelOverrides) -> frontier row SelectedModel 'gpt-5' and ProviderName 'OpenAI'; [Fact] TierModelRow frontier SelectedModel glm-5.2 -> kimi-k2 moves ProviderName to 'Moonshot' with no refresh/persist call.\\n11. NEW tests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs \u2014 [Fact] ProviderFor: 'fallback'->Hugging Face, a Chains model (deepseek-v4-pro)->DeepSeek, a SelectableModelsByTier-only model (gpt-5)->OpenAI, and unknown->null. The new file name matches no SplitGuardVerificationTests oversized-family prefix, so the 177 baseline is unchanged.\\n\\nNo changes to tier resolution, Chains, SelectableModelsByTier, tools/backend/litellm-config.yaml, or the cost-per-model panel.\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/Configuration/BackendConfigGenerator.Providers.cs\",\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs\",\n    \"+src/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml\",\n    \"+src/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml.cs\",\n    \"src/VisualRelay.App/Views/Controls/SettingsPanel.axaml\",\n    \"tests/VisualRelay.Tests/SettingsTestHelpers.cs\",\n    \"tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs\",\n    \"tests/VisualRelay.Tests/KeySetupPanelUiTests.cs\",\n    \"+tests/VisualRelay.Tests/TierModelProviderTests.cs\",\n    \"+tests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/SettingsTestHelpers.cs\",\n    \"tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs\",\n    \"tests/VisualRelay.Tests/KeySetupPanelUiTests.cs\",\n    \"tests/VisualRelay.Tests/TierModelProviderTests.cs\",\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs\"\n  ],\n  \"rationale\": \"Authored the Live Tiers provider tests without touching production code. SettingsTestHelpers gains FindLitTierItems, a visual-descendant walker that keeps working once LitTierItems moves into the extracted LiveTiersSettings name scope; all five existing lookups (four in SettingsPanelUiTests.TierModelOverrides.cs, one in KeySetupPanelUiTests.cs) now use it. KeySetupPanelUiTests.LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots now expects a 4-column row grid and a column-3 provider TextBlock whose text starts with 'via '. TierModelProviderTests covers the two label-lie paths: HF_TOKEN-only with tierModelOverrides.frontier=gpt-5 must report OpenAI (not Hugging Face), and assigning SelectedModel glm-5.2 -> kimi-k2 must move ProviderName to Moonshot without a refresh. BackendConfigGeneratorProvidersTests covers ProviderFor for 'fallback', a Chains model (deepseek-v4-pro), a SelectableModelsByTier-only model (gpt-5), and unknown -> null. Verified red via 'sh tools/dotnet-test-files.sh <test files>': the only build errors are the four expected CS0117 'ProviderFor does not exist' references in BackendConfigGeneratorProvidersTests.cs (new-API author-test), and the remaining tests compile and would fail on assertions because current code keeps the auto-resolved provider and a 3-column grid.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/SettingsTestHelpers.cs tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs tests/VisualRelay.Tests/KeySetupPanelUiTests.cs tests/VisualRelay.Tests/TierModelProviderTests.cs tests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs\n\n## Before you declare done\nOnce the targeted command above passes, run the project's FULL test suite ONCE to catch cross-cutting checks the targeted run cannot surface:\n- Project-wide guards (size budgets, perf ceilings, assertion ratchets)\n- Lint / style / format gates\n- Tests that enforce special standards or invariants\n- Test-ordering hazards that only appear in a full run\n\nRun this exact command for the full suite:\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none\n\nIf the full suite fails, fix the failures and re-run the full command until it exits 0. Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks to make it pass.",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{ \"summary\": \"Implemented the provider routing label on the Live Tiers settings screen without changing resolution behaviour. Added BackendConfigGenerator.Providers.cs (new partial) holding the ProviderNames dictionary plus public static string? ProviderFor(string) that maps 'fallback', ModelToKey entries, and ModelToRequiredKey entries to display names and returns null otherwise, deliberately bypassing GetRequiredKey. Removed the ProviderNames block from BackendConfigGenerator.cs (298\u2192288 lines). Updated MainWindowViewModel.Keys.cs:231 to `ProviderName = BackendConfigGenerator.ProviderFor(selected) ?? row.ProviderName` and MainWindowViewModel.TierModelRow.cs to add the Core using and update ProviderName in OnSelectedModelChanged when non-null. Extracted the Live Tiers block into LiveTiersSettings.axaml/.axaml.cs (TimeoutSettings shell) and replaced it in SettingsPanel.axaml with <controls:LiveTiersSettings/> (300\u2192251 lines), keeping x:Name='LitTierItems' and the nested-type DataTemplate, with a 4-column row grid (Auto,72,180,*) and a muted '#7F8794' FontSize 12 'via {0}' provider label in column 3. Test lookups already use SettingsTestHelpers.FindLitTierItems at all five sites; KeySetupPanelUiTests now asserts a 4-column grid with a column-3 provider TextBlock starting 'via '. Added TierModelProviderTests (override-lie OpenAI case + SelectedModel-change Moonshot/no-refresh case) and BackendConfigGeneratorProvidersTests (fallback/Chains/gpt-5/unknown). Targeted command passed (22/22); full suite passed (3363 passed, 115 skipped, 0 failed).\" }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 17,
+    "tool_calls_total": 26,
+    "tool_calls_succeeded": 26,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_multiple_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 17,
+    "total_llm_time_s": 155.04,
+    "prompt_cache": {
+      "cached_tokens": 630400,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 51.253,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 6.382,
+      "prompt_tokens_est": 12432,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.TierResolution.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/Views/Controls/SettingsPanel.axaml"
+          },
+          {
+            "file_path": "src/VisualRelay.App/Views/Controls/TimeoutSettings.axaml"
+          },
+          {
+            "file_path": "src/VisualRelay.App/Views/Controls/TimeoutSettings.axaml.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 34717
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/SettingsTestHelpers.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/KeySetupPanelUiTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 29870
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 9.689,
+      "prompt_tokens_est": 28729,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SettingsPanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 18763
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/TimeoutSettings.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1909
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/TimeoutSettings.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 250
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.404,
+      "prompt_tokens_est": 33985,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/TierModelProviderTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2694
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.193,
+      "result_length": 5827
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 47.643,
+      "prompt_tokens_est": 36325,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/VisualRelay.App.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1648
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/VisualRelay.Core.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2396
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 7.169,
+      "prompt_tokens_est": 40898,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.Providers.cs",
+        "content": "namespace VisualRelay.Core.Configuration;\n\npublic static partial class BackendConfigGenerator\n{\n    /// <summary>Env-var \u2192 human-readable provider name.</summary>\n    private static readonly IReadOnlyDictionary<string, string> ProviderNames = new Dictionary<string, string>\n    {\n        [\"HF_TOKEN\"] = \"Hugging Face\",\n        [\"DEEPSEEK_API_KEY\"] = \"DeepSeek\",\n        [\"MOONSHOT_API_KEY\"] = \"Moonshot\",\n        [\"ANTHROPIC_API_KEY\"] = \"Anthropic\",\n        [\"OPENAI_API_KEY\"] = \"OpenAI\",\n    };\n\n    /// <summary>\n    /// Returns the human-readable provider serving <paramref name=\"model\"/>, or\n    /// <c>null</c> for unknown models. Deliberately does not route through\n    /// <see cref=\"GetRequiredKey\"/>, whose defensive unknown \u2192 <c>HF_TOKEN</c>\n    /// default would label placeholders like <c>\"(key missing)\"</c> as Hugging Face.\n    /// </summary>\n    public static string? ProviderFor(string model)\n    {\n        if (model == \"fallback\") return ProviderNames[\"HF_TOKEN\"];\n        if (ModelToKey.TryGetValue(model, out var key)) return ProviderNames[key];\n        if (ModelToRequiredKey.TryGetValue(model, out key)) return ProviderNames[key];\n        return null;\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 110
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs",
+        "old_string": "    };\n\n    /// <summary>Env-var \u2192 human-readable provider name.</summary>\n    private static readonly IReadOnlyDictionary<string, string> ProviderNames = new Dictionary<string, string>\n    {\n        [\"HF_TOKEN\"] = \"Hugging Face\",\n        [\"DEEPSEEK_API_KEY\"] = \"DeepSeek\",\n        [\"MOONSHOT_API_KEY\"] = \"Moonshot\",\n        [\"ANTHROPIC_API_KEY\"] = \"Anthropic\",\n        [\"OPENAI_API_KEY\"] = \"OpenAI\",\n    };\n\n    /// <summary>Model name \u2192 required env var (excluding \"fallback\" alias).</summary>",
+        "new_string": "    };\n\n    /// <summary>Model name \u2192 required env var (excluding \"fallback\" alias).</summary>"
+      },
+      "succeeded": true,
+      "duration_s": 0.01,
+      "result_length": 87
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 5.326,
+      "prompt_tokens_est": 41588,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs",
+        "old_string": "                    ProviderName = row.ProviderName,",
+        "new_string": "                    ProviderName = BackendConfigGenerator.ProviderFor(selected) ?? row.ProviderName,"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs",
+        "old_string": "using CommunityToolkit.Mvvm.ComponentModel;\n\nnamespace VisualRelay.App.ViewModels;",
+        "new_string": "using CommunityToolkit.Mvvm.ComponentModel;\nusing VisualRelay.Core.Configuration;\n\nnamespace VisualRelay.App.ViewModels;"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 93
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs",
+        "old_string": "        partial void OnSelectedModelChanged(string value)\n        {\n            _ = OnSelectedModelPersist?.Invoke(value);\n        }",
+        "new_string": "        partial void OnSelectedModelChanged(string value)\n        {\n            if (BackendConfigGenerator.ProviderFor(value) is { } provider)\n                ProviderName = provider;\n            _ = OnSelectedModelPersist?.Invoke(value);\n        }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 93
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 13.233,
+      "prompt_tokens_est": 41953,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "<UserControl xmlns=\"https://github.com/avaloniaui\"\n             xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"\n             xmlns:vm=\"using:VisualRelay.App.ViewModels\"\n             xmlns:controls=\"using:VisualRelay.App.Views.Controls\"\n             x:Class=\"VisualRelay.App.Views.Controls.LiveTiersSettings\"\n             x:DataType=\"vm:MainWindowViewModel\"\n             x:Name=\"Root\">\n  <Border Background=\"#12151C\" BorderBrush=\"#252A33\" BorderThickness=\"1\" CornerRadius=\"4\" Padding=\"10\">\n    <StackPanel Spacing=\"6\">\n      <TextBlock Text=\"Live Tiers\" FontSize=\"13\" FontWeight=\"Bold\" Foreground=\"#F2F5FA\"/>\n      <TextBlock Text=\"Changes apply on the next backend start.\" FontSize=\"11\"\n                 Foreground=\"#9AA3B1\" Margin=\"0,0,0,2\"/>\n      <ItemsControl x:Name=\"LitTierItems\"\n                    ItemsSource=\"{Binding LitTierRows}\">\n        <ItemsControl.ItemsPanel>\n          <ItemsPanelTemplate>\n            <StackPanel Spacing=\"6\"/>\n          </ItemsPanelTemplate>\n        </ItemsControl.ItemsPanel>\n        <ItemsControl.ItemTemplate>\n          <DataTemplate x:DataType=\"vm:MainWindowViewModel+TierModelRow\">\n            <Grid ColumnDefinitions=\"Auto,72,180,*\"\n                  ColumnSpacing=\"6\">\n              <!-- Green dot when key is present -->\n              <Ellipse Width=\"8\" Height=\"8\" Fill=\"#5AD47D\"\n                       VerticalAlignment=\"Center\"\n                       IsVisible=\"{Binding KeyPresent}\"/>\n              <!-- Gray dot when key is missing -->\n              <Ellipse Width=\"8\" Height=\"8\" Fill=\"#4A5568\"\n                       VerticalAlignment=\"Center\"\n                       IsVisible=\"{Binding KeyPresent, Converter={x:Static controls:BoolNotConverter.Instance}}\"/>\n              <!-- Tier name (bold) -->\n              <TextBlock Grid.Column=\"1\" Text=\"{Binding Tier}\"\n                         FontWeight=\"SemiBold\" Foreground=\"#E7ECF3\"\n                         VerticalAlignment=\"Center\" FontSize=\"13\"/>\n              <!-- Model ComboBox (editable tiers only) -->\n              <ComboBox Grid.Column=\"2\"\n                        ItemsSource=\"{Binding SelectableModels}\"\n                        SelectedItem=\"{Binding SelectedModel, Mode=TwoWay}\"\n                        IsVisible=\"{Binding IsEditable}\"\n                        FontSize=\"12\"/>\n              <!-- Read-only model name (non-editable tiers) -->\n              <TextBlock Grid.Column=\"2\" Text=\"{Binding SelectedModel}\"\n                         IsVisible=\"{Binding IsEditable, Converter={x:Static controls:BoolNotConverter.Instance}}\"\n                         Foreground=\"#7F8794\" VerticalAlignment=\"Center\" FontSize=\"12\"/>\n              <!-- Provider routing label -->\n              <TextBlock Grid.Column=\"3\" Text=\"{Binding ProviderName, StringFormat='via {0}'}\"\n                         Foreground=\"#7F8794\" VerticalAlignment=\"Center\" FontSize=\"12\"/>\n            </Grid>\n          </DataTemplate>\n        </ItemsControl.ItemTemplate>\n      </ItemsControl>\n    </StackPanel>\n  </Border>\n</UserControl>\n",
+        "file_path": "src/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 98
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using Avalonia.Controls;\n\nnamespace VisualRelay.App.Views.Controls;\n\npublic partial class LiveTiersSettings : UserControl\n{\n    public LiveTiersSettings()\n    {\n        InitializeComponent();\n    }\n}\n",
+        "file_path": "src/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 100
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 6.97,
+      "prompt_tokens_est": 43217,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SettingsPanel.axaml",
+        "old_string": "        <!-- Lit-tiers summary \u2014 one row per tier -->\n        <Border Background=\"#12151C\"\n                BorderBrush=\"#252A33\"\n                BorderThickness=\"1\"\n                CornerRadius=\"4\"\n                Padding=\"10\">\n          <StackPanel Spacing=\"6\">\n            <TextBlock Text=\"Live Tiers\" FontSize=\"13\"\n                       FontWeight=\"Bold\" Foreground=\"#F2F5FA\"/>\n            <TextBlock Text=\"Changes apply on the next backend start.\" FontSize=\"11\"\n                       Foreground=\"#9AA3B1\" Margin=\"0,0,0,2\"/>\n            <ItemsControl x:Name=\"LitTierItems\"\n                          ItemsSource=\"{Binding LitTierRows}\">\n              <ItemsControl.ItemsPanel>\n                <ItemsPanelTemplate>\n                  <StackPanel Spacing=\"6\"/>\n                </ItemsPanelTemplate>\n              </ItemsControl.ItemsPanel>\n              <ItemsControl.ItemTemplate>\n                <DataTemplate x:DataType=\"vm:MainWindowViewModel+TierModelRow\">\n                  <Grid ColumnDefinitions=\"Auto,Auto,*\"\n                        ColumnSpacing=\"6\">\n                    <!-- Green dot when key is present -->\n                    <Ellipse Width=\"8\" Height=\"8\" Fill=\"#5AD47D\"\n                             VerticalAlignment=\"Center\"\n                             IsVisible=\"{Binding KeyPresent}\"/>\n                    <!-- Gray dot when key is missing -->\n                    <Ellipse Width=\"8\" Height=\"8\" Fill=\"#4A5568\"\n                             VerticalAlignment=\"Center\"\n                             IsVisible=\"{Binding KeyPresent, Converter={x:Static controls:BoolNotConverter.Instance}}\"/>\n                    <!-- Tier name (bold) -->\n                    <TextBlock Grid.Column=\"1\" Text=\"{Binding Tier}\"\n                               FontWeight=\"SemiBold\" Foreground=\"#E7ECF3\"\n                               VerticalAlignment=\"Center\" FontSize=\"13\"/>\n                    <!-- Model ComboBox (editable tiers only) -->\n                    <ComboBox Grid.Column=\"2\"\n                              ItemsSource=\"{Binding SelectableModels}\"\n                              SelectedItem=\"{Binding SelectedModel, Mode=TwoWay}\"\n                              IsVisible=\"{Binding IsEditable}\"\n                              MinWidth=\"160\"\n                              FontSize=\"12\"/>\n                    <!-- Read-only model name (non-editable tiers) -->\n                    <TextBlock Grid.Column=\"2\" Text=\"{Binding SelectedModel}\"\n                               IsVisible=\"{Binding IsEditable, Converter={x:Static controls:BoolNotConverter.Instance}}\"\n                               Foreground=\"#7F8794\" VerticalAlignment=\"Center\" FontSize=\"12\"/>\n                  </Grid>\n                </DataTemplate>\n              </ItemsControl.ItemTemplate>\n            </ItemsControl>\n          </StackPanel>\n        </Border>\n\n        <Border Background=\"#12151C\"",
+        "new_string": "        <!-- Lit-tiers summary \u2014 one row per tier -->\n        <controls:LiveTiersSettings/>\n\n        <Border Background=\"#12151C\""
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 81
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 6.925,
+      "prompt_tokens_est": 43961,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs src/VisualRelay.Core/Configuration/BackendConfigGenerator.Providers.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs src/VisualRelay.App/Views/Controls/SettingsPanel.axaml src/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml src/VisualRelay.App/Views/Controls/LiveTiersSettings.axaml.cs tests/VisualRelay.Tests/KeySetupPanelUiTests.cs tests/VisualRelay.Tests/SettingsTestHelpers.cs tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs tests/VisualRelay.Tests/TierModelProviderTests.cs tests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.077,
+      "result_length": 833
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.246,
+      "prompt_tokens_est": 44636,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/dotnet-test-files.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1061
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 4.164,
+      "prompt_tokens_est": 45082,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/SettingsTestHelpers.cs tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs tests/VisualRelay.Tests/KeySetupPanelUiTests.cs tests/VisualRelay.Tests/TierModelProviderTests.cs tests/VisualRelay.Tests/BackendConfigGeneratorProvidersTests.cs",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 21.002,
+      "result_length": 1922
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 2.787,
+      "prompt_tokens_est": 45851,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none",
+        "timeout": 600
+      },
+      "succeeded": true,
+      "duration_s": 29.7,
+      "result_length": 2281
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.46,
+      "prompt_tokens_est": 46608,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_b455955c9936.txt",
+        "tail_lines": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 4639
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 21.395,
+      "prompt_tokens_est": 48073,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FindControl<ItemsControl>|FindControl\\(.*LitTierItems|FindLitTierItems",
+        "path": "tests/VisualRelay.Tests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.161,
+      "result_length": 680
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ProviderNames|ProviderFor",
+        "path": "src",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.077,
+      "result_length": 1004
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 3.703,
+      "prompt_tokens_est": 49982,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SettingsPanel.axaml",
+        "offset": 198,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 928
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 3.208,
+      "prompt_tokens_est": 50289,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs",
+        "limit": 20,
+        "offset": 64
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 835
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 7.337,
+      "prompt_tokens_est": 50572,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

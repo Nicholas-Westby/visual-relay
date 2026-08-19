@@ -67,16 +67,6 @@ public static partial class BackendConfigGenerator
         ],
     };
 
-    /// <summary>Env-var → human-readable provider name.</summary>
-    private static readonly IReadOnlyDictionary<string, string> ProviderNames = new Dictionary<string, string>
-    {
-        ["HF_TOKEN"] = "Hugging Face",
-        ["DEEPSEEK_API_KEY"] = "DeepSeek",
-        ["MOONSHOT_API_KEY"] = "Moonshot",
-        ["ANTHROPIC_API_KEY"] = "Anthropic",
-        ["OPENAI_API_KEY"] = "OpenAI",
-    };
-
     /// <summary>Model name → required env var (excluding "fallback" alias).</summary>
     private static readonly IReadOnlyDictionary<string, string> ModelToKey = Chains.Values
         .SelectMany(c => c)

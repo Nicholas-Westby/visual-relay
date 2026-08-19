@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.App.ViewModels;
 
@@ -31,6 +32,8 @@ public partial class MainWindowViewModel
 
         partial void OnSelectedModelChanged(string value)
         {
+            if (BackendConfigGenerator.ProviderFor(value) is { } provider)
+                ProviderName = provider;
             _ = OnSelectedModelPersist?.Invoke(value);
         }
     }

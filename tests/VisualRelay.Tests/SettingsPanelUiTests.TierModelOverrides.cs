@@ -22,7 +22,7 @@ public sealed partial class SettingsPanelUiTests
         var dialog = await OpenScopedSettingsAsync(repo);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var litTierItems = panel.FindControl<ItemsControl>("LitTierItems");
+        var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
         Assert.NotNull(litTierItems);
 
         Dispatcher.UIThread.RunJobs();
@@ -56,7 +56,7 @@ public sealed partial class SettingsPanelUiTests
         Dispatcher.UIThread.RunJobs();
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var litTierItems = panel.FindControl<ItemsControl>("LitTierItems");
+        var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
         Assert.NotNull(litTierItems);
 
         var rows = litTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
@@ -87,7 +87,7 @@ public sealed partial class SettingsPanelUiTests
             Dispatcher.UIThread.RunJobs();
 
             var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-            var litTierItems = panel.FindControl<ItemsControl>("LitTierItems");
+            var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
             Assert.NotNull(litTierItems);
 
             // ── act: count visible ComboBox descendants vs editable rows ──
@@ -125,7 +125,7 @@ public sealed partial class SettingsPanelUiTests
         Dispatcher.UIThread.RunJobs();
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var litTierItems = panel.FindControl<ItemsControl>("LitTierItems");
+        var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
         Assert.NotNull(litTierItems);
 
         var rows = litTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();

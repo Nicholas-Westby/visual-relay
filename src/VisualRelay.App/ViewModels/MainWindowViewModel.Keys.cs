@@ -228,7 +228,7 @@ public partial class MainWindowViewModel
                 {
                     Tier = row.Tier,
                     SelectedModel = selected,
-                    ProviderName = row.ProviderName,
+                    ProviderName = BackendConfigGenerator.ProviderFor(selected) ?? row.ProviderName,
                     KeyPresent = row.KeyPresent,
                     IsEditable = row.IsEditable,
                     SelectableModels = row.SelectableModels,

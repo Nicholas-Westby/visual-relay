@@ -116,6 +116,15 @@ internal static class SettingsTestHelpers
             .Where(sv => sv.GetVisualAncestors().OfType<TextBox>().FirstOrDefault() is null)
             .ToList();
 
+    /// <summary>
+    /// Finds the <c>LitTierItems</c> <see cref="ItemsControl"/> by walking the
+    /// visual descendants of <paramref name="root"/>. <see cref="Control.FindControl{T}"/>
+    /// cannot cross into the <c>LiveTiersSettings</c> user control's name scope,
+    /// so the Live Tiers lookups use this walker instead.
+    /// </summary>
+    public static ItemsControl FindLitTierItems(Visual root) =>
+        root.GetVisualDescendants().OfType<ItemsControl>().First(c => c.Name == "LitTierItems");
+
     /// <summary>Clears XDG_CONFIG_HOME from the fake accessor.</summary>
     public static void EnsureNoUserEnv(DictionaryEnvironmentAccessor env) =>
         env["XDG_CONFIG_HOME"] = null;
