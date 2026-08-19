@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -118,4 +119,76 @@ public sealed class StageRowViewModelTests
         Assert.NotNull(selectCommand);
         Assert.IsAssignableFrom<IRelayCommand<StageRowViewModel>>(selectCommand);
     }
+
+    [Fact]
+    public void TierLabel_NoRun_ShowsDefinitionTier()
+    {
+        // Stage 7 Review runs on frontier. Before any run the card must still
+        // show its definition tier.
+        var stage = new StageRowViewModel(RelayStages.All[6]);
+
+        Assert.Equal("frontier", stage.TierLabel);
+    }
+
+    [Fact]
+    public void TierLabel_RunRecordingSameTier_ShowsTierOnly()
+    {
+        // Stage 1 Ideate runs on cheap. A run that records "cheap" as the model
+        // must not produce "cheap cheap" — the model adds no information here.
+        var stage = new StageRowViewModel(RelayStages.All[0]);
+        stage.ApplyMetric(MetricFor(tier: "cheap", model: "cheap"));
+
+        Assert.Equal("cheap", stage.TierLabel);
+    }
+
+    [Fact]
+    public void TierLabel_RunRecordingEscalatedTier_ShowsRecordedTier()
+    {
+        // Stage 11 Fix-verify is defined as balanced, but escalation can bump it
+        // to frontier mid-run. The label must prefer the tier that actually ran.
+        var stage = new StageRowViewModel(RelayStages.All[10]);
+        stage.ApplyMetric(MetricFor(tier: "frontier", model: string.Empty));
+
+        Assert.Equal("frontier", stage.TierLabel);
+    }
+
+    [Fact]
+    public void TierLabel_RunRecordingDistinctModel_ShowsTierAndModel()
+    {
+        // A frontier stage that recorded a concrete model distinct from the tier
+        // shows both, joined by a separator that survives the 165 px card.
+        var stage = new StageRowViewModel(RelayStages.All[6]);
+        stage.ApplyMetric(MetricFor(tier: "frontier", model: "glm-5.3"));
+
+        Assert.Equal("frontier · glm-5.3", stage.TierLabel);
+    }
+
+    [Fact]
+    public void TierLabel_ClearMetric_RevertsToDefinitionTier()
+    {
+        var stage = new StageRowViewModel(RelayStages.All[6]);
+        stage.ApplyMetric(MetricFor(tier: "vision", model: "glm-5.3"));
+
+        stage.ClearMetric();
+
+        Assert.Equal("frontier", stage.TierLabel);
+    }
+
+    private static StageRunMetric MetricFor(string tier, string model) =>
+        new(
+            StageNumber: 1,
+            StageName: "Test",
+            Tier: tier,
+            Model: model,
+            Timestamp: DateTimeOffset.UtcNow,
+            DurationSeconds: 1,
+            CostUsd: 0,
+            Priced: false,
+            PromptTokens: 0,
+            CachedTokens: 0,
+            OutputTokens: 0,
+            CacheWriteTokens: 0,
+            ReportPath: "/tmp/r.md",
+            TraceDirectory: null,
+            Turns: 0);
 }

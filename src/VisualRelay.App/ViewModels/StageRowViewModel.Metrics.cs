@@ -47,12 +47,14 @@ public sealed partial class StageRowViewModel
 
     public void ApplyMetric(StageRunMetric metric)
     {
+        _recordedTier = string.IsNullOrEmpty(metric.Tier) ? null : metric.Tier;
         DurationLabel = metric.DurationLabel;
         CostLabel = metric.CostLabel;
         ModelLabel = metric.Model;
         TurnsLabel = metric.Turns > 0 ? $"{metric.Turns}t" : string.Empty;
         ReportPath = metric.ReportPath;
         TraceDirectory = metric.TraceDirectory;
+        OnPropertyChanged(nameof(TierLabel));
     }
 
     public void ClearMetric()
@@ -68,5 +70,7 @@ public sealed partial class StageRowViewModel
         _turnsTotal = 0;
         _costTotal = 0;
         ElapsedLabel = string.Empty;
+        _recordedTier = null;
+        OnPropertyChanged(nameof(TierLabel));
     }
 }

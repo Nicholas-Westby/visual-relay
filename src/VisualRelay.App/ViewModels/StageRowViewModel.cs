@@ -25,6 +25,7 @@ public sealed partial class StageRowViewModel : ViewModelBase
         Number = stage.Number;
         Name = stage.Name;
         Tier = stage.Tier;
+        _definitionTier = stage.Tier;
         Status = "Waiting";
         SelectCommand = selectCommand;
     }
@@ -33,6 +34,23 @@ public sealed partial class StageRowViewModel : ViewModelBase
     public string Name { get; }
     public string Tier { get; }
     public IRelayCommand<StageRowViewModel>? SelectCommand { get; }
+
+    // The tier shown on the stage card: the tier recorded by the last run when one
+    // exists (escalation can bump a stage from balanced to frontier mid-run),
+    // otherwise the definition tier captured in the constructor. The concrete model
+    // is appended only when it adds information — a cheap-run that recorded "cheap"
+    // reads just "cheap", while a frontier run that recorded "glm-5.3" shows both.
+    public string TierLabel
+    {
+        get
+        {
+            var tier = string.IsNullOrEmpty(_recordedTier) ? _definitionTier : _recordedTier!;
+            return !string.IsNullOrEmpty(ModelLabel) &&
+                   !string.Equals(ModelLabel, tier, StringComparison.Ordinal)
+                ? $"{tier} · {ModelLabel}"
+                : tier;
+        }
+    }
     public string Ordinal => Number.ToString("00");
 
     // The duration lives on the status row, freeing the fixed-width metrics line
@@ -85,6 +103,8 @@ public sealed partial class StageRowViewModel : ViewModelBase
     private string _durationLabel = "No run yet";
     private string _costLabel = "No cost yet";
     private string _modelLabel = string.Empty;
+    private readonly string _definitionTier = string.Empty;
+    private string? _recordedTier;
     // Cumulative-across-attempts elapsed: a retried stage (e.g. Fix-verify) opens a
     // new segment per attempt without discarding the time already banked, so the
     // card shows the total stage time, not just the latest attempt.
@@ -204,7 +224,13 @@ public sealed partial class StageRowViewModel : ViewModelBase
     public string ModelLabel
     {
         get => _modelLabel;
-        set => SetProperty(ref _modelLabel, value);
+        set
+        {
+            if (SetProperty(ref _modelLabel, value))
+            {
+                OnPropertyChanged(nameof(TierLabel));
+            }
+        }
     }
 
     private string _turnsLabel = string.Empty;

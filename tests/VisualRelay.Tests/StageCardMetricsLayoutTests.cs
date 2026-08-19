@@ -109,6 +109,54 @@ public sealed class StageCardMetricsLayoutTests
         Assert.Contains("12m 34s", statusBlock.Text ?? string.Empty, StringComparison.Ordinal);
     }
 
+    [AvaloniaFact]
+    public void TierTextBlock_LongTierAndModel_WrapsAndIsFullyVisible()
+    {
+        var viewModel = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
+        var stage = viewModel.Stages.Single(s => s.Number == 11);
+
+        // Longest realistic tier-plus-model combination: Fix-verify's balanced
+        // tier with the selectable "hf-qwen3-coder-next" model. The tier line is
+        // unique across the board, so the exact-text lookup cannot collide with
+        // any other card's repeated at-rest tier string.
+        stage.ApplyMetric(new StageRunMetric(
+            StageNumber: 11, StageName: "Fix-verify", Tier: "balanced",
+            Model: "hf-qwen3-coder-next", Timestamp: DateTimeOffset.UtcNow,
+            DurationSeconds: 120, CostUsd: 0.0042, Priced: true, PromptTokens: 0,
+            CachedTokens: 0, OutputTokens: 0, CacheWriteTokens: 0,
+            ReportPath: "/tmp/r.md", TraceDirectory: null, Turns: 9));
+
+        var window = new MainWindow
+        {
+            DataContext = viewModel,
+            Width = 1440,
+            Height = 900
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        const string expected = "balanced · hf-qwen3-coder-next";
+        var tierBlock = FindTextBlockWithText(window, expected);
+        Assert.NotNull(tierBlock);
+
+        // (a) The tier line must NOT trim with an ellipsis — full text stays
+        //     recoverable rather than being cut on the fixed 165 px card.
+        Assert.Equal(TextTrimming.None, tierBlock!.TextTrimming);
+
+        // (b) It must wrap (not clip): either the arranged width fits the
+        //     unconstrained desired width, or wrapping is enabled.
+        tierBlock.Measure(Size.Infinity);
+        var desiredWidth = tierBlock.DesiredSize.Width;
+        Assert.True(
+            tierBlock.Bounds.Width >= desiredWidth - 1.0 || tierBlock.TextWrapping == TextWrapping.Wrap,
+            $"Tier line is clipped: arranged width {tierBlock.Bounds.Width:F1} px "
+            + $"< desired {desiredWidth:F1} px and it does not wrap.");
+
+        // (c) The full tier-plus-model text is present with no ellipsis.
+        var text = tierBlock.Text ?? string.Empty;
+        Assert.DoesNotContain("…", text, StringComparison.Ordinal);
+    }
+
     private static TextBlock? FindMetricsTextBlock(Visual root, string metricLabel) =>
         FindTextBlockWithText(root, metricLabel);
 
