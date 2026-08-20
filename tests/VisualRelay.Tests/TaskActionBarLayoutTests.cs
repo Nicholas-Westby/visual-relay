@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -147,5 +148,46 @@ public sealed class TaskActionBarLayoutTests
 
         Assert.False(markDoneButton!.IsVisible,
             "'Mark done' button must be hidden when archive view is active.");
+    }
+
+    [AvaloniaFact]
+    public void Header_TitleRenders_AndActionBarDoesNotOverflowPanel()
+    {
+        // Reproduce the header overflow scoped to the panel: a 620 px window
+        // leaves ~586 px for the header content box, while the five
+        // always-visible bar children still want ~664 px — enough to overflow
+        // a non-wrapping bar without booting the whole app or a selected task.
+        var vm = new MainWindowViewModel
+        {
+            StatusText = "Pause armed: finishing add-multiply-helper before stopping",
+            SelectedTaskMetricLabel = "12 stages  2m 18s  $0.07"
+        };
+        var panel = new TaskDetailPanel { DataContext = vm };
+        var window = new Window { Content = panel, Width = 620, Height = 420 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        // (a) The TASK title must actually paint — the Auto column gives it
+        //     its natural width instead of collapsing to zero.
+        var title = panel.GetVisualDescendants()
+            .OfType<TextBlock>()
+            .Single(tb => tb.Text == "TASK");
+        Assert.True(title.Bounds.Width > 0,
+            "TASK title must have non-zero width in the header's Auto column.");
+
+        // (b) The action bar's top-right corner must stay inside the panel —
+        //     i.e. it wraps instead of running off the right edge and being
+        //     clipped by the panel's ClipToBounds.
+        var taskActionBar = panel.GetVisualDescendants()
+            .OfType<TaskActionBar>()
+            .Single();
+        var rightEdge = taskActionBar.TranslatePoint(
+            new Point(taskActionBar.Bounds.Width, 0), panel);
+
+        Assert.NotNull(rightEdge);
+        Assert.True(
+            rightEdge!.Value.X <= panel.Bounds.Width,
+            $"Action bar right edge ({rightEdge.Value.X:F1} px) overflows the " +
+            $"panel width ({panel.Bounds.Width:F1} px).");
     }
 }
