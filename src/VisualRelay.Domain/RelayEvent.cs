@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace VisualRelay.Domain;
 
 public sealed record RelayEvent(
@@ -26,6 +28,9 @@ public sealed record RelayEvent(
         Data is { Count: > 0 }
             ? string.Join("  ", OrderedData().Select(pair => $"{pair.Key}: {pair.Value}"))
             : Level;
+
+    public string TimeLabel =>
+        Timestamp.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
     private IEnumerable<KeyValuePair<string, string>> OrderedData()
     {

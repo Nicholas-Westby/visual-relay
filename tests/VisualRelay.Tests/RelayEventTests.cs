@@ -40,4 +40,17 @@ public sealed class RelayEventTests
             escalation.DetailLine, StringComparison.Ordinal);
         Assert.True(escalation.IsAttention);
     }
+
+    [Fact]
+    public void TimeLabel_FormatsLocalTimestampAsInvariantTime()
+    {
+        // The timestamp is anchored in local time so ToLocalTime() is identity in
+        // any timezone and the expected label is the exact string, not a value that
+        // depends on the machine's offset.
+        var timestamp = new DateTimeOffset(
+            new DateTime(2026, 8, 20, 12, 34, 56, DateTimeKind.Local));
+        var evt = new RelayEvent(timestamp, "info", "stage_start", "run-1", "/root");
+
+        Assert.Equal("12:34:56", evt.TimeLabel);
+    }
 }
