@@ -130,7 +130,7 @@ public static class BackendReadinessProbe
         return lastResult;
     }
 
-    private static string NotReadyMessage() =>
+    public static string NotReadyMessage() =>
         ErrorHintClassifier.HintFor("connection error")
         ?? $"Model backend not reachable at {ModelBackend.BaseUrl}.";
 }

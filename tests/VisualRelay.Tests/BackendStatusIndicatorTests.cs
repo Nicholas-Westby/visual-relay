@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -38,5 +39,40 @@ public sealed class BackendStatusIndicatorTests
 
         viewModel.IsBackendReachable = false;
         Assert.True(viewModel.StartBackendCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void BackendBannerText_IsNonEmptyOnFreshViewModel()
+    {
+        var viewModel = new MainWindowViewModel();
+
+        Assert.False(string.IsNullOrWhiteSpace(viewModel.BackendBannerText));
+    }
+
+    [Fact]
+    public void BackendBannerText_UsesMessageWhenSet()
+    {
+        var viewModel = new MainWindowViewModel { BackendStatusMessage = "probe result" };
+
+        Assert.Equal("probe result", viewModel.BackendBannerText);
+    }
+
+    [Fact]
+    public void BackendBannerText_FallsBackWhenMessageIsNullOrBlank()
+    {
+        var viewModel = new MainWindowViewModel();
+        Assert.Equal(BackendReadinessProbe.NotReadyMessage(), viewModel.BackendBannerText);
+
+        viewModel.BackendStatusMessage = "probe result";
+        Assert.Equal("probe result", viewModel.BackendBannerText);
+
+        viewModel.BackendStatusMessage = null;
+        Assert.Equal(BackendReadinessProbe.NotReadyMessage(), viewModel.BackendBannerText);
+
+        viewModel.BackendStatusMessage = "";
+        Assert.Equal(BackendReadinessProbe.NotReadyMessage(), viewModel.BackendBannerText);
+
+        viewModel.BackendStatusMessage = "   ";
+        Assert.Equal(BackendReadinessProbe.NotReadyMessage(), viewModel.BackendBannerText);
     }
 }

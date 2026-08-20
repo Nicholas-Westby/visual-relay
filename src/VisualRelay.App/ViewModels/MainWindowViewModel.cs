@@ -212,6 +212,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _isBackendReachable;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BackendBannerText))]
     private string? _backendStatusMessage;
 
     // Banner: "Control API unavailable — port <N> in use by another process".

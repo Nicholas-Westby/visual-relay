@@ -1,4 +1,5 @@
 using Avalonia.Media;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -58,6 +59,10 @@ public partial class MainWindowViewModel
     public string BackendStatusLabel => IsBackendReachable
         ? $"backend: {new Uri(ModelBackend.BaseUrl).Authority}"
         : "backend down";
+    public string BackendBannerText =>
+        string.IsNullOrWhiteSpace(BackendStatusMessage)
+            ? BackendReadinessProbe.NotReadyMessage()
+            : BackendStatusMessage;
     public bool IsViewingDifferentTaskDuringRun =>
         _runningTaskId is not null && SelectedTask is not null && !string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal);
     public string ViewingRunContextText => IsViewingDifferentTaskDuringRun ? $"Viewing {SelectedTask!.Id} · running {_runningTaskId}" : string.Empty;
