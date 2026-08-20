@@ -73,6 +73,18 @@ public sealed partial class RelayDriverReviewPairTests
         Assert.Contains("```json", stage.OutputContract, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void VisualReviewStage_ContractAdvertisesAllThreeVerdicts()
+    {
+        var stage = RelayStages.All.Single(s => s.Number == 8);
+
+        // A render that never showed the subject has a third answer: the model must
+        // be told "unassessable" exists, or it defaults to laundering it as a pass.
+        Assert.Contains("\"pass\"", stage.OutputContract, StringComparison.Ordinal);
+        Assert.Contains("\"changes\"", stage.OutputContract, StringComparison.Ordinal);
+        Assert.Contains("\"unassessable\"", stage.OutputContract, StringComparison.Ordinal);
+    }
+
     // ── Visual-review system prompt content ───────────────────────────────
 
     [Fact]
@@ -136,6 +148,41 @@ public sealed partial class RelayDriverReviewPairTests
         // style/correctness, so Visual-review should not duplicate that.
         Assert.Contains("text", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Review", stage.SystemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VisualReviewSystemPrompt_FramesTheTaskDescriptionAsPreChange()
+    {
+        var stage = RelayStages.All.Single(s => s.Number == 8);
+
+        // The description was authored before the change; its "not rendered" claims
+        // describe the old state, so the render must outrank them.
+        Assert.Contains("BEFORE the change was made", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("OLD state", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("outranks", stage.SystemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VisualReviewSystemPrompt_LimitsFindingsToWhatARenderCanSettle()
+    {
+        var stage = RelayStages.All.Single(s => s.Number == 8);
+
+        // Which property produced a string is unknowable from pixels; legible text is
+        // rendered text. Genuine absence stays a fair finding, read off the pixels.
+        Assert.Contains("what a picture can settle", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("a render cannot show that", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("it IS rendered", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("read absence off the pixels", stage.SystemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VisualReviewSystemPrompt_RequiresUnassessableInsteadOfAnUnseenPass()
+    {
+        var stage = RelayStages.All.Single(s => s.Number == 8);
+
+        Assert.Contains("unassessable", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("never return `pass` for something you could not see",
+            stage.SystemPrompt, StringComparison.Ordinal);
     }
 
     // ── Fix prompt updated for both review sources ────────────────────────

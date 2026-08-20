@@ -44,7 +44,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var previousSeal = string.Empty;
             var taskHash = string.Empty;
             var sessionCostUsd = 0d; var unknownCostStageCount = 0;
-            var reviewPairHandled = false; var reviewFamilyClean = false; var fixVerifyHandled = false;
+            var reviewPairHandled = false; string? fixSkipReason = null; var fixVerifyHandled = false;
             var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
             var implementationFrontLoaded = false;
             var firstStageToRun = 1;
@@ -89,14 +89,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     taskHash = pairState.TaskHash;
                     sessionCostUsd = pairState.SessionCostUsd;
                     unknownCostStageCount = pairState.UnknownCostStageCount;
-                    reviewPairHandled = true; reviewFamilyClean = pairState.ReviewFamilyClean;
+                    reviewPairHandled = true; fixSkipReason = pairState.FixSkipReason;
                     continue;
                 }
-                // Skip Fix (9) on a clean/skipped review family (see SkipStages); before stage_start so a skip never flickers Running.
-                if (stage.Number == 9 && reviewFamilyClean)
+                // Skip Fix (9) when the review family left nothing to fix (see SkipStages); before stage_start so a skip never flickers Running.
+                if (stage.Number == 9 && fixSkipReason is not null)
                 {
                     (previousSeal, taskHash) = await RecordFixSkipAsync(rootPath, runId, taskId,
-                        taskDirectory, stage, ledger, seals, statusEntries, manifest,
+                        taskDirectory, stage, fixSkipReason, ledger, seals, statusEntries, manifest,
                         previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
                     continue;
                 }

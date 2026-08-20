@@ -117,7 +117,9 @@ public sealed partial class RelayDriver
 
         sb.Append("\n## Instructions\nOpen each listed image with view_image. " +
             "Identify concrete visual defects. If nothing visual is wrong, " +
-            "return {\"verdict\":\"pass\",\"issues\":[]} immediately.\n");
+            "return {\"verdict\":\"pass\",\"issues\":[]} immediately. If the task's " +
+            "subject is not shown in any of these images, return " +
+            "{\"verdict\":\"unassessable\",\"issues\":[...]} rather than pass.\n");
         return sb.ToString();
     }
 }

@@ -143,8 +143,23 @@ public sealed partial class RelayDriver
         var cost = runResult.CostUnknown ? null
             : new RelayCostEstimate("", runResult.CostUsd, true, 0, 0, 0,
                 runResult.Elapsed.TotalSeconds);
+        // Visual-review (8) may report "unassessable" — the subject never appeared in
+        // the render. That is neither a clean pass nor a defect, so it gets its own
+        // seal/status check plus a Run Log warning; without it the stage would read as
+        // a green visual review in status.json and on the queue card.
+        var check = runResult.Check;
+        if (check is null && stage.Number == 8 && IsUnassessableVisualVerdict(runResult.Body))
+        {
+            check = "unassessable";
+            await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                DateTimeOffset.UtcNow, "warn", "visual_unassessable", runId, rootPath, taskId,
+                stage.Number, stage.Tier, Data: new Dictionary<string, string>
+                {
+                    ["reason"] = "the task's subject did not appear in the supplied renders"
+                }), cancellationToken);
+        }
         return await RecordStageAsync(rootPath, runId, taskId, taskDirectory,
-            stage, runResult.Body, runResult.Check, cost,
+            stage, runResult.Body, check, cost,
             runResult.Elapsed, ledger, seals, statusEntries, manifest,
             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
             cancellationToken, runResult.TestDurationSeconds);

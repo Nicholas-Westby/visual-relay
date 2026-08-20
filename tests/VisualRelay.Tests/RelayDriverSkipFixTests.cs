@@ -97,6 +97,56 @@ public sealed class RelayDriverSkipFixTests
             new StageBodySubagentRunner((8, """{"verdict":"changes","issues":["clipped corner"]}""")));
     }
 
+    [Fact]
+    public async Task VisualReviewUnassessable_DoesNotRunFix_AndRecordsItsOwnReason()
+    {
+        // The render never showed the task's subject, so there is no defect for Fix
+        // to resolve — but the skip must not borrow the clean-review wording.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("unassessable", "# Unassessable render\n");
+        var runner = new StageBodySubagentRunner(
+            (8, """{"verdict":"unassessable","issues":["the dialog under test was not captured"]}"""));
+        var driver = Driver(repo, runner, new InMemoryRelayEventSink());
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "unassessable");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        Assert.DoesNotContain(runner.Invocations, i => i.Stage.Number == 9);
+        var taskDir = Path.Combine(repo.Root, ".relay", "unassessable");
+        Assert.Equal("Skipped", StageStatusRecord.Read(taskDir).Single(e => e.Stage == 9).Status);
+
+        var ledger = await File.ReadAllTextAsync(Path.Combine(taskDir, "ledger.md"));
+        Assert.Contains("visual review was unassessable", ledger, StringComparison.Ordinal);
+        Assert.DoesNotContain("review passed with no issues", ledger, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VisualReviewUnassessable_IsNotRecordedAsACleanVisualReview()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("not-clean", "# Unassessable is not clean\n");
+        var runner = new StageBodySubagentRunner(
+            (8, """{"verdict":"unassessable","issues":[]}"""));
+        var sink = new InMemoryRelayEventSink();
+        var driver = Driver(repo, runner, sink);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "not-clean");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        // status.json and the seal chain both carry the distinct check, so stage 8
+        // never reads back as a green visual review.
+        var taskDir = Path.Combine(repo.Root, ".relay", "not-clean");
+        Assert.Equal("unassessable", StageStatusRecord.Read(taskDir).Single(e => e.Stage == 8).Check);
+        var seals = await File.ReadAllLinesAsync(Path.Combine(taskDir, "not-clean.seals"));
+        Assert.Contains(seals, l => l.Contains("\"n\":8", StringComparison.Ordinal)
+            && l.Contains("\"check\":\"unassessable\"", StringComparison.Ordinal));
+
+        // And the Run Log flags it for attention rather than passing silently.
+        Assert.Contains(sink.Events, e => e is { EventName: "visual_unassessable", StageNumber: 8 } && e.IsAttention);
+    }
+
     private async Task AssertFixRuns(string taskId, StageBodySubagentRunner runner)
     {
         using var repo = TestRepository.Create();
