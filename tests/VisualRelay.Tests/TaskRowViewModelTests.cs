@@ -6,7 +6,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class TaskRowViewModelTests
+public sealed partial class TaskRowViewModelTests
 {
     private static readonly IBrush Transparent = Brushes.Transparent;
     private static readonly IBrush WaitingBorder = Brush.Parse("#2A303A");

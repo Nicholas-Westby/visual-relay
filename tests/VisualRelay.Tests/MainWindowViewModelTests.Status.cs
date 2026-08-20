@@ -252,4 +252,30 @@ public sealed partial class MainWindowViewModelTests
         Assert.Equal(6.0 / denominator, row.ProgressFraction, precision: 6);
         Assert.Equal(6, changed.Count(p => p == "ProgressFraction"));
     }
+
+    [Fact]
+    public async Task RestoreRunningTaskState_SeedsLiveProgressFraction()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        var taskId = "restore-progress";
+        var activeDir = Path.Combine(repo.Root, "llm-tasks", "active");
+        Directory.CreateDirectory(activeDir);
+        await File.WriteAllTextAsync(Path.Combine(activeDir, $"{taskId}.md"), "# Restore progress\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        viewModel.SelectedTask = Assert.Single(viewModel.Tasks);
+        await viewModel.LastSelectionLoad!;
+        var denominator = (double)RelayStages.All.Count;
+
+        viewModel.RestoreRunningTaskState(taskId, 3, "Diagnose");
+        Assert.Equal(2.0 / denominator,
+            viewModel.Tasks.First(t => t.Id == taskId).ProgressFraction, precision: 6);
+
+        viewModel.RestoreRunningTaskState(taskId, 1, "Ideate");
+        Assert.Equal(0.0, viewModel.Tasks.First(t => t.Id == taskId).ProgressFraction);
+
+        viewModel.RestoreRunningTaskState(taskId, null, null);
+        Assert.Equal(0.0, viewModel.Tasks.First(t => t.Id == taskId).ProgressFraction);
+    }
 }

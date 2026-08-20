@@ -103,6 +103,7 @@ public partial class MainWindowViewModel
         MigrateDictKey(_runningStageNumbers, oldId, newId);
         MigrateDictKey(_runningStageNames, oldId, newId);
         MigrateDictKey(_taskElapsed, oldId, newId);
+        MigrateDictKey(_liveCompletedStageCounts, oldId, newId);
         MigrateTrackingDictKey(_rewritingTaskIds, oldId, newId);
         MigrateDictKey(_rewriteStartedAt, oldId, newId);
         MigrateDictKey(_rewriteCts, oldId, newId);

@@ -1,6 +1,7 @@
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
@@ -176,5 +177,58 @@ public sealed partial class RefreshButtonDuringRunTests
         var (status, _) = await api.InvokeCommandAsync("refresh", null);
 
         Assert.Equal(200, status);
+    }
+
+    // ── Running progress survives a mid-drain reload ─────────────────
+
+    [AvaloniaFact]
+    public async Task RefreshCommand_WhenBusy_PreservesLiveProgressFraction()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("running", "# Running\n");
+        var vm = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
+        await vm.LoadInitialAsync();
+
+        vm.RestoreRunningTaskState("running", 1, "Ideate");
+        for (var i = 1; i <= 6; i++)
+            RelayEventTestDispatch.Dispatch(vm,
+                RelayEventTestDispatch.StageDone("running", i, DateTimeOffset.UtcNow, seconds: 5));
+
+        var denominator = (double)RelayStages.All.Count;
+        Assert.Equal(6.0 / denominator,
+            vm.Tasks.Single(t => t.Id == "running").ProgressFraction, precision: 6);
+
+        vm.IsBusy = true;
+        // Prove the reload actually happened by adding a task after initial load.
+        repo.WriteTask("beta", "# Beta\n");
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        var row = vm.Tasks.Single(t => t.Id == "running");
+        Assert.True(row.IsRunning);
+        Assert.Equal(6.0 / denominator, row.ProgressFraction, precision: 6);
+        Assert.Contains(vm.Tasks, t => t.Id == "beta");
+    }
+
+    // ── Resumed run reflects the true stage reached ──────────────────
+
+    [AvaloniaFact]
+    public async Task StageDone_OnResumedRun_ReflectsTrueStageReached()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("resume", "# Resume\n");
+        var vm = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
+        await vm.LoadInitialAsync();
+
+        vm.RestoreRunningTaskState("resume", null, null);
+        var row = vm.Tasks.Single(t => t.Id == "resume");
+        Assert.Equal(0.0, row.ProgressFraction);
+
+        RelayEventTestDispatch.Dispatch(vm,
+            RelayEventTestDispatch.StageDone("resume", 10, DateTimeOffset.UtcNow, seconds: 5));
+
+        Assert.Equal(10.0 / RelayStages.All.Count, row.ProgressFraction, precision: 6);
     }
 }

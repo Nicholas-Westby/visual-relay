@@ -1,0 +1,1036 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-08-20T19:30:52.412666+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: fix-running-task-progress-fraction\nWorking directory: /tmp/nix-shell.kSbtWD/visual-relay/wt/28b9d4518058/plan-20260820192716/fix-running-task-progress-fraction\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Keep a running task's progress bar honest across list reloads and resumes\n\nThe progress bar on a queue card is the only at-a-glance signal of how far a run\nhas got. While a task runs, `ProgressFraction` reads a counter that lives on the\ntask row object and is bumped once per `stage_done`. Every path that reloads the\ntask list throws those row objects away and builds new ones, so the counter\nsilently resets to zero in the middle of a run: the bar snaps back to empty and\nstays wrong for every remaining stage, because the counter only ever counts\nforward from wherever it was left. Refresh, Toggle Archive, Follow-running-task\nand Save-edit are all reachable while a drain is in flight, and the Refresh path\nwas deliberately made busy-tolerant, so this is not a corner case.\n\nThe same counter also starts at zero on a **resumed** run. The driver picks up at\n`firstStageToRun` and never re-emits `stage_done` for the stages that already\ncompleted, so a task resumed at stage 10 shows 0% and finishes the run at 3/12\n(25%) even though all twelve stages are done. Both symptoms come from the same\nroot cause: the live value is stored in the one place that does not survive a\nreload, and it is a bare increment that carries no information about which stage\nit belongs to.\n\nOne thing here is **not** a defect and must not be \"fixed\". When a row is idle,\n`ProgressFraction` falls back to `Task.CompletedStageCount`, which is the number\nof stages the task's *last* run recorded. A Pending card with a full bar is\ntherefore telling the truth \u2014 it ran all twelve stages before. In the checked-in\nrenders the full bars are purely a screenshot-harness seeding artifact, not\nevidence of anything.\n\n### Evidence (2026-08-20)\n\n- `src/VisualRelay.App/ViewModels/TaskRowViewModel.cs:108-110` defines\n  `ProgressFraction` as `IsRunning ? _liveCompletedStageCount / 12 :\n  Task.CompletedStageCount / 12` (`RelayStages.All.Count` is 12 \u2014\n  `src/VisualRelay.Core/Execution/RelayStages.cs:7-25`).\n- `_liveCompletedStageCount` is declared at `TaskRowViewModel.cs:29`. It is\n  written in exactly two places: `RecordStageCompleted` (`:174-178`), which does\n  `_liveCompletedStageCount++` and **ignores its `stageNumber` argument\n  entirely**, and `MarkIdle` (`:182`), which zeroes it. Nothing seeds it.\n- `ReloadTaskListAsync` (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs:139-184`)\n  calls `Tasks.Clear()` at `:163`, constructs a brand-new `TaskRowViewModel` per\n  task at `:173`, then `ApplyRunningTaskToRows()` at `:179`. The new rows start\n  with `_liveCompletedStageCount == 0`.\n- `ApplyRunningTaskToRows` (`MainWindowViewModel.LiveState.cs:239-254`) only\n  calls `MarkRunning(stageNum, stageName, stageNums)`. It restores the running\n  flag and the stage label but nothing about completed stages \u2014 so after a\n  mid-run reload the card still reads e.g. \"Stage 09 \u00b7 Fix\" beside an empty bar.\n- Production paths that reach `ReloadTaskListAsync` during a live run:\n  - `MainWindowViewModel.Commands.cs:23-48` \u2014 `RefreshAsync` has an explicit\n    `if (IsBusy)` branch commented \"Mid-drain: reload directly\", and\n    `CanRefresh()` is just `Directory.Exists(RootPath)`\n    (`MainWindowViewModel.Helpers.cs:231`) with no busy gate.\n  - `MainWindowViewModel.Commands.cs:111-120` \u2014 `ToggleArchiveAsync`, whose own\n    comment reads \"When a drain is active\u2026\".\n  - `MainWindowViewModel.Commands.cs:90-109` \u2014 `FollowRunningTaskAsync`, the\n    jump-to-the-running-task action.\n  - `MainWindowViewModel.Authoring.cs:103` \u2014 `SaveEditAsync`, reachable for any\n    task other than the running one.\n  - `src/VisualRelay.App/Services/ControlApi.cs:38` maps `\"refresh\"` onto\n    `RefreshCommand`, and `:224-226` executes it.\n- Resume path: `MainWindowViewModel.Execution.cs:38-56` (`ResumeSelectedAsync`)\n  \u2192 `MainWindowViewModel.RunOne.cs:12` `RunOneAsync(task, resume: true)`, which\n  calls `BeginRunningTask(task)` unconditionally at `:19` and constructs\n  `new RelayDriverOptions(CreateGitCommit: true, Resume: resume)` at `:27`.\n  `RelayDriver.cs:51` then `LoadResumeState(...)` advances `firstStageToRun`\n  (`RelayDriver.Resume.cs:19-23`); prior stages are not replayed as events, so\n  the GUI counter never sees them.\n- `RestoreRunningTaskState` (`MainWindowViewModel.LiveState.cs:103-119`) has **no\n  production caller**. A repo-wide grep finds it only in `tests/` and in\n  `tools/VisualRelay.Screenshots/Program.cs:113`. It is the \"adopt a run already\n  in flight\" hook, and it likewise seeds nothing.\n- Measured on the real 1440x900 renders. `.relay/colour-run-log-attention-rows/visual-review/main.png`\n  and `.relay/show-stage-tier-on-stage-cards/visual-review/main.png` are\n  pixel-identical in the card column. Bar rows (each 3 px tall, y listed for the\n  middle row):\n  - y=266, x=53\u2013301 (249 px): uniformly `#222833`, the empty track \u2014 the\n    running+selected `add-multiply-helper` card, whose text reads\n    \"Running / Stage 03 \u00b7 Diagnose\". **0% while at stage 3.**\n  - y=417, x=52\u2013302 (251 px): uniformly `#3191FF` \u2014 Pending\n    `fix-csv-export-encoding`, 100%.\n  - y=542, x=51\u2013303 (253 px): uniformly `#222833` \u2014 the running\n    `rate-limit-middleware` card (\"Running / Starting task\"), 0%.\n  - y=665, x=50\u2013304 (255 px): uniformly `#3191FF` \u2014 Pending\n    `stabilise-flaky-retry-test`, 100%.\n  - y=787: `#F2C66D` for x=50\u201390 (**41 px**) then `#222833` for x=92\u2013304 \u2014 the\n    needs-review `extract-theme-tokens` card at 2/12 = 16.7%.\n- Those renders are produced by this repo's own harness: `.relay/config.json`\n  sets `\"visualRenderCmd\": \"dotnet run --project tools/VisualRelay.Screenshots -- {outDir}/main.png\"`,\n  and `src/VisualRelay.Core/Execution/RelayDriver.ReviewPairTriage.cs:62-64`\n  writes into `<taskDirectory>/visual-review/`. Default size is 1440x900\n  (`tools/VisualRelay.Screenshots/Program.cs:13-14`).\n- The two full bars are seeding, not a bug: `tools/VisualRelay.Screenshots/Program.cs:106`\n  and `:108` build those demo cards with `stages: 12`, i.e. `CompletedStageCount:\n  12`, and they never run. `:109` seeds `stages: 2`, which is the 41 px amber\n  bar. `:104` seeds the running card with `CompletedStageCount: 12` as well, but\n  it is `IsRunning`, so the live branch wins and renders 0.\n- `tools/VisualRelay.Screenshots/Program.cs:123` puts the third card into the\n  running state with a bare `Tasks[2].MarkRunning()` \u2014 no view-model bookkeeping\n  at all. That card's empty bar is expected and will stay empty after this fix.\n- `src/VisualRelay.App/Views/Controls/TaskCard.axaml:75-86` is the bar:\n  `Height=\"3\" MinHeight=\"3\"`, `Minimum=\"0\" Maximum=\"1\"`,\n  `Value=\"{Binding ProgressFraction}\"`, `Background=\"#222833\"`,\n  `Foreground=\"{Binding AccentBrush}\"`.\n- Existing tests that pin today's behaviour, all of which must keep passing\n  unchanged:\n  - `tests/VisualRelay.Tests/TaskRowViewModelTests.cs:214-227`\n    `ProgressFraction_UsesLiveCountWhenRunning` \u2014 `MarkRunning()` on a row whose\n    record has 0 stages gives 0.0; twelve `RecordStageCompleted(1..12)` calls\n    give 1.0 and **exactly twelve** `ProgressFraction` notifications.\n  - `tests/VisualRelay.Tests/TaskRowViewModelTests.cs:229-240`\n    `ProgressFraction_FallsBackToRunMetricsWhenIdle` \u2014 a row whose record has 6\n    stages reads 6/12 idle, then after `MarkRunning()` and\n    `RecordStageCompleted(1,2,3)` reads **3/12, not 9/12 and not 6/12**, then\n    6/12 again after `MarkIdle()`. This is the test that forbids seeding the\n    live count from `Task.CompletedStageCount` on a fresh run start.\n  - `tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs:231-254`\n    `LiveProgressFraction_IncrementsOnStageDone` \u2014 `RestoreRunningTaskState(id,\n    1, \"Ideate\")` then 0.0, then six dispatched `stage_done` events for stages\n    1\u20136 give 6/12 and **exactly six** notifications.\n  - `tests/VisualRelay.Tests/DesignDataTests.cs:58` asserts\n    `DesignData.Card.ProgressFraction` is within `(0.01, 0.99)`;\n    `src/VisualRelay.App/DesignTime/DesignData.cs:21-27` builds it with\n    `MarkRunning(9, \"Fix\")` and `RecordStageCompleted(1..8)` \u2192 8/12.\n  - `tests/VisualRelay.Tests/QueuePanelSplitRenderTests.cs:44` asserts the\n    rendered `ProgressBar.Value` equals `DesignData.Card.ProgressFraction`.\n\n### What to build\n\nMake a running task's progress bar survive a task-list reload, and make it\nreflect the true stage reached on a resumed run.\n\n- Move the authoritative live value off the row and onto `MainWindowViewModel`,\n  keyed by task id, so it outlives `Tasks.Clear()`. A\n  `Dictionary<string, int>` of \"highest stage number completed in this session\"\n  is enough. Put the dictionary and its small helpers in a **new**\n  `MainWindowViewModel` partial (the class is already split across 34 files; name it\n  something like `src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveProgress.cs`)\n  rather than in `MainWindowViewModel.cs` or `MainWindowViewModel.LiveState.cs`,\n  both of which are nearly full \u2014 see Constraints.\n- Wire it at the five existing seams in `MainWindowViewModel.LiveState.cs`,\n  one call-site line each:\n  - `BeginRunningTask` (`:121-138`) \u2014 set the entry to `0`. A fresh run genuinely\n    starts at zero; this is what keeps `ProgressFraction_FallsBackToRunMetricsWhenIdle`\n    green.\n  - `CompleteRunningStage` (`:169-187`) \u2014 raise the entry to\n    `Math.Max(existing, stageNumber)` and push the new value into the row.\n  - `ClearRunningTask` (`:189-205`) \u2014 remove the entry.\n  - `ApplyRunningTaskToRows` (`:239-254`) \u2014 after `MarkRunning(...)`, push the\n    stored value into the (possibly brand-new) row. This is the line that fixes\n    the reload regression.\n  - `RestoreRunningTaskState` (`:103-119`) \u2014 set the entry to\n    `Math.Max(0, stageNumber - 1)` before `ApplyRunningTaskToRows()`. If stage N\n    is running, stages 1\u2026N-1 are done; a null `stageNumber` means 0.\n- On `TaskRowViewModel`, add an `internal` seeding method (e.g.\n  `SeedCompletedStageCount(int)`) that assigns `_liveCompletedStageCount` and\n  raises `ProgressFraction`, and change `RecordStageCompleted(int stageNumber)`\n  to use its argument as a high-water mark \u2014\n  `_liveCompletedStageCount = Math.Max(_liveCompletedStageCount, stageNumber)` \u2014\n  instead of a blind `++`. That is what makes a resumed run read 10/12 when\n  stage 10 completes, and it removes the currently-unused parameter smell.\n- **Keep the `OnPropertyChanged(nameof(ProgressFraction))` in\n  `RecordStageCompleted` unconditional.** Two existing tests count notifications\n  (twelve at `TaskRowViewModelTests.cs:226`, six at\n  `MainWindowViewModelTests.Status.cs:253`); making the notification conditional\n  on the value changing breaks both.\n- Stages 7 (Review) and 8 (Visual-review) run in parallel\n  (`RelayStages.cs:19-20`). Under a high-water mark, if 8 finishes before 7 the\n  bar reads 8/12 while 7 is still running. That is accepted and intended \u2014 do not\n  add special-casing for the pair.\n- Tests. This defect is worth more test coverage than screenshot coverage, so\n  lead with these:\n  1. Row level: a running row seeded to N reads N/12; `RecordStageCompleted` with\n     a *lower* stage number does not move it backwards; `RecordStageCompleted`\n     with the same stage number twice does not double-count; `MarkIdle` still\n     drops back to the record's `CompletedStageCount`.\n  2. Reload regression (the headline): build a view-model over a temp repo, put a\n     task into the running state, dispatch `stage_done` for stages 1\u20136, assert\n     6/12, then run the reload path that production uses \u2014 `await\n     vm.RefreshCommand.ExecuteAsync(null)` with `IsBusy = true` \u2014 and assert the\n     row for that task is **still** 6/12 rather than 0. Re-fetch the row from\n     `vm.Tasks` after the refresh, because the old instance is discarded.\n     `tests/VisualRelay.Tests/RefreshButtonDuringRunTests.cs` is already\n     `sealed partial` and has the fixture pattern for this (`:59-91`).\n  3. Resume-shaped: with the task running and no prior live events, dispatch a\n     single `stage_done` for stage 10 and assert 10/12 rather than 1/12.\n  4. `RestoreRunningTaskState(id, 3, name)` seeds 2/12;\n     `RestoreRunningTaskState(id, 1, name)` seeds 0.0 (this is the existing\n     assertion at `MainWindowViewModelTests.Status.cs:246` and it must stay\n     green); `RestoreRunningTaskState(id, null, null)` seeds 0.0.\n  `tests/VisualRelay.Tests/RelayEventTestDispatch.cs` already provides\n  `Dispatch`, `StageStart`, `StageDone` and `Flagged` builders \u2014 use them rather\n  than adding a new reflection helper.\n- Visual confirmation, secondary. The bar is 3 px tall, so a human comparing\n  screenshots will not reliably see this; the check is a **fill-length**\n  measurement, not an eyeball. With no harness change,\n  `tools/VisualRelay.Screenshots/Program.cs:113` seeds stage 3, so the\n  `add-multiply-helper` card's bar at y=265\u2013267 must go from 249 px of uniform\n  `#222833` to roughly **41 px of `#5AD47D` starting at x=53**, then track. The\n  41 px figure is not a guess \u2014 it is the measured width of the 2/12 amber fill\n  on the `extract-theme-tokens` card at y=787 in the current renders, over a\n  track of the same width. The `rate-limit-middleware` bar at y=541\u2013543 stays\n  fully empty (it is driven by a bare `MarkRunning()` with no view-model state);\n  do not treat that as a failure. Do not gate the task on this.\n\n### Out of scope\n\n- Do not change the idle branch of `ProgressFraction`. A non-running card showing\n  `Task.CompletedStageCount / 12` \u2014 including a Pending card at 100% \u2014 is\n  correct and is pinned by `ProgressFraction_FallsBackToRunMetricsWhenIdle`.\n- Do not change the bar's geometry, colours, corner radius, margin or\n  `AccentBrush` wiring in `TaskCard.axaml`. Making a 3 px bar easier to see is a\n  different task.\n- Do not modify `tools/VisualRelay.Screenshots/Program.cs`. The fix must show up\n  in the standard render with the harness untouched.\n- Do not persist live progress to disk, and do not read `StageStatusRecord` or\n  `RelayRunHistory` to reconstruct it. The view-model already knows enough.\n- Do not touch `RelayDriver`, `RelayDriverOptions`, `LoadResumeState` or anything\n  under `src/VisualRelay.Core/Execution/`. The driver's resume behaviour is\n  correct; only the GUI's mirror of it is wrong.\n- Do not change the Control API surface, `RelayTaskItem`, `TaskRunMetric`, or\n  `RelayStages`.\n- Do not add a second progress indicator, a percentage label, or a tooltip.\n- Do not rework `_runningStageNumbers` / `_runningStageNames` or the\n  multi-task concurrency model in `MainWindowViewModel.LiveState.cs`.\n\n### Constraints\n\n- Hard guard: no `.cs`/`.axaml` under `src/`, `tests/` or `tools/` may exceed 300\n  lines. `tools/VisualRelay.Guards/FileSizeGuard.cs:13` sets the default limit to\n  300, `tools/VisualRelay.Cli/Gates/GuardRunner.cs:34` runs it over\n  `[\"src\", \"tests\", \"tools\"]`, and it fails on `lines > limit`. Every file below\n  ends with a newline, so `wc -l` equals the guard's count exactly.\n- Measured counts and headroom for the files this change touches:\n  - `src/VisualRelay.App/ViewModels/TaskRowViewModel.cs` \u2014 **212** (88 spare).\n    The comfortable place to work.\n  - `src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs` \u2014 **293**\n    (**7 spare**). Very tight. The five seams above cost about four added lines\n    if each is a single call. Add no comment blocks here, and put every new\n    field, helper and doc-comment in the new partial instead. If it would still\n    land over 300, move a whole method out to the new partial rather than\n    compressing or deleting existing comments.\n  - `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` \u2014 **296** (4 spare).\n    Prefer not to touch it at all; the new dictionary belongs in the new partial.\n  - `src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs` \u2014 **298**\n    (**2 spare**). Do not add anything here. `ReloadTaskListAsync` needs no edit:\n    it already calls `ApplyRunningTaskToRows()` at `:179`, which is where the\n    restore hooks in.\n  - `tests/VisualRelay.Tests/TaskRowViewModelTests.cs` \u2014 **300**, i.e. **exactly\n    at the limit, zero headroom**, and it is declared `public sealed class` at\n    `:9`. Adding a single line fails the build. Change `:9` to\n    `public sealed partial class` (same line count, no growth) and put new row\n    tests in a new part file, or start a separate test class in its own file.\n  - `tests/VisualRelay.Tests/RefreshButtonDuringRunTests.cs` \u2014 **180** (120\n    spare), already `sealed partial` at `:16`. Best home for the reload\n    regression test.\n  - `tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs` \u2014 **255** (45\n    spare).\n  - `tests/VisualRelay.Tests/LiveStateViewModelTests.cs` \u2014 **280** (20 spare).\n  - `src/VisualRelay.App/Views/Controls/TaskCard.axaml` \u2014 **92**. No edit needed.\n- `MainWindowViewModel` partials carry a\n  `// ReSharper disable once UnusedType.Global \u2014 partial of MainWindowViewModel`\n  comment above the class (see `MainWindowViewModel.RunOne.cs:9`). Match that in\n  the new file.\n- `ProgressFraction` keeps its `Math.Clamp(..., 0, 1)`, so a high-water mark\n  above 12 can never render past full.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "I have everything I need: all cited line numbers verified against the actual sources, line-count headroom confirmed for every file the constraints list, the five seams read in context, `RekeyTaskId` located (it migrates every id-keyed map and must gain one line for the new dictionary), and the test/screenshot expectations traced through the existing code.\n\nFrame and options:\n\n**Root cause (verified):** `TaskRowViewModel._liveCompletedStageCount` (`TaskRowViewModel.cs:29,108-110,174-178`) is a bare per-row increment that ignores its `stageNumber` argument. Every reload path \u2014 `ReloadTaskListAsync` (`Helpers.cs:139-184`) does `Tasks.Clear()` at `:163` and builds fresh rows at `:173` \u2014 throws the counter away, and `ApplyRunningTaskToRows` (`LiveState.cs:239-254`) restores only the running flag/label, not the count. The resume path (`RunOneAsync(resume:true)` \u2192 `BeginRunningTask`, driver's `LoadResumeState` advancing `firstStageToRun` without replaying prior `stage_done`) means the GUI counter never sees the pre-resume stages. Both symptoms share one fix: the live value must live on the VM (survives `Tasks.Clear()`) and be a high-water mark of stage number (not an increment), so a resumed run at stage 10 reads 10/12 the moment stage 10 completes. Idle full bars and the bare-`MarkRunning()` card are explicitly not defects. All 300-line guard counts confirmed; `TaskRowViewModelTests.cs` sits exactly at 300 so new row tests need a `partial` split or a new class file; the new dictionary must also be added to `RekeyTaskId` (`TaskName.cs:96-110`) so a rename of a concurrently-running (non-followed) task during a drain doesn't orphan it. `LiveState.cs` has 7 spare lines \u2014 single helper calls per seam keep it \u2264300.\n\n```json\n{\n  \"summary\": \"Fix the running-task progress bar so it (a) survives task-list reloads and (b) reflects the true stage reached on a resumed run. Verified root cause: the live counter `_liveCompletedStageCount` lives on the row instance and is a blind `++` that ignores its stageNumber argument; `ReloadTaskListAsync` (Helpers.cs:163,173) throws rows away and `ApplyRunningTaskToRows` (LiveState.cs:239-254) restores only the running flag/label, so Refresh/ToggleArchive/Follow/Save-edit/Control-API-refresh all zero the bar mid-run; on resume, `RunOneAsync(resume:true)` \u2192 `BeginRunningTask` seeds nothing and the driver never re-emits stage_done for pre-resume stages, so a task resumed at stage 10 renders 0% and finishes at 3/12. Fix (prescribed, idiomatic \u2014 mirrors the existing `_taskElapsed` Dictionary<string,\u2026> pattern): move the authoritative value onto MainWindowViewModel as `Dictionary<string,int>` of highest completed stage per running task, in a NEW partial `MainWindowViewModel.LiveProgress.cs` (LiveState.cs:293 and MainWindowViewModel.cs:296 are too full; carry the ReSharper partial comment like RunOne.cs:9); wire one call line each at the five seams in LiveState.cs (BeginRunningTask\u21920, CompleteRunningStage\u2192Math.Max + push to row, ClearRunningTask\u2192remove, ApplyRunningTaskToRows\u2192push stored value after MarkRunning, RestoreRunningTaskState\u2192Math.Max(0,stageNumber-1)); add `internal TaskRowViewModel.SeedCompletedStageCount(int)` and change `RecordStageCompleted` to high-water mark, keeping the ProgressFraction OnPropertyChanged UNCONDITIONAL (two notification-count tests pin it); do not touch the idle branch, TaskCard.axaml, the driver, or screenshots tool. Supporting edit not in the task text but required for correctness: add `MigrateDictKey(_liveCompletedStageCounts, oldId, newId)` to `RekeyTaskId` (TaskName.cs:96-110) since a concurrently-running non-followed task can be renamed via SaveEdit mid-drain. Verified all line counts (212/293/296/298/300/180/255/280/92): TaskRowViewModelTests.cs is exactly 300 so it must become `public sealed partial class` (:9, no growth) with new row tests in a new part file; put the reload-regression test (dispatch stage_done 1\u20136, assert 6/12, IsBusy=true, `await RefreshCommand.ExecuteAsync(null)`, re-fetch row, assert still 6/12), the resume-shaped test (single stage_done 10 \u2192 10/12), and restore-seeding tests (3\u21922/12, 1\u21920.0, null\u21920.0) in RefreshButtonDuringRunTests.cs / MainWindowViewModelTests.Status.cs / a new TaskRowViewModelTests part using RelayEventTestDispatch. Secondary visual check, not gating: Program.cs:113 RestoreRunningTaskState(id,3,'Diagnose') seeds 2 \u2192 add-multiply-helper bar at y=265\u2013267 becomes ~41px of #5AD47D from x=53 (2/12 of the 249px track); rate-limit-middleware stays empty (bare MarkRunning, expected); pending full bars unchanged (idle branch is correct).\",\n  \"options\": [\n    \"A (recommended, prescribed): VM-owned high-water-mark Dictionary<string,int> in a new MainWindowViewModel.LiveProgress.cs partial + TaskRowViewModel.SeedCompletedStageCount(int); five one-line seams in LiveState.cs, RecordStageCompleted becomes Math.Max(current, stageNumber), unconditional notification kept, RekeyTaskId migrates the dict. Lowest risk: matches the existing _taskElapsed pattern, no edits to Helpers.cs/Commands.cs/driver/XAML, all pinned tests stay green, LiveState stays \u2264300 (+~4 helper-call lines), every other touched file has ample headroom.\",\n    \"B: Keep the counter on the row but stop discarding rows \u2014 diff ReloadTaskListAsync by task id and reuse existing TaskRowViewModel instances (UpdateTask(newRecord)) instead of Tasks.Clear()+new rows, so _liveCompletedStageCount survives naturally; still need high-water RecordStageCompleted + restore/resume seeding for the resume half. Contrast: no new VM state, but it rewrites reload/archive-toggle/order/DayHeader semantics in Helpers.cs (2 spare lines), risks selection/order regressions, and still cannot fix resume without most of option A's row changes \u2014 dominated.\",\n    \"C: Derive live progress from the retained event stream (_liveEventsByTask, already VM-owned and not cleared by ReloadTaskListAsync): ProgressFraction for a running row = max stage number over stage_done/flagged events for that task, plus explicit seeding at RestoreRunningTaskState for adopted runs (no events exist). Contrast: no increment seam in CompleteRunningStage and reload-safe by construction, but turns ProgressFraction into an unbounded O(events) scan, couples the row to event shape (must mirror stage_done+flagged semantics and StageDoneSkipped), still needs restore/resume seeding, and diverges from the task's stated 'a Dictionary<string,int> is enough' \u2014 higher complexity for no behavior gain.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 28,
+    "tool_calls_total": 49,
+    "tool_calls_succeeded": 45,
+    "tool_calls_failed": 4,
+    "tool_calls_by_name": {
+      "use_skill": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 2
+      },
+      "run_command": {
+        "succeeded": 31,
+        "failed": 1
+      },
+      "read_file": {
+        "succeeded": 13,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 0,
+        "failed": 1
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 28,
+    "total_llm_time_s": 199.588,
+    "prompt_cache": {
+      "cached_tokens": 1185664,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 2.497,
+    "skills_used": [
+      "nono-sandbox"
+    ],
+    "review_rounds": 0,
+    "security": {
+      "command_policy_blocks": 1,
+      "command_policy_approvals": 0,
+      "untrusted_inputs": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 10.182,
+      "prompt_tokens_est": 8560,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "use_skill",
+      "arguments": {
+        "name": "nono-sandbox"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8088
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 200,
+      "error": "error: Path '.' resolves to /private/tmp/nix-shell.kSbtWD/visual-relay/wt/28b9d4518058/plan-20260820192716/fix-running-task-progress-fraction, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 6.386,
+      "prompt_tokens_est": 11802,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**",
+        "path": ".swival"
+      },
+      "succeeded": false,
+      "duration_s": 0.002,
+      "result_length": 37,
+      "error": "error: path does not exist: \".swival\""
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-la",
+          "/private/tmp/nix-shell.kSbtWD/visual-relay/wt/28b9d4518058/plan-20260820192716/fix-running-task-progress-fraction/.swival"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.181,
+      "result_length": 166
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.644,
+      "prompt_tokens_est": 12594,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-la",
+          "/private/tmp/nix-shell.kSbtWD/visual-relay/wt/28b9d4518058/plan-20260820192716/fix-running-task-progress-fraction"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.075,
+      "result_length": 2100
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-la",
+          "/private/tmp/nix-shell.kSbtWD/visual-relay/wt/28b9d4518058/plan-20260820192716"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.039,
+      "result_length": 415
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.834,
+      "prompt_tokens_est": 14029,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.09,
+      "result_length": 10124
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.071,
+      "result_length": 2229
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 1.883,
+      "prompt_tokens_est": 17470,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_a3b490d581d3.txt",
+        "offset": 37,
+        "limit": 200
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10948
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.34,
+      "prompt_tokens_est": 20348,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_a3b490d581d3.txt",
+        "offset": 237,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3035
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.083,
+      "result_length": 2301
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.606,
+      "prompt_tokens_est": 21835,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_a55e91e894fd.txt",
+        "offset": 51,
+        "limit": 248
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12605
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.072,
+      "result_length": 2317
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.056,
+      "prompt_tokens_est": 26044,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_65424119c1e2.txt",
+        "limit": 130,
+        "offset": 51
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 6198
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.066,
+      "result_length": 1798
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 2.53,
+      "prompt_tokens_est": 28293,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_4a452e801a71.txt",
+        "limit": 80,
+        "offset": 51
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4887
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.066,
+      "result_length": 2941
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.347,
+      "prompt_tokens_est": 30292,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.081,
+      "result_length": 2310
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.Core/Execution/RelayStages.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.046,
+      "result_length": 2233
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 2.351,
+      "prompt_tokens_est": 31709,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_ef1d54576728.txt",
+        "limit": 270,
+        "offset": 37
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13922
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_f43a1f8551a7.txt",
+        "limit": 20,
+        "offset": 23
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 950
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 4.635,
+      "prompt_tokens_est": 35651,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tests/VisualRelay.Tests/TaskRowViewModelTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.076,
+      "result_length": 2303
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tests/VisualRelay.Tests/RefreshButtonDuringRunTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.04,
+      "result_length": 7960
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.688,
+      "prompt_tokens_est": 38780,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_4381cbbffcba.txt",
+        "limit": 260,
+        "offset": 44
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13800
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.075,
+      "result_length": 2301
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 2.405,
+      "prompt_tokens_est": 43290,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_0a8700349f59.txt",
+        "limit": 240,
+        "offset": 35
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15399
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 2.287,
+      "prompt_tokens_est": 47275,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tests/VisualRelay.Tests/RelayEventTestDispatch.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 4433
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tools/VisualRelay.Screenshots/Program.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 2264
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.077,
+      "prompt_tokens_est": 49122,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_fc21de7785e0.txt",
+        "limit": 160,
+        "offset": 38
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10253
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 5.499,
+      "prompt_tokens_est": 52111,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-la",
+          "src/VisualRelay.App/ViewModels"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.074,
+      "result_length": 3474
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/DesignTime/DesignData.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.04,
+      "result_length": 3177
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 2.541,
+      "prompt_tokens_est": 54793,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/Views/Controls/TaskCard.axaml"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.07,
+      "result_length": 5589
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.Core/Execution/RelayDriver.Resume.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.042,
+      "result_length": 5019
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 2.589,
+      "prompt_tokens_est": 57346,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tests/VisualRelay.Tests/LiveStateViewModelTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 2256
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/Services/ControlApi.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.039,
+      "result_length": 2310
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.372,
+      "prompt_tokens_est": 58624,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_eabead623ce8.txt",
+        "limit": 240,
+        "offset": 45
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12319
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_8fed5fee87f0.txt",
+        "limit": 80,
+        "offset": 200
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4180
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 2.826,
+      "prompt_tokens_est": 63107,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.073,
+      "result_length": 2027
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tests/VisualRelay.Tests/DesignDataTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.037,
+      "result_length": 2831
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 2.457,
+      "prompt_tokens_est": 64563,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_1aa013294dde.txt",
+        "limit": 80,
+        "offset": 85
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4080
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tests/VisualRelay.Tests/QueuePanelSplitRenderTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.069,
+      "result_length": 2773
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 3.649,
+      "prompt_tokens_est": 66477,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "type": "command_policy",
+      "bucket": "wc",
+      "decision": "block"
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "src/VisualRelay.App/ViewModels/TaskRowViewModel.cs",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs",
+          "tests/VisualRelay.Tests/TaskRowViewModelTests.cs",
+          "tests/VisualRelay.Tests/RefreshButtonDuringRunTests.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+          "tests/VisualRelay.Tests/LiveStateViewModelTests.cs",
+          "src/VisualRelay.App/Views/Controls/TaskCard.axaml"
+        ]
+      },
+      "succeeded": false,
+      "duration_s": 0.065,
+      "result_length": 70,
+      "error": "error: command 'wc' is not in the allowed list. Allowed: cat, git, ls."
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "tools/VisualRelay.Guards/FileSizeGuard.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.037,
+      "result_length": 4556
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 41.686,
+      "prompt_tokens_est": 67975,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RekeyTaskId|RecordStageCompleted|_taskElapsed|ClearLogState",
+        "path": "src",
+        "include": "*.cs",
+        "context_lines": 3
+      },
+      "succeeded": false,
+      "duration_s": 0.003,
+      "result_length": 206,
+      "error": "error: Path 'src' resolves to /private/tmp/nix-shell.kSbtWD/visual-relay/wt/28b9d4518058/plan-20260820192716/fix-running-task-progress-fraction/src, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 2.823,
+      "prompt_tokens_est": 71974,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "grep",
+          "-n",
+          "RekeyTaskId"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.4,
+      "result_length": 1977
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "grep",
+          "-n",
+          "RecordStageCompleted"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.126,
+      "result_length": 2216
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 2.629,
+      "prompt_tokens_est": 73098,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "grep",
+          "-n",
+          "RecordStageCompleted",
+          "--",
+          "src",
+          "tests",
+          "tools"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.087,
+      "result_length": 786
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "grep",
+          "-n",
+          "MigrateTrackingDictKey",
+          "--",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.TaskName.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.044,
+      "result_length": 687
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 2.192,
+      "prompt_tokens_est": 73592,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "-n",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.TaskName.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 4492
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 71.073,
+      "prompt_tokens_est": 74848,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

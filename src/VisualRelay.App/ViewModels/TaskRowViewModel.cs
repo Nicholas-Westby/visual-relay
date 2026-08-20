@@ -173,7 +173,13 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
 
     internal void RecordStageCompleted(int stageNumber)
     {
-        _liveCompletedStageCount++;
+        _liveCompletedStageCount = Math.Max(_liveCompletedStageCount, stageNumber);
+        OnPropertyChanged(nameof(ProgressFraction));
+    }
+
+    internal void SeedCompletedStageCount(int completedStageCount)
+    {
+        _liveCompletedStageCount = completedStageCount;
         OnPropertyChanged(nameof(ProgressFraction));
     }
 

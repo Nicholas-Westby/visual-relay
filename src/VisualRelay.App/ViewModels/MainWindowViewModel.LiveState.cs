@@ -114,6 +114,7 @@ public partial class MainWindowViewModel
         _runningStageNumbers[taskId] = stageNumber is { } s ? [s] : [];
         _runningStageNames[taskId] = stageName;
         _taskElapsed.TryAdd(taskId, new CumulativeElapsed());
+        SetLiveCompletedStage(taskId, Math.Max(0, (stageNumber ?? 0) - 1));
         ApplyRunningTaskToRows();
         NotifyRunningTaskContextChanged();
     }
@@ -124,6 +125,7 @@ public partial class MainWindowViewModel
         _runningTaskId = task.Id;
         _runningStageNumbers[task.Id] = new HashSet<int>();
         _runningStageNames[task.Id] = null;
+        SetLiveCompletedStage(task.Id, 0);
         // TryAdd preserves a planning-phase accumulator seeded by OnPlanningStarted
         // (so the overall keeps the planning-stage active time across the
         // plan→execute boundary); it creates a fresh one for the single-run path
@@ -172,11 +174,11 @@ public partial class MainWindowViewModel
             return;
         _runningStageNumbers.GetValueOrDefault(taskId)?.Remove(stageNumber);
 
+        RecordLiveCompletedStage(taskId, stageNumber);
+
         var task = Tasks.FirstOrDefault(t => t.Id == taskId);
         if (task is null)
             return;
-
-        task.RecordStageCompleted(stageNumber);
 
         var numbers = _runningStageNumbers.GetValueOrDefault(taskId);
         if (numbers is { Count: > 0 })
@@ -192,6 +194,7 @@ public partial class MainWindowViewModel
         _runningStageNumbers.Remove(taskId);
         _runningStageNames.Remove(taskId);
         _taskElapsed.Remove(taskId);
+        RemoveLiveCompletedStage(taskId);
 
         var task = Tasks.FirstOrDefault(t => t.Id == taskId);
         if (task is not null)
@@ -246,6 +249,7 @@ public partial class MainWindowViewModel
                 _runningStageNames.TryGetValue(task.Id, out var stageName);
                 var stageNum = stageNums is { Count: > 0 } ? stageNums.Max() : (int?)null;
                 task.MarkRunning(stageNum, stageName, stageNums);
+                task.SeedCompletedStageCount(GetLiveCompletedStage(task.Id));
             }
             // Do NOT mark other running tasks idle — during Phase 1 multiple
             // tasks plan concurrently, each owned by its own _runningTaskIds
