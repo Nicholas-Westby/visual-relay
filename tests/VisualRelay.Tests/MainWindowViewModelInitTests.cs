@@ -26,18 +26,13 @@ public sealed class MainWindowViewModelInitTests
         var viewModel = new MainWindowViewModel();
         viewModel.StartBackgroundInspections();
 
-        // LoadSandboxPathsAsync sets IsSandboxInfoLoading=true before its
-        // first await, then clears it in a finally. When nono is on PATH the
-        // subprocess call yields and the flag stays true; when nono is absent
-        // the entire inspection completes synchronously, so the true state
-        // may be unobservable by the time we check. Poll for completion
-        // instead — the flag transitions back to false in either case.
-        for (var i = 0; i < 100; i++)
-        {
-            if (!viewModel.IsSandboxInfoLoading)
-                break;
-            await Task.Delay(2); // vr-allow-sleep: polling for fire-and-forget sandbox inspection completion
-        }
+        // LoadSandboxPathsAsync sets IsSandboxInfoLoading=true before its first
+        // await and clears it in a finally, so the flag is false once the task
+        // completes however it ended — that clearing is the invariant here (a
+        // spinner that never stops is the bug). Await the captured task: the
+        // inspection spawns one nono subprocess per inherited group when nono
+        // is on PATH, so any poll budget would assert the scheduler's mood.
+        await viewModel.LastSandboxInspection!;
 
         Assert.False(viewModel.IsSandboxInfoLoading);
     }
@@ -48,20 +43,16 @@ public sealed class MainWindowViewModelInitTests
         var viewModel = new MainWindowViewModel();
         viewModel.StartBackgroundInspections();
 
-        // The probe is fire-and-forget (HTTP GET with 2s timeout). With
-        // _isBackendReachable defaulting to false, the probe always produces
-        // an observable change: IsBackendReachable flips to true when the
-        // backend is up, or BackendStatusMessage becomes non-null when it is
-        // down. Poll for either signal.
-        for (var i = 0; i < 500; i++)
-        {
-            if (viewModel.IsBackendReachable || viewModel.BackendStatusMessage is not null)
-                break;
-            await Task.Delay(10); // vr-allow-sleep: fire-and-forget async probe has no exposed completion signal
-        }
+        // The probe is an HTTP GET carrying its own 2s timeout and it never
+        // throws. With _isBackendReachable defaulting to false it always
+        // produces an observable change: IsBackendReachable flips to true when
+        // the backend is up, or BackendStatusMessage becomes non-null when it
+        // is down. Await the captured task rather than poll for either signal.
+        await viewModel.LastBackendStatusRefresh!;
 
         Assert.True(viewModel.IsBackendReachable || viewModel.BackendStatusMessage is not null);
     }
+
     [Fact]
     public async Task RunSelected_WithNoConfig_BlocksAndFlagsInitialization()
     {
