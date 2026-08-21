@@ -186,6 +186,73 @@ public sealed class RelayRunHistoryTests
         Assert.Equal("Waiting", result.Single(e => e.Stage == 4).Status);
     }
 
+    [Fact]
+    public async Task ReadSettledStageProgress_RealRepoShape_SettlesAllTwelve()
+    {
+        using var repo = TestRepository.Create();
+        var taskDir = Path.Combine(repo.Root, ".relay", "finished");
+        Directory.CreateDirectory(taskDir);
+        var entries = Enumerable.Range(1, 10)
+            .Select(i => new StageStatusEntry(i, $"Stage {i}", "Done"))
+            .Append(new StageStatusEntry(11, "Fix-verify", "Skipped"))
+            .Append(new StageStatusEntry(12, "Commit", "Done"))
+            .ToList();
+        await StageStatusRecord.WriteAsync(taskDir, entries);
+
+        var result = RelayRunHistory.ReadSettledStageProgress(repo.Root, "finished");
+
+        Assert.Equal(12, result.Settled);
+        Assert.Equal(12, result.Total);
+    }
+
+    [Fact]
+    public async Task ReadSettledStageProgress_ElevenEntryLegacyRun_SettlesAllEleven()
+    {
+        using var repo = TestRepository.Create();
+        var taskDir = Path.Combine(repo.Root, ".relay", "legacy");
+        Directory.CreateDirectory(taskDir);
+        var entries = Enumerable.Range(1, 11)
+            .Select(i => new StageStatusEntry(i, $"Stage {i}", "Done"))
+            .ToList();
+        await StageStatusRecord.WriteAsync(taskDir, entries);
+
+        var result = RelayRunHistory.ReadSettledStageProgress(repo.Root, "legacy");
+
+        Assert.Equal(11, result.Settled);
+        Assert.Equal(11, result.Total);
+    }
+
+    [Fact]
+    public async Task ReadSettledStageProgress_FlaggedAndWaitingAreNotSettled()
+    {
+        using var repo = TestRepository.Create();
+        var taskDir = Path.Combine(repo.Root, ".relay", "stopped");
+        Directory.CreateDirectory(taskDir);
+        var entries = Enumerable.Range(1, 5)
+            .Select(i => new StageStatusEntry(i, $"Stage {i}", "Done"))
+            .Append(new StageStatusEntry(6, "Verify", "Flagged"))
+            .Concat(Enumerable.Range(7, 6)
+                .Select(i => new StageStatusEntry(i, $"Stage {i}", "Waiting")))
+            .ToList();
+        await StageStatusRecord.WriteAsync(taskDir, entries);
+
+        var result = RelayRunHistory.ReadSettledStageProgress(repo.Root, "stopped");
+
+        Assert.Equal(5, result.Settled);
+        Assert.Equal(12, result.Total);
+    }
+
+    [Fact]
+    public void ReadSettledStageProgress_MissingRecord_ReturnsZeroEntries()
+    {
+        using var repo = TestRepository.Create();
+
+        var result = RelayRunHistory.ReadSettledStageProgress(repo.Root, "nonexistent");
+
+        Assert.Equal(0, result.Settled);
+        Assert.Equal(0, result.Total);
+    }
+
     private static StageRunMetric MetricFor(int turns = 0) => new(
         StageNumber: 1,
         StageName: "Ideate",

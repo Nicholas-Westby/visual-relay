@@ -107,7 +107,9 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     public BoxShadows CardShadow => IsSelected ? NoShadow : IsRunning ? RunningShadow : NoShadow;
     public double ProgressFraction => IsRunning
         ? Math.Clamp(_liveCompletedStageCount / (double)RelayStages.All.Count, 0, 1)
-        : Math.Clamp(Task.CompletedStageCount / (double)RelayStages.All.Count, 0, 1);
+        : Task.PipelineStageCount > 0
+            ? Math.Clamp(Task.SettledStageCount / (double)Task.PipelineStageCount, 0, 1)
+            : Math.Clamp(Task.CompletedStageCount / (double)RelayStages.All.Count, 0, 1);
 
     public bool IsSelected
     {

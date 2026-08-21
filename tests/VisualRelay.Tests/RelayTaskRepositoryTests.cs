@@ -2,7 +2,7 @@ using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayTaskRepositoryTests
+public sealed partial class RelayTaskRepositoryTests
 {
     [Fact]
     public async Task ListPendingAsync_SkipsDoneIgnoredCompletedAndNeedsReviewTasks()

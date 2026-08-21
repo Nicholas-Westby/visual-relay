@@ -243,6 +243,7 @@ public sealed partial class RelayTaskRepository(string rootPath, IGitInvoker? gi
     private RelayTaskItem AttachRunMetrics(RelayTaskItem task)
     {
         var metric = RelayRunHistory.ReadTaskMetric(RootPath, task.Id);
+        var settled = RelayRunHistory.ReadSettledStageProgress(RootPath, task.Id);
         var maxTs = metric.Stages.Count > 0
             ? metric.Stages.Max(s => s.Timestamp)
             : (DateTimeOffset?)null;
@@ -251,6 +252,8 @@ public sealed partial class RelayTaskRepository(string rootPath, IGitInvoker? gi
             CostUsd = metric.CostUsd,
             DurationSeconds = metric.DurationSeconds,
             CompletedStageCount = metric.CompletedStageCount,
+            SettledStageCount = settled.Settled,
+            PipelineStageCount = settled.Total,
             CompletedAt = task.IsArchived ? maxTs : null
         };
     }

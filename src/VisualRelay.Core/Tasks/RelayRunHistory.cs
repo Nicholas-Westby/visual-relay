@@ -125,6 +125,19 @@ public static partial class RelayRunHistory
         return StageStatusRecord.Read(taskDirectory);
     }
 
+    /// <summary>
+    /// Reads the settled-stage progress for a task from its status record:
+    /// the number of stages whose status is Done or Skipped, alongside the
+    /// record's own entry count. Waiting/Running/Flagged are not progress.
+    /// A missing or unreadable record yields (0, 0) so callers can fall back.
+    /// </summary>
+    public static (int Settled, int Total) ReadSettledStageProgress(string rootPath, string taskId)
+    {
+        var entries = ReadStatusRecord(rootPath, taskId);
+        var settled = entries.Count(entry => entry.Status is "Done" or "Skipped");
+        return (settled, entries.Count);
+    }
+
     private static StageRunMetric SquashAttempts(IGrouping<int, StageRunMetric> attempts)
     {
         // Order by the parsed attempt index, not the report path string: an ordinal sort ranks
