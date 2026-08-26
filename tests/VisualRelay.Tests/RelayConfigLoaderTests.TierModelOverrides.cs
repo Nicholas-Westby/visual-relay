@@ -38,7 +38,7 @@ public sealed partial class RelayConfigLoaderTests
             """
             {
               "testCmd": "dotnet test",
-              "tierModelOverrides": { "cheap": "not-a-real-model", "frontier": "glm-5.2" }
+              "tierModelOverrides": { "cheap": "not-a-real-model", "frontier": "hf-glm-5.3-flash" }
             }
             """);
 
@@ -46,7 +46,7 @@ public sealed partial class RelayConfigLoaderTests
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.NotNull(result.Config.TierModelOverrides);
         Assert.False(result.Config.TierModelOverrides!.ContainsKey("cheap"));
-        Assert.Equal("glm-5.2", result.Config.TierModelOverrides!["frontier"]);
+        Assert.Equal("hf-glm-5.3-flash", result.Config.TierModelOverrides!["frontier"]);
     }
 
     [Fact]

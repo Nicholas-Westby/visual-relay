@@ -61,10 +61,10 @@ public sealed partial class RelayCostEstimatorTests
     [Fact]
     public void EstimateReport_TierAliasFrontier_PricesAtGlmRates()
     {
-        // "frontier" resolves to "glm-5.3": input 1.40, cached 0.26, output 4.40 —
-        // identical to the glm-5.2 it replaced, so this total is unchanged.
+        // "frontier" resolves to "glm-5.3-flash": input 0.15, cached 0.03, output 0.50.
         // uncached=2000, cached=500, output=ceil(40/4)+50=60.
-        // cost = (2000*1.40 + 500*0.26 + 60*4.40) / 1_000_000 = 0.003194.
+        // cost = (2000*0.15 + 500*0.03 + 60*0.50) / 1_000_000
+        //      = (300 + 15 + 30) / 1_000_000 = 345 / 1_000_000 = 0.000345.
         using var document = JsonDocument.Parse(
             $$"""
             {
@@ -81,6 +81,6 @@ public sealed partial class RelayCostEstimatorTests
 
         Assert.True(cost.Priced);
         Assert.Equal("frontier", cost.Model);
-        Assert.Equal(0.003194, cost.CostUsd, precision: 10);
+        Assert.Equal(0.000345, cost.CostUsd, precision: 10);
     }
 }

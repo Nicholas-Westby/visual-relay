@@ -53,25 +53,26 @@ public sealed partial class SwivalProfileSessionPinningTests
     }
 
     /// <summary>
-    /// GLM 5.2 (frontier primary) has a 200 K-token context window. The
-    /// <c>[profiles.glm]</c> block in DefaultToml must reflect that ceiling so
-    /// swival never under-budgets its context.
+    /// GLM 5.3 Flash (frontier primary) has a 1 M-token context window. The
+    /// <c>[profiles.glm]</c> block pins that one model, so it must reflect the
+    /// true upstream ceiling and not the tier-wide budget below.
     /// </summary>
     [Fact]
-    public void DefaultToml_GlmProfile_MaxContextTokensIs200000()
+    public void DefaultToml_GlmProfile_MaxContextTokensIs1000000()
     {
         var toml = SwivalProfileSession.DefaultToml;
         var maxTokens = ParseSwivalProfileMaxContextTokens(toml);
 
         Assert.True(maxTokens.TryGetValue("glm", out var glmMax),
             "DefaultToml must contain a [profiles.glm] block with max_context_tokens");
-        Assert.Equal(200000, glmMax);
+        Assert.Equal(1000000, glmMax);
     }
 
     /// <summary>
-    /// The <c>frontier</c> tier alias now resolves to GLM 5.2 (200 K context),
-    /// so the <c>[profiles.frontier]</c> block must budget 200 000 tokens
-    /// rather than the prior 128 000.
+    /// The <c>frontier</c> tier alias fails over across a chain, so its budget is
+    /// the chain's floor rather than the primary's ceiling: GLM 5.3 Flash takes
+    /// 1 M tokens, but a request that lands on the kimi-k2 fallback (256 K) must
+    /// still fit. 200 000 clears every member of the chain.
     /// </summary>
     [Fact]
     public void DefaultToml_FrontierProfile_MaxContextTokensIs200000()

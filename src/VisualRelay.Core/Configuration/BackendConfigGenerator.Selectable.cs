@@ -11,12 +11,13 @@ public static partial class BackendConfigGenerator
         new Dictionary<string, IReadOnlyList<string>>
         {
             // hf-qwen3-coder-next is deliberately absent: the ≤6 cap has no
-            // room for it once glm-5.3 heads the list, it is the weakest
-            // option a frontier tier could pick, and the auto-resolved
-            // frontier chain still reaches it (and the fallback tier) anyway.
+            // room for it once both GLM 5.3 Flash routes head the list, it is
+            // the weakest option a frontier tier could pick, and the
+            // auto-resolved frontier chain still reaches it (and the fallback
+            // tier) anyway.
             ["frontier"] = new List<string>
             {
-                "glm-5.3", "glm-5.2", "kimi-k2",
+                "glm-5.3-flash", "hf-glm-5.3-flash", "kimi-k2",
                 "deepseek-v4-pro", "claude-opus-1m", "gpt-5",
             },
             ["balanced"] = new List<string>

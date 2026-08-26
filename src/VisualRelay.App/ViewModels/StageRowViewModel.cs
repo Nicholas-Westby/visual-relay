@@ -39,7 +39,7 @@ public sealed partial class StageRowViewModel : ViewModelBase
     // exists (escalation can bump a stage from balanced to frontier mid-run),
     // otherwise the definition tier captured in the constructor. The concrete model
     // is appended only when it adds information — a cheap-run that recorded "cheap"
-    // reads just "cheap", while a frontier run that recorded "glm-5.3" shows both.
+    // reads just "cheap", while a frontier run that recorded "glm-5.3-flash" shows both.
     public string TierLabel
     {
         get

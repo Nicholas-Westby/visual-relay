@@ -158,16 +158,16 @@ public sealed class StageRowViewModelTests
         // A frontier stage that recorded a concrete model distinct from the tier
         // shows both, joined by a separator that survives the 165 px card.
         var stage = new StageRowViewModel(RelayStages.All[6]);
-        stage.ApplyMetric(MetricFor(tier: "frontier", model: "glm-5.3"));
+        stage.ApplyMetric(MetricFor(tier: "frontier", model: "glm-5.3-flash"));
 
-        Assert.Equal("frontier · glm-5.3", stage.TierLabel);
+        Assert.Equal("frontier · glm-5.3-flash", stage.TierLabel);
     }
 
     [Fact]
     public void TierLabel_ClearMetric_RevertsToDefinitionTier()
     {
         var stage = new StageRowViewModel(RelayStages.All[6]);
-        stage.ApplyMetric(MetricFor(tier: "vision", model: "glm-5.3"));
+        stage.ApplyMetric(MetricFor(tier: "vision", model: "glm-5.3-flash"));
 
         stage.ClearMetric();
 

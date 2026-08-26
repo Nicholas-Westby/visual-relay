@@ -4,43 +4,44 @@ using VisualRelay.Core.Costs;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// The frontier tier defaults to GLM 5.3 on Z.AI's first-party API when
-/// <c>ZAI_API_KEY</c> is configured, and falls back to GLM 5.2 over Hugging
-/// Face when it is not. A user who never adds a Z.AI key must see byte-identical
-/// behaviour to before the 5.3 upgrade.
+/// The frontier tier runs GLM 5.3 Flash. It reaches the model on Z.AI's
+/// first-party API when <c>ZAI_API_KEY</c> is configured, and over Hugging Face
+/// Inference Providers (provider-pinned back to Z.AI) when it is not — so a user
+/// holding only an HF token still gets the same upstream model, just via another
+/// host.
 /// </summary>
 public sealed class BackendConfigGeneratorZaiFrontierTests
 {
     [Fact]
-    public void Frontier_ResolvesToGlm53_WhenZaiKeyPresent()
+    public void Frontier_ResolvesToGlm53Flash_WhenZaiKeyPresent()
     {
         var present = new HashSet<string> { "ZAI_API_KEY", "HF_TOKEN" };
 
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
         var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
-        Assert.Equal("glm-5.3", aliases["frontier"]);
+        Assert.Equal("glm-5.3-flash", aliases["frontier"]);
 
-        // GLM 5.2 does not disappear — it demotes to the first fallback, so a
-        // Z.AI outage still lands on the model that used to be the primary.
-        Assert.Equal("glm-5.2", fallbacks["frontier"][0]);
+        // The HF route does not disappear — it demotes to the first fallback, so
+        // a Z.AI outage still lands on the same model through another host.
+        Assert.Equal("hf-glm-5.3-flash", fallbacks["frontier"][0]);
         Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback("frontier", fallbacks));
     }
 
     [Fact]
-    public void Frontier_FallsBackToGlm52_WhenZaiKeyAbsent()
+    public void Frontier_FallsBackToHfRoute_WhenZaiKeyAbsent()
     {
         var present = new HashSet<string> { "HF_TOKEN" };
 
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
         var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
-        Assert.Equal("glm-5.2", aliases["frontier"]);
+        Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
 
         // A model whose key is absent must never appear anywhere in the chain,
         // or litellm burns an auth-error round trip on every frontier call.
-        Assert.DoesNotContain("glm-5.3", aliases.Values);
-        Assert.DoesNotContain("glm-5.3", fallbacks["frontier"]);
+        Assert.DoesNotContain("glm-5.3-flash", aliases.Values);
+        Assert.DoesNotContain("glm-5.3-flash", fallbacks["frontier"]);
     }
 
     [Fact]
@@ -50,12 +51,12 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
             new HashSet<string> { "ZAI_API_KEY", "HF_TOKEN" });
 
         var frontier = rows.Single(r => r.Tier == "frontier");
-        Assert.Equal("glm-5.3", frontier.Model);
+        Assert.Equal("glm-5.3-flash", frontier.Model);
         Assert.Equal("Z.AI", frontier.ProviderName);
         Assert.True(frontier.KeyPresent);
 
-        Assert.Equal("Z.AI", BackendConfigGenerator.ProviderFor("glm-5.3"));
-        Assert.Equal("Hugging Face", BackendConfigGenerator.ProviderFor("glm-5.2"));
+        Assert.Equal("Z.AI", BackendConfigGenerator.ProviderFor("glm-5.3-flash"));
+        Assert.Equal("Hugging Face", BackendConfigGenerator.ProviderFor("hf-glm-5.3-flash"));
     }
 
     [Fact]
@@ -64,26 +65,63 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
         var rows = BackendConfigGenerator.GetTierRows(new HashSet<string> { "HF_TOKEN" });
 
         var frontier = rows.Single(r => r.Tier == "frontier");
-        Assert.Equal("glm-5.2", frontier.Model);
+        Assert.Equal("hf-glm-5.3-flash", frontier.Model);
         Assert.Equal("Hugging Face", frontier.ProviderName);
     }
 
     /// <summary>
-    /// Z.AI publishes identical rates for GLM 5.3 and GLM 5.2
-    /// (docs.z.ai/guides/overview/pricing, 2026-08-19), so promoting 5.3 to the
-    /// frontier default is cost-neutral. If Z.AI ever diverges the two, this
-    /// fails and the run-cost estimates need revisiting alongside the rate edit.
+    /// Z.AI's published GLM-5.3-Flash rates (docs.z.ai/guides/overview/pricing,
+    /// 2026-08-26): $0.15 input, $0.03 cached input, $0.50 output per 1M tokens.
+    /// Z.AI is running a 50%-off promotion on this model until 2026-09-09, and the
+    /// sticker rate is what is recorded here on purpose — the same call the
+    /// claude-sonnet entry makes — so estimates do not under-count once it lapses.
     /// </summary>
     [Fact]
-    public void Glm53_And_Glm52_PriceIdentically()
+    public void Glm53Flash_PricesAtZaiStickerRates()
     {
-        var glm53 = RelayPricing.Default["glm-5.3"];
-        var glm52 = RelayPricing.Default["glm-5.2"];
+        var flash = RelayPricing.Default["glm-5.3-flash"];
 
-        Assert.Equal(glm52.Input, glm53.Input);
-        Assert.Equal(glm52.Output, glm53.Output);
-        Assert.Equal(glm52.EffectiveCachedInput, glm53.EffectiveCachedInput);
-        Assert.Equal(glm52.EffectiveCacheWrite, glm53.EffectiveCacheWrite);
+        Assert.Equal(0.15, flash.Input);
+        Assert.Equal(0.50, flash.Output);
+        Assert.Equal(0.03, flash.EffectiveCachedInput);
+        // Z.AI publishes no separate cache-write rate, so it falls back to input.
+        Assert.Equal(0.15, flash.EffectiveCacheWrite);
+    }
+
+    /// <summary>
+    /// Both routes serve the same upstream model, so they must price the same. If
+    /// they ever diverge, a Z.AI outage would silently change what a run costs and
+    /// the estimates need revisiting alongside the rate edit.
+    /// </summary>
+    [Fact]
+    public void BothGlm53FlashRoutes_PriceIdentically()
+    {
+        var zai = RelayPricing.Default["glm-5.3-flash"];
+        var hf = RelayPricing.Default["hf-glm-5.3-flash"];
+
+        Assert.Equal(zai.Input, hf.Input);
+        Assert.Equal(zai.Output, hf.Output);
+        Assert.Equal(zai.EffectiveCachedInput, hf.EffectiveCachedInput);
+        Assert.Equal(zai.EffectiveCacheWrite, hf.EffectiveCacheWrite);
+    }
+
+    /// <summary>
+    /// The retired GLM 5.2 and GLM 5.3 entries must be gone everywhere at once: a
+    /// name left in the pricing table or a selectable list outlives the
+    /// <c>model_list</c> route it needs, and resolves to a model the proxy cannot
+    /// dispatch.
+    /// </summary>
+    [Fact]
+    public void RetiredGlmModelNames_AreGoneFromPricingAndSelectableLists()
+    {
+        string[] retired = ["glm-5.2", "glm-5.3"];
+
+        foreach (var model in retired)
+        {
+            Assert.DoesNotContain(model, RelayPricing.Default.Keys);
+            Assert.DoesNotContain(model, BackendConfigGenerator.SelectableModelsByTier.Values.SelectMany(m => m));
+            Assert.DoesNotContain(model, BackendConfigGenerator.Chains.Values.SelectMany(c => c).Select(c => c.Model));
+        }
     }
 
     /// <summary>

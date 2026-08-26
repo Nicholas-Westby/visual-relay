@@ -30,7 +30,7 @@ public sealed class TierModelProviderTests
         var row = new MainWindowViewModel.TierModelRow
         {
             Tier = "frontier",
-            SelectedModel = "glm-5.2",
+            SelectedModel = "hf-glm-5.3-flash",
             OnSelectedModelPersist = _ => { persistCalls++; return Task.CompletedTask; },
         };
 

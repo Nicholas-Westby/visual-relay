@@ -46,14 +46,17 @@ internal static class RelayPricing
             // deepseek-v4-pro → DeepSeek-V4-Pro-0813 (api-docs.deepseek.com, 2026-08-17);
             // off-peak base rates; same cache-write rationale as -flash above.
             ["deepseek-v4-pro"] = new(0.66, 1.98, 0.022, 0.66) { Windows = DeepseekPeakWindows },
-            // GLM 5.3 first-party on Z.AI (docs.z.ai/guides/overview/pricing,
-            // 2026-08-19); identical published rates to GLM 5.2 below, so the
-            // frontier default moving to 5.3 costs the same per token.
-            // CacheWrite falls back to Input (1.40) — Z.AI publishes no separate
-            // cache-write rate and lists cache writes as free for now.
-            ["glm-5.3"] = new(1.40, 4.40, 0.26),
-            // GLM 5.2 via HF (zai-org), 2026-08-17; CacheWrite falls back to Input (1.40)
-            ["glm-5.2"] = new(1.40, 4.40, 0.26),
+            // GLM 5.3 Flash first-party on Z.AI (docs.z.ai/guides/overview/pricing,
+            // 2026-08-26). These are the sticker rates: Z.AI is running a 50%-off
+            // promotion on this model until 2026-09-09, and pricing the promo
+            // would under-count every run made after it lapses (same call as the
+            // claude-sonnet entry below). CacheWrite falls back to Input (0.15) —
+            // Z.AI publishes no separate cache-write rate.
+            ["glm-5.3-flash"] = new(0.15, 0.50, 0.03),
+            // The same model over HF Inference Providers, provider-pinned to
+            // zai-org, so Z.AI's rates apply unchanged; CacheWrite falls back to
+            // Input (0.15).
+            ["hf-glm-5.3-flash"] = new(0.15, 0.50, 0.03),
             // Qwen3-VL-235B-A22B-Instruct (openrouter.ai, 2026-08-17)
             ["hf-qwen3-vl-235b"] = new(0.20, 0.88),
             // Qwen3-VL-30B-A3B-Instruct (openrouter.ai, 2026-08-17); the vision-tier

@@ -94,7 +94,11 @@ public sealed class BackendConfigGeneratorVisionTierTests
         Assert.DoesNotContain("hf-qwen3-coder-next", chain);
         Assert.DoesNotContain("deepseek-v4-pro", chain);
         Assert.DoesNotContain("deepseek-v4-flash", chain);
-        Assert.DoesNotContain("glm-5.2", chain);
+        // Vision-capable or not, the frontier primary is not a vision route: GLM
+        // 5.3 Flash does take images, but the vision chain stays the two VL
+        // models the tier is sized and priced around.
+        Assert.DoesNotContain("glm-5.3-flash", chain);
+        Assert.DoesNotContain("hf-glm-5.3-flash", chain);
     }
 
     // ── 6. Vision alias resolves to 235B primary ──────────────────────────

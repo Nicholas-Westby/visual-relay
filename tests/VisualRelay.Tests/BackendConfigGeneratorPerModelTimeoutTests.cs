@@ -36,29 +36,29 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
     }
 
     [Fact]
-    public void PerModelTimeout_FrontierGlm52Has480s()
+    public void PerModelTimeout_FrontierHfGlm53FlashHas480s()
     {
         var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
         var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
 
-        Assert.True(timeouts.TryGetValue("glm-5.2", out var t),
-            "glm-5.2 must have a per-model timeout");
+        Assert.True(timeouts.TryGetValue("hf-glm-5.3-flash", out var t),
+            "hf-glm-5.3-flash must have a per-model timeout");
         // 480s (8 min) — same frontier ceiling as kimi-k2; > 412s observed
         // worst-case healthy Review, far below the 40-min stage cap.
         Assert.Equal(480, t);
     }
 
     [Fact]
-    public void PerModelTimeout_FrontierGlm53Has480s()
+    public void PerModelTimeout_FrontierGlm53FlashHas480s()
     {
         var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
         var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
 
-        Assert.True(timeouts.TryGetValue("glm-5.3", out var t),
-            "glm-5.3 must have a per-model timeout");
-        // 480s (8 min) — same frontier ceiling as glm-5.2 and kimi-k2. GLM 5.3
-        // always reasons before emitting content, so its first-token latency is
-        // at least as long as the 412s observed worst-case healthy Review.
+        Assert.True(timeouts.TryGetValue("glm-5.3-flash", out var t),
+            "glm-5.3-flash must have a per-model timeout");
+        // 480s (8 min) — same frontier ceiling as the HF route and kimi-k2. GLM
+        // 5.3 Flash always reasons before emitting content, so its first-token
+        // latency is at least as long as the 412s observed worst-case Review.
         Assert.Equal(480, t);
     }
 
@@ -115,8 +115,8 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
         var (yaml, _) = BackendConfigGeneratorTestHelpers.Generate(present);
         var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
 
-        Assert.Equal(480, timeouts["glm-5.3"]);
-        Assert.Equal(480, timeouts["glm-5.2"]);
+        Assert.Equal(480, timeouts["glm-5.3-flash"]);
+        Assert.Equal(480, timeouts["hf-glm-5.3-flash"]);
         Assert.Equal(480, timeouts["kimi-k2"]);
         Assert.Equal(75, timeouts["deepseek-v4-pro"]);
         Assert.Equal(75, timeouts["deepseek-v4-flash"]);

@@ -72,8 +72,8 @@ internal sealed partial class SwivalProfileSession
         [profiles.glm]
         provider = "generic"
         base_url = "{ModelBackend.BaseUrl}"
-        model = "glm-5.2"
-        max_context_tokens = 200000
+        model = "glm-5.3-flash"
+        max_context_tokens = 1000000
 
         [profiles.kimi]
         provider = "generic"

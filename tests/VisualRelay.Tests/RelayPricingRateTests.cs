@@ -6,16 +6,18 @@ namespace VisualRelay.Tests;
 public sealed class RelayPricingRateTests
 {
     [Fact]
-    public void Glm52_UpdatedInputAndCachedRates()
+    public void Glm53FlashOverHf_UsesTheSameZaiPublishedRates()
     {
-        // GLM 5.2: input 1.40, cached 0.26, output 4.40.
+        // hf-glm-5.3-flash reaches the same upstream model as the first-party
+        // route, so it carries Z.AI's published rates: input 0.15, cached 0.03,
+        // output 0.50.
         // uncached=2000, cached=500, output=ceil(40/4)+50=60.
-        // cost = (2000*1.40 + 500*0.26 + 60*4.40) / 1_000_000
-        //      = (2800 + 130 + 264) / 1_000_000 = 3194 / 1_000_000 = 0.003194.
+        // cost = (2000*0.15 + 500*0.03 + 60*0.50) / 1_000_000
+        //      = (300 + 15 + 30) / 1_000_000 = 345 / 1_000_000 = 0.000345.
         using var document = JsonDocument.Parse(
             $$"""
             {
-              "model": "glm-5.2",
+              "model": "hf-glm-5.3-flash",
               "result": { "answer": "{{new string('y', 40)}}" },
               "stats": { "prompt_cache": { "cached_tokens": 500 } },
               "timeline": [
@@ -27,8 +29,8 @@ public sealed class RelayPricingRateTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal("glm-5.2", cost.Model);
-        Assert.Equal(0.003194, cost.CostUsd, precision: 10);
+        Assert.Equal("hf-glm-5.3-flash", cost.Model);
+        Assert.Equal(0.000345, cost.CostUsd, precision: 10);
     }
 
     [Fact]

@@ -28,7 +28,7 @@ public sealed class BackendConfigGeneratorSelectableTests
         Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback("cheap", fallbacks));
 
         // Other tiers unaffected by the override resolve normally.
-        Assert.Equal("glm-5.2", aliases["frontier"]);
+        Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
     }
 
     /// <summary>
@@ -70,7 +70,7 @@ public sealed class BackendConfigGeneratorSelectableTests
         // All model names must come from the real model_list.
         string[] realModels =
         [
-            "glm-5.3", "glm-5.2", "kimi-k2", "deepseek-v4-pro", "deepseek-v4-flash",
+            "glm-5.3-flash", "hf-glm-5.3-flash", "kimi-k2", "deepseek-v4-pro", "deepseek-v4-flash",
             "hf-qwen3-coder-next", "hf-qwen3-vl-235b", "hf-qwen3-vl-30b",
             "claude-opus-1m", "claude-sonnet", "gpt-5",
         ];

@@ -12,9 +12,9 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Canonical provider list in display order. Z.AI sits directly below
-    /// Hugging Face because it now backs the frontier tier's primary model
-    /// (GLM 5.3); without it the frontier chain falls through to GLM 5.2 over
-    /// Hugging Face, so both are worth having.
+    /// Hugging Face because it backs the frontier tier's primary model
+    /// (GLM 5.3 Flash); without it the frontier chain reaches the same model
+    /// over Hugging Face instead, so both are worth having.
     /// </summary>
     public static readonly IReadOnlyList<ProviderKeyRow> AllProviderKeys =
     [
