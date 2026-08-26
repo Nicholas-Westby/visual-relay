@@ -14,6 +14,11 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
     private bool _testOnly;
     private string _testOnlyFile = "tests/regression.cs";
     private bool _reviewChanges;
+    private bool _writeCostReports;
+
+    // Opt-in stage-report artifacts (see StageReportSeed). Off by default: existing
+    // tests assert against a run with no reports, and seeding changes their costs.
+    public void SeedCostReports() => _writeCostReports = true;
 
     public void SeedHappyPath(string codeFile, string testFile)
     {
@@ -56,6 +61,9 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
             11 => """{"summary":"fixed verify"}""",
             _ => """{"summary":"ok"}"""
         };
+
+        if (_writeCostReports)
+            StageReportSeed.Write(invocation);
 
         return Task.FromResult(new SubagentResult(
             RawText: $"```json{Environment.NewLine}{json}{Environment.NewLine}```",

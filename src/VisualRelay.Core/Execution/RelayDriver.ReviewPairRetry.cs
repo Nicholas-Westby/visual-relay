@@ -140,9 +140,19 @@ public sealed partial class RelayDriver
         string previousSeal, string taskHash, double sessionCostUsd,
         int unknownCostStageCount, CancellationToken cancellationToken)
     {
+        // The stage report carries the concrete model, token counts, and turn count.
+        // Hand-building the estimate without them left Review and Visual-review as the
+        // only stages in status.json with no model and no turns, so their cards could
+        // never show the model and per-model token attribution dropped them. Cost and
+        // duration stay the pair path's own (it accrues the session total from
+        // runResult), so run totals are unchanged.
+        var reported = EstimateStageCostCumulative(taskDirectory, stage.Number);
         var cost = runResult.CostUnknown ? null
-            : new RelayCostEstimate("", runResult.CostUsd, true, 0, 0, 0,
-                runResult.Elapsed.TotalSeconds);
+            : new RelayCostEstimate(
+                reported?.Model ?? "", runResult.CostUsd, true,
+                reported?.PromptTokens ?? 0, reported?.CachedTokens ?? 0,
+                reported?.OutputTokens ?? 0, runResult.Elapsed.TotalSeconds,
+                reported?.CacheWriteTokens ?? 0, reported?.Turns ?? 0);
         // Visual-review (8) may report "unassessable" — the subject never appeared in
         // the render. That is neither a clean pass nor a defect, so it gets its own
         // seal/status check plus a Run Log warning; without it the stage would read as
