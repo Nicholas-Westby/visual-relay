@@ -31,8 +31,21 @@ public static class BackendConfigStep
             ? null
             : Path.Combine(repoRoot, "tools", "backend", "litellm-config.yaml");
 
-        if (template is null || !File.Exists(template))
-            return template ?? string.Empty;
+        if (template is null)
+        {
+            // No repo root (the launcher exports VISUAL_RELAY_SCRIPT_DIR; a bare
+            // `dotnet run` on this tool does not). litellm is then spawned with no
+            // --config: it boots with an EMPTY model_list, still answers the
+            // readiness probe, and start reports "ready" — after which every request
+            // fails with "Invalid model name", which reads as a model bug rather
+            // than a launch one. Say so instead of going quiet.
+            log("no repo root; starting litellm with no model config: every request "
+                + "will fail with an invalid-model-name error");
+            return string.Empty;
+        }
+
+        if (!File.Exists(template))
+            return template;
 
         // A non-positive budget can't generate anything — fall straight back to the
         // static template (deterministic; mirrors a timeout outcome).

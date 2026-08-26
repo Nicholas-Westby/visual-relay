@@ -18,7 +18,7 @@ VisualRelay.Backend status   # reports up/down
 VisualRelay.Backend stop     # SIGTERM then SIGKILL, and removes the PID file
 ```
 
-(From a source checkout: `dotnet run --project tools/VisualRelay.Backend -- {start|stop|status}`.)
+(From a source checkout: `VISUAL_RELAY_SCRIPT_DIR=$PWD dotnet run --project tools/VisualRelay.Backend -- {start|stop|status}`. That variable is how `start` finds the config template — the `./visual-relay` launcher exports it, a bare `dotnet run` does not, and without it litellm boots with an empty model list and 400s every request while still reporting ready.)
 
 `start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under `$XDG_DATA_HOME/visual-relay/scratch/` (`litellm.pid`, `litellm.log`).
 

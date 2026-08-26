@@ -67,6 +67,27 @@ public sealed partial class BackendLifecycleStatusTests
         Assert.False(File.Exists(paths.GeneratedConfig));
     }
 
+    /// <summary>
+    /// Started outside a source checkout (no <c>VISUAL_RELAY_SCRIPT_DIR</c>, which the
+    /// launcher exports) there is no template to generate from, so litellm is spawned
+    /// with no config at all: it boots with an empty model list, answers the readiness
+    /// probe, and <c>start</c> reports "ready" -- then every request fails with
+    /// "Invalid model name", which reads as a model problem rather than a launch one.
+    /// The start path must name that instead of going quiet.
+    /// </summary>
+    [Fact]
+    public async Task GenConfig_NoRepoRoot_WarnsThatTheProxyGetsNoModels()
+    {
+        var paths = Paths();
+        var log = new List<string>();
+
+        var config = await BackendConfigStep.ResolveAsync(
+            paths, repoRoot: null, TimeSpan.FromSeconds(5), log.Add);
+
+        Assert.Equal(string.Empty, config);
+        Assert.Contains(log, l => l.Contains("no model config", StringComparison.Ordinal));
+    }
+
     // ── PYTHONDONTWRITEBYTECODE on the spawned proxy ─────────────────────
 
     [Fact]
