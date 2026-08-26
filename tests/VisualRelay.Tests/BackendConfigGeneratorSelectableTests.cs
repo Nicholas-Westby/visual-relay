@@ -68,13 +68,8 @@ public sealed class BackendConfigGeneratorSelectableTests
             Assert.True(models.Count <= 6, $"Tier '{tier}' has {models.Count} selectable models (max 6)");
 
         // All model names must come from the real model_list.
-        string[] realModels =
-        [
-            "glm-5.3-flash", "hf-glm-5.3-flash", "kimi-k2", "deepseek-v4-pro", "deepseek-v4-flash",
-            "hf-qwen3-coder-next", "hf-qwen3-vl-235b", "hf-qwen3-vl-30b",
-            "claude-opus-1m", "claude-sonnet", "gpt-5",
-        ];
-        var realSet = new HashSet<string>(realModels);
+        var realSet = BackendConfigGeneratorTestHelpers.ParseModelNames(
+            File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath));
 
         foreach (var (tier, models) in sm)
             foreach (var model in models)
@@ -83,7 +78,7 @@ public sealed class BackendConfigGeneratorSelectableTests
 
         // Every real model appears in at least one tier's selectable list.
         var allSelectable = sm.Values.SelectMany(m => m).ToHashSet();
-        foreach (var model in realModels)
+        foreach (var model in realSet)
             Assert.True(allSelectable.Contains(model),
                 $"Real model '{model}' is missing from all SelectableModels");
     }

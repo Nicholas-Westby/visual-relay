@@ -216,6 +216,50 @@ internal static class BackendConfigGeneratorTestHelpers
         return result;
     }
 
+    /// Compares a YAML model_list against pricing/chain/selectable copies; returns ordered problem strings (shared guard+control code path).
+    public static IReadOnlyList<string> FindCatalogProblems(
+        string templateYaml,
+        IEnumerable<string>? pricingKeys = null,
+        IReadOnlyDictionary<string, List<(string Model, string RequiredKey)>>? chains = null,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? selectable = null)
+    {
+        var templateModels = ParseModelNames(templateYaml);
+        var problems = new List<string>();
+
+        if (pricingKeys != null)
+        {
+            var priced = pricingKeys.ToHashSet(StringComparer.Ordinal);
+            foreach (var model in templateModels.Where(m => !priced.Contains(m)).OrderBy(m => m, StringComparer.Ordinal))
+                problems.Add($"routable but not priced: {model}");
+            foreach (var model in priced.Where(m => !templateModels.Contains(m)).OrderBy(m => m, StringComparer.Ordinal))
+                problems.Add($"priced but not routable: {model}");
+        }
+
+        if (chains != null)
+        {
+            foreach (var tier in chains.Keys.OrderBy(t => t, StringComparer.Ordinal))
+                foreach (var (model, _) in chains[tier].OrderBy(c => c.Model, StringComparer.Ordinal))
+                {
+                    if (model == "fallback")
+                        continue; // tier alias, not a model_name
+                    if (!templateModels.Contains(model))
+                        problems.Add($"chained but not routable: {model} (tier {tier})");
+                }
+        }
+
+        if (selectable != null)
+        {
+            foreach (var tier in selectable.Keys.OrderBy(t => t, StringComparer.Ordinal))
+                foreach (var model in selectable[tier].OrderBy(m => m, StringComparer.Ordinal))
+                {
+                    if (!templateModels.Contains(model))
+                        problems.Add($"selectable but not routable: {model} (tier {tier})");
+                }
+        }
+
+        return problems;
+    }
+
     /// <summary>
     /// Extracts <c>model = "…"</c> values from a swival.toml profile string,
     /// keyed by profile name (e.g. <c>"balanced"</c> → <c>"balanced"</c>).
