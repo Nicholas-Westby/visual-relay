@@ -66,11 +66,19 @@ internal static class RelayPricing
             // zai-org, so Z.AI's rates apply unchanged; CacheWrite falls back to
             // Input (0.15).
             ["hf-glm-5.3-flash"] = new(0.15, 0.50, 0.03),
-            // Qwen3-VL-235B-A22B-Instruct (openrouter.ai, 2026-08-17)
-            ["hf-qwen3-vl-235b"] = new(0.20, 0.88),
-            // Qwen3-VL-30B-A3B-Instruct (openrouter.ai, 2026-08-17); the vision-tier
-            // fallback — priced so a describe pre-step that fails over is still costed.
-            ["hf-qwen3-vl-30b"] = new(0.13, 0.52),
+            // Qwen3-VL-235B-A22B-Instruct, and the -30B vision-tier fallback below,
+            // priced from HF's live catalog (router.huggingface.co/v1/models,
+            // 2026-08-31) rather than an aggregator. Both are routed UNPINNED, so HF
+            // picks the serving provider per request and each has two live rates:
+            // 235B is 0.30/1.50 on novita and 0.20/0.88 on deepinfra; 30B is
+            // 0.20/0.70 and 0.15/0.60. Recording the dearest of each is the same call
+            // the entries above make for sticker over promotional rates — pricing the
+            // cheaper host under-bills every request HF sends to the other one. Pin a
+            // ":provider" suffix on the route if the envelope ever needs to be fixed;
+            // note the pinned form also fixes the context window, which likewise
+            // differs between the two hosts.
+            ["hf-qwen3-vl-235b"] = new(0.30, 1.50),
+            ["hf-qwen3-vl-30b"] = new(0.20, 0.70),
             // Opus (platform.claude.com, 2026-08-17); cache hit 0.1×, write 1.25× (5-min TTL)
             ["claude-opus-1m"] = new(5.0, 25.0, 0.50, 6.25),
             // Sonnet (platform.claude.com, 2026-08-17); sticker $3/$15 — Sonnet 5 is on an

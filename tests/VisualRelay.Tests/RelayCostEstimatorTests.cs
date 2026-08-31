@@ -138,9 +138,10 @@ public sealed partial class RelayCostEstimatorTests
         Assert.Equal(1_000, cost.PromptTokens);
         Assert.Equal(1_000, cost.CachedTokens);
         Assert.Equal(60, cost.OutputTokens);
-        // Vision rate updated from 0.30/1.50 to 0.20/0.88 (Qwen3-VL-235B-A22B-Instruct).
-        // (1000 × 0.20 + 1000 × 0.20 + 60 × 0.88) / 1_000_000 = 452.8 / 1_000_000 = 0.0004528.
-        Assert.Equal(0.0004528, cost.CostUsd, precision: 10);
+        // Vision rate is Qwen3-VL-235B-A22B-Instruct at its dearest live HF provider,
+        // 0.30/1.50, because the route is unpinned and HF picks the host per request.
+        // (1000 × 0.30 + 1000 × 0.30 + 60 × 1.50) / 1_000_000 = 690 / 1_000_000 = 0.00069.
+        Assert.Equal(0.00069, cost.CostUsd, precision: 10);
     }
 
     // ── Core correctness regression tests ───────────────────────
