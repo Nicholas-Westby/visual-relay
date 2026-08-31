@@ -54,14 +54,10 @@ public sealed partial class CostPerModelTests
         Assert.Equal("hf-qwen3-vl-235b", visionCard.ModelKey);
         Assert.True(visionCard.IsActive);
 
-        // kimi-k2 and gpt-5 have no badge and are inactive.
+        // kimi-k2 has no badge and is inactive.
         var kimi = vm.ModelCostRows.Single(r => r.ModelKey == "kimi-k2");
         Assert.Empty(kimi.TierBadges);
         Assert.False(kimi.IsActive);
-
-        var gpt5 = vm.ModelCostRows.Single(r => r.ModelKey == "gpt-5");
-        Assert.Empty(gpt5.TierBadges);
-        Assert.False(gpt5.IsActive);
     }
 
     // ── Ordering ────────────────────────────────────────────────────────

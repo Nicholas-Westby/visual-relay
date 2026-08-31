@@ -58,8 +58,8 @@ internal static class RelayPricing
             // GLM 5.3 Flash first-party on Z.AI (docs.z.ai/guides/overview/pricing,
             // 2026-08-26). These are the sticker rates: Z.AI is running a 50%-off
             // promotion on this model until 2026-09-09, and pricing the promo
-            // would under-count every run made after it lapses (same call as the
-            // claude-sonnet entry below). CacheWrite falls back to Input (0.15) —
+            // would under-count every run made after it lapses, the same call the
+            // vision entries below make. CacheWrite falls back to Input (0.15) —
             // Z.AI publishes no separate cache-write rate.
             ["glm-5.3-flash"] = new(0.15, 0.50, 0.03),
             // The same model over HF Inference Providers, provider-pinned to
@@ -79,13 +79,6 @@ internal static class RelayPricing
             // differs between the two hosts.
             ["hf-qwen3-vl-235b"] = new(0.30, 1.50),
             ["hf-qwen3-vl-30b"] = new(0.20, 0.70),
-            // Opus (platform.claude.com, 2026-08-17); cache hit 0.1×, write 1.25× (5-min TTL)
-            ["claude-opus-1m"] = new(5.0, 25.0, 0.50, 6.25),
-            // Sonnet (platform.claude.com, 2026-08-17); sticker $3/$15 — Sonnet 5 is on an
-            // intro $2/$10 until 2026-08-31, so sticker avoids under-costing after that.
-            ["claude-sonnet"] = new(3.0, 15.0, 0.30, 3.75),
-            // GPT-5 (developers.openai.com/api/docs/pricing, 2026-08-17); cached input 0.1×
-            ["gpt-5"] = new(1.25, 10.0, 0.125),
             // Qwen3-Coder-480B-A35B-Instruct via Novita (novita.ai serverless, 2026-08-17);
             // now verified — supersedes the earlier unverified 0.30/1.30 placeholder.
             ["hf-qwen3-coder-next"] = new(0.38, 1.55),

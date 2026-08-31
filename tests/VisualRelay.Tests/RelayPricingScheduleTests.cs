@@ -190,16 +190,16 @@ public sealed class RelayPricingScheduleTests
     // ── Non-DeepSeek model unaffected by peak windows ────────────
 
     [Fact]
-    public void ClaudeSonnet_InsideDeepSeekPeak_Unaffected()
+    public void KimiK2_InsideDeepSeekPeak_Unaffected()
     {
-        // Claude Sonnet has no Windows — peak timestamp must not affect its rates.
+        // kimi-k2 has no Windows — a peak timestamp must not affect its rates.
         // uncached=1500, cached=100, output=ceil(12/4)+2*50=103.
-        // rates: input 3.0, cached 0.30, output 15.0.
-        // cost = (1500*3.0 + 100*0.30 + 103*15.0) / 1_000_000 = 0.006075.
+        // rates: input 0.95, cached 0.19, output 4.0.
+        // cost = (1500*0.95 + 100*0.19 + 103*4.0) / 1_000_000 = 0.001856.
         using var document = JsonDocument.Parse(
             """
             {
-              "model": "claude-sonnet",
+              "model": "kimi-k2",
               "timestamp": "2026-07-15T01:00:00Z",
               "result": { "answer": "abcdefghijkl" },
               "stats": {
@@ -218,7 +218,7 @@ public sealed class RelayPricingScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal("claude-sonnet", cost.Model);
-        Assert.Equal(0.006075, cost.CostUsd, precision: 10);
+        Assert.Equal("kimi-k2", cost.Model);
+        Assert.Equal(0.001856, cost.CostUsd, precision: 10);
     }
 }

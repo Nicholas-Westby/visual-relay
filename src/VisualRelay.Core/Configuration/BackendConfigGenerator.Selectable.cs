@@ -4,7 +4,7 @@ public static partial class BackendConfigGenerator
 {
     /// <summary>
     /// Curated per-tier lists of selectable models (≤6 each). Only real
-    /// <c>model_list</c> models from the six in-use providers. Defaults
+    /// <c>model_list</c> models from the four in-use providers. Defaults
     /// match today's auto-resolution.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> SelectableModelsByTier =
@@ -18,12 +18,12 @@ public static partial class BackendConfigGenerator
             ["frontier"] = new List<string>
             {
                 "glm-5.3-flash", "hf-glm-5.3-flash", "kimi-k2",
-                "deepseek-v4-pro", "claude-opus-1m", "gpt-5",
+                "deepseek-v4-pro",
             },
             ["balanced"] = new List<string>
             {
                 "deepseek-v4-pro", "kimi-k2", "deepseek-v4-flash",
-                "gpt-5", "hf-qwen3-coder-next", "claude-sonnet",
+                "hf-qwen3-coder-next",
             },
             // deepseek-v4-flash keeps its slot behind the vision-exp default: it
             // is the auto-resolved first fallback, and dropping it from the
@@ -31,33 +31,17 @@ public static partial class BackendConfigGenerator
             ["cheap"] = new List<string>
             {
                 "deepseek-v4-flash-vision-exp", "deepseek-v4-flash",
-                "deepseek-v4-pro", "hf-qwen3-coder-next", "gpt-5",
+                "deepseek-v4-pro", "hf-qwen3-coder-next",
             },
             ["vision"] = new List<string>
             {
                 "hf-qwen3-vl-235b", "hf-qwen3-vl-30b",
-            },
-            ["claude"] = new List<string>
-            {
-                "claude-opus-1m", "claude-sonnet",
             },
             ["fallback"] = new List<string>
             {
                 "hf-qwen3-coder-next",
             },
         };
-
-    /// <summary>
-    /// Model name → required env var for models that appear only in
-    /// <see cref="SelectableModelsByTier"/> and not in <see cref="Chains"/>
-    /// (e.g. <c>gpt-5</c>). Merged with <see cref="ModelToKey"/> at
-    /// resolution time so overrides referencing these models can still
-    /// resolve their provider key.
-    /// </summary>
-    private static readonly Dictionary<string, string> ModelToRequiredKey = new()
-    {
-        ["gpt-5"] = "OPENAI_API_KEY",
-    };
 
     /// <summary>Selectable model names for the tier and whether it is user-editable.</summary>
     public partial record TierConfigRow
@@ -66,14 +50,14 @@ public static partial class BackendConfigGenerator
         public bool IsEditable { get; init; } = true;
     }
 
-    /// <summary>Resolves the required env-var key for a model name,
-    /// merging <see cref="ModelToKey"/> and <see cref="ModelToRequiredKey"/>.</summary>
+    /// <summary>Resolves the required env-var key for a model name.
+    /// Every selectable model is now also a <see cref="Chains"/> model, so
+    /// <see cref="ModelToKey"/> is the only source.</summary>
     internal static string GetRequiredKey(string model)
     {
         if (model == "fallback") return "HF_TOKEN";
-        if (ModelToKey.TryGetValue(model, out var key)) return key;
         // defensive: unknown models default to HF floor
-        return ModelToRequiredKey.GetValueOrDefault(model, "HF_TOKEN");
+        return ModelToKey.GetValueOrDefault(model, "HF_TOKEN");
     }
 
     /// <summary>Attempts to apply a tier-model override. Returns true when
@@ -105,12 +89,12 @@ public static partial class BackendConfigGenerator
         {
             if (tier != FallbackTier && survivors[0] == FallbackFloorModel)
                 survivors.RemoveAt(0);
-            if (tier != "claude" && tier != "vision" && (survivors.Count == 0 || survivors[^1] != FallbackTier))
+            if (!OmittedWhenUnbacked(tier) && (survivors.Count == 0 || survivors[^1] != FallbackTier))
                 survivors.Add(FallbackTier);
             if (survivors.Count > 0)
                 fallbacks[tier] = survivors;
         }
-        else if (tier != "claude" && tier != "vision")
+        else if (!OmittedWhenUnbacked(tier))
         {
             fallbacks[tier] = [FallbackTier];
         }

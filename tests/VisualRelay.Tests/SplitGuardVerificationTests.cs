@@ -200,7 +200,12 @@ public sealed partial class SplitGuardVerificationTests
         // BackendConfigGeneratorPerModelTimeoutTests family. The new
         // BackendConfigGeneratorZaiFrontierTests.cs is a standalone class
         // outside the tracked prefixes, so its facts are not counted here.
-        const int baseline = 178;
+        // Bumped 178→175 on 2026-08-31: first-party-agent-pipeline retired the
+        // premium providers, deleting PerModelTimeout_ClaudeAndOpenAiHave300s,
+        // HfPlusAnthropic_ClaudeLit_OtherTiersFallback and
+        // GetTierRows_MissingKeyTierIsNotEditable (-3) across the
+        // BackendConfigGenerator families. This is the first downward bump.
+        const int baseline = 175;
 
         string[] prefixes =
         [

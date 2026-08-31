@@ -17,15 +17,15 @@ public sealed partial class RelayConfigLoaderTests
             """
             {
               "testCmd": "dotnet test",
-              "tierModelOverrides": { "cheap": "gpt-5", "frontier": "claude-opus-1m" }
+              "tierModelOverrides": { "cheap": "deepseek-v4-pro", "frontier": "kimi-k2" }
             }
             """);
 
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.NotNull(result.Config.TierModelOverrides);
-        Assert.Equal("gpt-5", result.Config.TierModelOverrides!["cheap"]);
-        Assert.Equal("claude-opus-1m", result.Config.TierModelOverrides!["frontier"]);
+        Assert.Equal("deepseek-v4-pro", result.Config.TierModelOverrides!["cheap"]);
+        Assert.Equal("kimi-k2", result.Config.TierModelOverrides!["frontier"]);
     }
 
     [Fact]

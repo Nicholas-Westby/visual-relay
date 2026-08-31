@@ -34,16 +34,16 @@ public sealed class RelayPricingRateTests
     }
 
     [Fact]
-    public void ClaudeOpus_IncludesCacheWriteRate()
+    public void KimiK2_IncludesCacheWriteRate()
     {
-        // Claude Opus: input 5.0, cached 0.50, cache-write 6.25, output 25.0.
+        // kimi-k2: input 0.95, cached 0.19, cache-write 0.95, output 4.0.
         // uncached=1000, cached=200, cache-write=150, output=ceil(64/4)+3*50=166.
-        // cost = (1000*5.0 + 200*0.50 + 150*6.25 + 166*25.0) / 1_000_000
-        //      = (5000 + 100 + 937.5 + 4150) / 1_000_000 = 10187.5 / 1_000_000 = 0.0101875.
+        // cost = (1000*0.95 + 200*0.19 + 150*0.95 + 166*4.0) / 1_000_000
+        //      = (950 + 38 + 142.5 + 664) / 1_000_000 = 1794.5 / 1_000_000 = 0.0017945.
         using var document = JsonDocument.Parse(
             """
             {
-              "model": "claude-opus-1m",
+              "model": "kimi-k2",
               "result": { "answer": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!?" },
               "stats": {
                 "prompt_cache": { "cached_tokens": 200, "cache_write_tokens": 150 }
@@ -59,8 +59,8 @@ public sealed class RelayPricingRateTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal("claude-opus-1m", cost.Model);
-        Assert.Equal(0.0101875, cost.CostUsd, precision: 10);
+        Assert.Equal("kimi-k2", cost.Model);
+        Assert.Equal(0.0017945, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -89,17 +89,21 @@ public sealed class RelayPricingRateTests
         Assert.Equal(0.001247, cost.CostUsd, precision: 10);
     }
 
+    /// <summary>
+    /// A model with an explicit cached-input rate but no cache-write rate: the
+    /// cache-write rate must fall back to input, and the cached rate must not.
+    /// </summary>
     [Fact]
-    public void Gpt5_IncludesCachedInputRate()
+    public void GlmFlash_IncludesCachedInputRate()
     {
-        // GPT-5: input 1.25, cached 0.125, output 10.0.
+        // glm-5.3-flash: input 0.15, cached 0.03, output 0.50, cache-write unset.
         // uncached=1000, cached=500, output=ceil(64/4)+2*50=116.
-        // cost = (1000*1.25 + 500*0.125 + 116*10.0) / 1_000_000
-        //      = (1250 + 62.5 + 1160) / 1_000_000 = 2472.5 / 1_000_000 = 0.0024725.
+        // cost = (1000*0.15 + 500*0.03 + 116*0.50) / 1_000_000
+        //      = (150 + 15 + 58) / 1_000_000 = 223 / 1_000_000 = 0.000223.
         using var document = JsonDocument.Parse(
             $$"""
             {
-              "model": "gpt-5",
+              "model": "glm-5.3-flash",
               "result": { "answer": "{{new string('x', 64)}}" },
               "stats": { "prompt_cache": { "cached_tokens": 500 } },
               "timeline": [
@@ -112,8 +116,8 @@ public sealed class RelayPricingRateTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal("gpt-5", cost.Model);
-        Assert.Equal(0.0024725, cost.CostUsd, precision: 10);
+        Assert.Equal("glm-5.3-flash", cost.Model);
+        Assert.Equal(0.000223, cost.CostUsd, precision: 10);
     }
 
     [Fact]

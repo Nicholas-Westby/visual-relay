@@ -13,14 +13,14 @@ public sealed class TierModelProviderTests
         SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts: true);
         using var _ = SettingsTestHelpers.SeedUserEnv(env, repo, "HF_TOKEN=hf-abc\n");
         RelayConfigWriter.UpsertTierModelOverrides(
-            repo.Root, new Dictionary<string, string> { ["frontier"] = "gpt-5" });
+            repo.Root, new Dictionary<string, string> { ["frontier"] = "kimi-k2" });
 
         var vm = new MainWindowViewModel(env) { RootPath = repo.Root };
         await vm.OpenSettingsAsync();
 
         var frontier = vm.LitTierRows.First(r => r.Tier == "frontier");
-        Assert.Equal("gpt-5", frontier.SelectedModel);
-        Assert.Equal("OpenAI", frontier.ProviderName);
+        Assert.Equal("kimi-k2", frontier.SelectedModel);
+        Assert.Equal("Moonshot", frontier.ProviderName);
     }
 
     [Fact]

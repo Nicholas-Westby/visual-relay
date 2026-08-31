@@ -9,7 +9,7 @@ namespace VisualRelay.App.ViewModels;
 public partial class MainWindowViewModel
 {
     private static readonly string[] TierOrder =
-        ["cheap", "balanced", "frontier", "vision", "claude", "fallback"];
+        ["cheap", "balanced", "frontier", "vision", "fallback"];
 
     [ObservableProperty]
     private ObservableCollection<ModelCostRow> _modelCostRows = [];

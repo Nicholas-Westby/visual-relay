@@ -28,15 +28,20 @@ public sealed partial class CostPerModelTests
         Assert.StartsWith("$0.22", row.CacheWriteDisplay, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The other side of the annotation rule: a rate that differs from input is
+    /// shown plain, with no "(same as input)" suffix. Read off cached input,
+    /// which is where the surviving catalog carries a distinct rate.
+    /// </summary>
     [Fact]
-    public void PopulateModelCostRows_CacheWriteDisplay_ExplicitDifferent_NoAnnotation()
+    public void PopulateModelCostRows_RateDisplay_DifferentFromInput_NoAnnotation()
     {
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
 
-        var row = vm.ModelCostRows.Single(r => r.ModelKey == "claude-opus-1m");
-        Assert.Equal("$6.25 per 1M tokens", row.CacheWriteDisplay);
-        Assert.DoesNotContain("same as input", row.CacheWriteDisplay, StringComparison.Ordinal);
+        var row = vm.ModelCostRows.Single(r => r.ModelKey == "deepseek-v4-flash");
+        Assert.Equal("$0.007 per 1M tokens", row.CachedInputDisplay);
+        Assert.DoesNotContain("same as input", row.CachedInputDisplay, StringComparison.Ordinal);
     }
 
     // ── Peak rows ───────────────────────────────────────────────────────

@@ -19,7 +19,6 @@ public sealed class BackendConfigGeneratorTests
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
         Assert.Equal("hf-qwen3-coder-next", aliases["fallback"]);
-        Assert.False(aliases.ContainsKey("claude"));
 
         // No absent-key model appears as a primary.
         Assert.DoesNotContain("kimi-k2", aliases.Values);
@@ -45,7 +44,6 @@ public sealed class BackendConfigGeneratorTests
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
         Assert.Equal("hf-qwen3-coder-next", aliases["fallback"]);
-        Assert.False(aliases.ContainsKey("claude"));
         Assert.DoesNotContain("kimi-k2", aliases.Values);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
@@ -87,27 +85,6 @@ public sealed class BackendConfigGeneratorTests
         Assert.True(fallbacks.ContainsKey("vision"));
         Assert.DoesNotContain("fallback", fallbacks["vision"]);
         Assert.DoesNotContain("kimi-k2", fallbacks["vision"]);
-    }
-
-    // ── 4. HF + Anthropic ────────────────────────────────────────────────
-    [Fact]
-    public void HfPlusAnthropic_ClaudeLit_OtherTiersFallback()
-    {
-        var present = new HashSet<string> { "HF_TOKEN", "ANTHROPIC_API_KEY" };
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
-
-        Assert.True(aliases.ContainsKey("claude"));
-        Assert.Equal("claude-opus-1m", aliases["claude"]);
-        Assert.True(fallbacks.ContainsKey("claude"));
-        Assert.Contains("claude-sonnet", fallbacks["claude"]);
-        Assert.DoesNotContain("fallback", fallbacks["claude"]);
-
-        Assert.Equal("fallback", aliases["cheap"]);
-        Assert.Equal("fallback", aliases["balanced"]);
-        // The frontier primary (GLM 5.3 Flash over HF) needs only HF_TOKEN (present).
-        Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
-        Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
     }
 
     // ── 5. Shape guard ───────────────────────────────────────────────────
@@ -157,8 +134,6 @@ public sealed class BackendConfigGeneratorTests
         Assert.Contains("DEEPSEEK_API_KEY", summary, StringComparison.Ordinal);
         Assert.Contains("cheap", summary, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("frontier", summary, StringComparison.OrdinalIgnoreCase);
-        // When Anthropic absent, summary notes claude is absent.
-        Assert.Contains("claude", summary, StringComparison.OrdinalIgnoreCase);
     }
 
     // ── 7. Degenerate: no keys at all ────────────────────────────────────
@@ -184,14 +159,11 @@ public sealed class BackendConfigGeneratorTests
     {
         var hf = new HashSet<string> { "HF_TOKEN" };
         var hfRows = BackendConfigGenerator.GetTierRows(hf);
-        Assert.Equal(6, hfRows.Count);
+        Assert.Equal(5, hfRows.Count);
         var cheap = hfRows.First(r => r.Tier == "cheap");
         Assert.Equal("fallback", cheap.Model);
         Assert.Equal("Hugging Face", cheap.ProviderName);
         Assert.True(cheap.KeyPresent);
-        var claude = hfRows.First(r => r.Tier == "claude");
-        Assert.Equal("(key missing)", claude.Model);
-        Assert.False(claude.KeyPresent);
 
         var ds = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
         var dsRows = BackendConfigGenerator.GetTierRows(ds);
@@ -204,25 +176,28 @@ public sealed class BackendConfigGeneratorTests
         Assert.Equal("DeepSeek", balanced.ProviderName);
     }
 
+    /// <summary>
+    /// Every tier that resolves carries a fallback chain, and with no keys at
+    /// all every remaining row reports its key as absent. The vision tier is
+    /// omitted entirely rather than degrading, so it is absent from both sets.
+    /// </summary>
     [Fact]
-    public void TierRows_ClaudePresentAndEmptyKeys()
+    public void TierRows_AllKeysAndEmptyKeys()
     {
-        var ha = new HashSet<string> { "HF_TOKEN", "ANTHROPIC_API_KEY" };
-        var haRows = BackendConfigGenerator.GetTierRows(ha);
-        var claude = haRows.First(r => r.Tier == "claude");
-        Assert.Equal("claude-opus-1m", claude.Model);
-        Assert.Equal("Anthropic", claude.ProviderName);
-        Assert.True(claude.KeyPresent);
-        foreach (var row in haRows.Where(r => r.Tier != "claude"))
+        var all = new HashSet<string>
+        {
+            "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "ZAI_API_KEY",
+        };
+        var allRows = BackendConfigGenerator.GetTierRows(all);
+        foreach (var row in allRows.Where(r => r.Tier != "vision"))
             Assert.NotNull(row.FallbackChainText);
 
         var empty = new HashSet<string>();
         var emptyRows = BackendConfigGenerator.GetTierRows(empty);
-        foreach (var row in emptyRows.Where(r => r.Tier != "claude"))
+        Assert.NotEmpty(emptyRows);
+        Assert.DoesNotContain(emptyRows, r => r.Tier == "vision");
+        foreach (var row in emptyRows)
             Assert.False(row.KeyPresent);
-        var claudeE = emptyRows.First(r => r.Tier == "claude");
-        Assert.False(claudeE.KeyPresent);
-        Assert.Equal("(key missing)", claudeE.Model);
     }
 
 }

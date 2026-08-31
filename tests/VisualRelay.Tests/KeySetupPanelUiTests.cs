@@ -23,7 +23,7 @@ public sealed class KeySetupPanelUiTests
     private static SettingsWindow OpenSettings(MainWindow window) =>
         SettingsTestHelpers.OpenSettings(window);
     [AvaloniaFact]
-    public async Task PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv()
+    public async Task PanelRendersAllFourProviders_WithCorrectSetUnsetState_FromSeededEnv()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -40,8 +40,8 @@ public sealed class KeySetupPanelUiTests
         Assert.True(vm.IsSettingsOpen);
         Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
 
-        Assert.Equal(6, MainWindowViewModel.AllProviderKeys.Count);
-        Assert.Equal(6, vm.KeyStates.Count);
+        Assert.Equal(4, MainWindowViewModel.AllProviderKeys.Count);
+        Assert.Equal(4, vm.KeyStates.Count);
 
         var hf = vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN");
         Assert.True(hf.IsSet);
@@ -49,7 +49,7 @@ public sealed class KeySetupPanelUiTests
         Assert.DoesNotContain("(not set)", hf.DisplayValue, StringComparison.Ordinal);
 
         Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "DEEPSEEK_API_KEY").IsSet);
-        foreach (var k in new[] { "ZAI_API_KEY", "MOONSHOT_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY" })
+        foreach (var k in new[] { "ZAI_API_KEY", "MOONSHOT_API_KEY" })
         {
             Assert.False(vm.KeyStates.First(s => s.Row.EnvVarName == k).IsSet);
             Assert.Equal("(not set)", vm.KeyStates.First(s => s.Row.EnvVarName == k).DisplayValue);
@@ -178,11 +178,6 @@ public sealed class KeySetupPanelUiTests
         Assert.True(cheapRow.KeyPresent); // HF_TOKEN present
         Assert.Equal("Hugging Face", cheapRow.ProviderName);
 
-        var claudeRow = rows.First(row => row.Tier == "claude");
-        Assert.False(claudeRow.KeyPresent);
-        Assert.Equal("(key missing)", claudeRow.SelectedModel);
-        Assert.Equal("Anthropic", claudeRow.ProviderName);
-
         // After adding DeepSeek, balanced resolves to a DeepSeek model.
         KeyEnvFile.Upsert(Path.Combine(repo.Root, "visual-relay", ".env"),
             "DEEPSEEK_API_KEY", "sk-deepseek-xyz");
@@ -212,7 +207,7 @@ public sealed class KeySetupPanelUiTests
         Assert.NotNull(itemsControl);
         // Filter by column count: ComboBox-internal grids don't match the 4-col DataTemplate.
         var grids = itemsControl.GetVisualDescendants().OfType<Grid>().Where(g => g.ColumnDefinitions.Count == 4).ToList();
-        Assert.Equal(6, grids.Count);
+        Assert.Equal(5, grids.Count);
         foreach (var grid in grids)
         {
             Assert.NotNull(grid.GetVisualChildren().OfType<ComboBox>().FirstOrDefault());

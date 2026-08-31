@@ -120,7 +120,7 @@ public sealed record RelayConfig(
     // removes a profile grant) and grants read+write.
     IReadOnlyList<string>? SandboxExtraAllowPaths = null,
     // Per-tier model-name overrides persisted from the Settings → Live Tiers
-    // dropdown. Key = tier name (cheap/balanced/frontier/vision/claude),
+    // dropdown. Key = tier name (cheap/balanced/frontier/vision),
     // value = model_name from that tier's SelectableModels. When null (default),
     // every tier auto-resolves. Entries absent from a tier's SelectableModels
     // are dropped on load so a stale config never references a removed model.

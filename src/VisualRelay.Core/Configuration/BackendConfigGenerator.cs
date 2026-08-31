@@ -66,16 +66,19 @@ public static partial class BackendConfigGenerator
             ("hf-qwen3-vl-235b", "HF_TOKEN"),
             ("hf-qwen3-vl-30b", "HF_TOKEN"),
         ],
-        ["claude"] =
-        [
-            ("claude-opus-1m", "ANTHROPIC_API_KEY"),
-            ("claude-sonnet", "ANTHROPIC_API_KEY"),
-        ],
         ["fallback"] =
         [
             ("hf-qwen3-coder-next", "HF_TOKEN"),
         ],
     };
+
+    /// <summary>
+    /// True for a tier that is omitted entirely when no present key backs it,
+    /// rather than degrading to the fallback chain. Only <c>vision</c> qualifies:
+    /// an image sent to a text model is answered confidently and wrongly, so a
+    /// hard "model not found" is the safer failure. Every other tier degrades.
+    /// </summary>
+    private static bool OmittedWhenUnbacked(string tier) => tier == "vision";
 
     /// <summary>Model name → required env var (excluding "fallback" alias).</summary>
     private static readonly IReadOnlyDictionary<string, string> ModelToKey = Chains.Values
@@ -105,21 +108,6 @@ public static partial class BackendConfigGenerator
 
         foreach (var tier in Chains.Keys)
         {
-            if (tier == "claude" && !aliases.ContainsKey("claude"))
-            {
-                rows.Add(new TierConfigRow(
-                    Tier: "claude",
-                    Model: "(key missing)",
-                    ProviderName: "Anthropic",
-                    KeyPresent: false,
-                    FallbackChainText: null)
-                {
-                    SelectableModels = SelectableModelsByTier.TryGetValue("claude", out var sm) ? sm : [],
-                    IsEditable = false,
-                });
-                continue;
-            }
-
             if (!aliases.TryGetValue(tier, out var model))
                 continue;
 
@@ -211,8 +199,6 @@ public static partial class BackendConfigGenerator
         var tierResolutions = new List<string>();
         foreach (var (tier, model) in aliases.OrderBy(a => a.Key, StringComparer.Ordinal))
             tierResolutions.Add($"{tier}→{model}");
-        if (!aliases.ContainsKey("claude"))
-            tierResolutions.Add("claude→(absent)");
 
         var keysDetected = presentKeys.OrderBy(k => k, StringComparer.Ordinal).ToList();
         var summary = keysDetected.Count > 0
@@ -234,10 +220,6 @@ public static partial class BackendConfigGenerator
 
         foreach (var (tier, candidates) in Chains)
         {
-            // Claude is opt-in premium: omit entirely when key is absent.
-            if (tier == "claude" && !presentKeys.Contains("ANTHROPIC_API_KEY"))
-                continue;
-
             // --- Override path ---
             if (overrides is not null && overrides.TryGetValue(tier, out var ov))
             {
@@ -251,14 +233,14 @@ public static partial class BackendConfigGenerator
                 .Select(c => c.Model)
                 .ToList();
 
-            // Degenerate: no key at all. Vision and claude are skipped
+            // Degenerate: no key at all. An unbacked vision tier is skipped
             // entirely so a request produces "model not found" instead of
             // a silent fallback to a text model. Other tiers still produce
             // a valid alias so the proxy boots (the model defs exist, just
             // no api_key value).
             if (chain.Count == 0)
             {
-                if (tier is "claude" or "vision") continue;
+                if (OmittedWhenUnbacked(tier)) continue;
                 aliases[tier] = tier == FallbackTier ? FallbackFloorModel : FallbackTier;
                 fallbacks[tier] = [FallbackTier];
                 continue;
@@ -284,8 +266,8 @@ public static partial class BackendConfigGenerator
 
             var fb = chain.Skip(chainStart).ToList();
 
-            // Every non-claude, non-vision chain must terminate in the fallback tier.
-            if (tier != "claude" && tier != "vision" && (fb.Count == 0 || fb[^1] != FallbackTier))
+            // Every chain that is allowed to degrade must terminate in the fallback tier.
+            if (!OmittedWhenUnbacked(tier) && (fb.Count == 0 || fb[^1] != FallbackTier))
                 fb.Add(FallbackTier);
 
             if (fb.Count > 0)

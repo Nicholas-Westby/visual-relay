@@ -22,8 +22,6 @@ public partial class MainWindowViewModel
         new("Z.AI (Recommended)", "ZAI_API_KEY", "https://z.ai/manage-apikey/apikey-list"),
         new("DeepSeek (Recommended)", "DEEPSEEK_API_KEY", "https://platform.deepseek.com/api_keys"),
         new("Moonshot (Recommended)", "MOONSHOT_API_KEY", "https://platform.moonshot.ai/console/api-keys"),
-        new("Anthropic (Expensive)", "ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys"),
-        new("OpenAI (Expensive)", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"),
     ];
 
     /// <summary>

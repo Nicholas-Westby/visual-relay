@@ -33,29 +33,9 @@ internal sealed partial class SwivalProfileSession
         model = "vision"
         max_context_tokens = 128000
 
-        [profiles.claude]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "claude"
-        max_context_tokens = 200000
 
-        [profiles.opus]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "claude-opus-1m"
-        max_context_tokens = 1000000
 
-        [profiles.sonnet]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "claude-sonnet"
-        max_context_tokens = 200000
 
-        [profiles.gpt5]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "gpt-5"
-        max_context_tokens = 400000
 
         [profiles.qwen-coder]
         provider = "generic"

@@ -87,19 +87,6 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
         Assert.Equal(120, timeouts["hf-qwen3-vl-30b"]);
     }
 
-    [Fact]
-    public void PerModelTimeout_ClaudeAndOpenAiHave300s()
-    {
-        var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
-        var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
-
-        // 300s (5 min) matches the global request_timeout; Claude/OpenAI
-        // are fast and this ceiling is a safety net, not a latency budget.
-        Assert.Equal(300, timeouts["claude-opus-1m"]);
-        Assert.Equal(300, timeouts["claude-sonnet"]);
-        Assert.Equal(300, timeouts["gpt-5"]);
-    }
-
     /// <summary>
     /// The generator passes <c>model_list</c> through verbatim, so every
     /// per-model timeout in the template must survive into the generated
@@ -110,8 +97,7 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
     {
         var present = new HashSet<string>
         {
-            "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY",
-            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ZAI_API_KEY",
+            "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "ZAI_API_KEY",
         };
         var (yaml, _) = BackendConfigGeneratorTestHelpers.Generate(present);
         var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
@@ -125,8 +111,5 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
         Assert.Equal(120, timeouts["hf-qwen3-coder-next"]);
         Assert.Equal(120, timeouts["hf-qwen3-vl-235b"]);
         Assert.Equal(120, timeouts["hf-qwen3-vl-30b"]);
-        Assert.Equal(300, timeouts["claude-opus-1m"]);
-        Assert.Equal(300, timeouts["claude-sonnet"]);
-        Assert.Equal(300, timeouts["gpt-5"]);
     }
 }

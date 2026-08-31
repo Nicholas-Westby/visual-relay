@@ -1,4 +1,3 @@
-using Avalonia.Controls;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
@@ -37,7 +36,7 @@ public sealed partial class SettingsPanelUiTests
                 Assert.True(row.SelectableModels.Count > 0,
                     $"Editable tier '{row.Tier}' should have selectable models.");
             else
-                Assert.Contains(row.Tier, new[] { "fallback", "claude" });
+                Assert.Equal("fallback", row.Tier);
         }
 
         dialog.Close();
@@ -68,49 +67,6 @@ public sealed partial class SettingsPanelUiTests
 
         dialog.Close();
         Dispatcher.UIThread.RunJobs();
-    }
-
-    [AvaloniaFact]
-    public async Task ClaudeMissingKey_HasNoComboBox()
-    {
-        // ── arrange: Settings with only HF_TOKEN (no ANTHROPIC_API_KEY) ──
-        EnsureNoUserEnv();
-        _env["HF_TOKEN"] = "hf-dummy";
-        using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: false);
-        using var _ = SeedUserEnv(repo, "");
-
-        try
-        {
-            var dialog = await OpenScopedSettingsAsync(repo);
-
-            Dispatcher.UIThread.RunJobs();
-
-            var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-            var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
-            Assert.NotNull(litTierItems);
-
-            // ── act: count visible ComboBox descendants vs editable rows ──
-            var comboBoxes = litTierItems
-                .GetVisualDescendants()
-                .OfType<ComboBox>()
-                .Where(c => c.IsVisible)
-                .ToList();
-
-            var rows = litTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
-            Assert.NotNull(rows);
-            var editableCount = rows!.Count(r => r.IsEditable);
-
-            // ── assert: only editable rows get a visible ComboBox ──
-            Assert.Equal(editableCount, comboBoxes.Count);
-
-            dialog.Close();
-        }
-        finally
-        {
-            _env["HF_TOKEN"] = null;
-            Dispatcher.UIThread.RunJobs();
-        }
     }
 
     [AvaloniaFact]

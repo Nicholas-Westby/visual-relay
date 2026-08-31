@@ -14,8 +14,6 @@ public static partial class BackendConfigGenerator
         ("HF_TOKEN", "Hugging Face"),
         ("DEEPSEEK_API_KEY", "DeepSeek"),
         ("MOONSHOT_API_KEY", "Moonshot"),
-        ("ANTHROPIC_API_KEY", "Anthropic"),
-        ("OPENAI_API_KEY", "OpenAI"),
     ];
 
     /// <summary>Env-var → human-readable provider name.</summary>
@@ -40,8 +38,6 @@ public static partial class BackendConfigGenerator
     public static string? ProviderFor(string model)
     {
         if (model == "fallback") return ProviderNames["HF_TOKEN"];
-        if (ModelToKey.TryGetValue(model, out var key)) return ProviderNames[key];
-        if (ModelToRequiredKey.TryGetValue(model, out key)) return ProviderNames[key];
-        return null;
+        return ModelToKey.TryGetValue(model, out var key) ? ProviderNames[key] : null;
     }
 }

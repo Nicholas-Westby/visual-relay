@@ -10,19 +10,21 @@ public sealed class BackendConfigGeneratorSelectableTests
     /// When an override is provided for a tier AND the override model's
     /// required key is present, the override wins as the alias and the
     /// fallback chain comprises the remaining survivors (still terminating
-    /// in <c>fallback</c> for non-<c>claude</c> tiers).
+    /// in <c>fallback</c> for every tier that is allowed to degrade).
+    /// <c>kimi-k2</c> is the subject because it sits outside the cheap chain
+    /// entirely, so the override cannot be confused with auto-resolution.
     /// </summary>
     [Fact]
     public void Override_WinsWhenKeyPresent()
     {
-        var present = new HashSet<string> { "HF_TOKEN", "OPENAI_API_KEY" };
-        var overrides = new Dictionary<string, string> { ["cheap"] = "gpt-5" };
+        var present = new HashSet<string> { "HF_TOKEN", "MOONSHOT_API_KEY" };
+        var overrides = new Dictionary<string, string> { ["cheap"] = "kimi-k2" };
 
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present, overrides);
         var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present, overrides);
 
-        // cheap should use the override model gpt-5, not its auto-resolved model.
-        Assert.Equal("gpt-5", aliases["cheap"]);
+        // cheap should use the override model kimi-k2, not its auto-resolved model.
+        Assert.Equal("kimi-k2", aliases["cheap"]);
 
         // The fallback chain for cheap must still terminate in fallback.
         Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback("cheap", fallbacks));
@@ -40,16 +42,16 @@ public sealed class BackendConfigGeneratorSelectableTests
     [Fact]
     public void Override_IgnoredWhenKeyAbsent()
     {
-        // Only HF_TOKEN is present; OPENAI_API_KEY is absent so gpt-5
-        // override must be ignored.
+        // Only HF_TOKEN is present; MOONSHOT_API_KEY is absent so the
+        // kimi-k2 override must be ignored.
         var present = new HashSet<string> { "HF_TOKEN" };
-        var overrides = new Dictionary<string, string> { ["cheap"] = "gpt-5" };
+        var overrides = new Dictionary<string, string> { ["cheap"] = "kimi-k2" };
 
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present, overrides);
 
-        // cheap should fall through to the HF floor ("fallback"), not gpt-5.
+        // cheap should fall through to the HF floor ("fallback"), not kimi-k2.
         Assert.Equal("fallback", aliases["cheap"]);
-        Assert.DoesNotContain("gpt-5", aliases.Values);
+        Assert.DoesNotContain("kimi-k2", aliases.Values);
     }
 
     // ── SelectableModels shape ───────────────────────────────────────────
@@ -99,23 +101,8 @@ public sealed class BackendConfigGeneratorSelectableTests
 
             if (row.Tier == "fallback")
                 Assert.False(row.IsEditable, "fallback tier must not be editable");
-            else if (row is { Tier: "claude", KeyPresent: false })
-                Assert.False(row.IsEditable, "claude tier must not be editable when key is absent");
             else
                 Assert.True(row.IsEditable, $"tier '{row.Tier}' must be editable");
         }
-    }
-
-    [Fact]
-    public void GetTierRows_MissingKeyTierIsNotEditable()
-    {
-        var rows = BackendConfigGenerator.GetTierRows(
-            presentKeys: new HashSet<string> { "HF_TOKEN" });
-
-        var claude = rows.FirstOrDefault(r => r.Tier == "claude");
-        Assert.NotNull(claude);
-        Assert.False(claude!.IsEditable,
-            "claude must not be editable when ANTHROPIC_API_KEY is absent");
-        Assert.False(claude.KeyPresent);
     }
 }

@@ -196,7 +196,7 @@ public partial class MainWindowViewModel
             _suppressLitTierPersist = false;
 
             var assignments = LitTierRows
-                .Where(r => !string.IsNullOrWhiteSpace(r.SelectedModel) && r.SelectedModel != "(key missing)")
+                .Where(r => !string.IsNullOrWhiteSpace(r.SelectedModel))
                 .ToDictionary(
                     r => r.Tier,
                     r => r.SelectedModel == "fallback"
@@ -225,8 +225,8 @@ public partial class MainWindowViewModel
             if (string.IsNullOrWhiteSpace(row.SelectedModel))
                 continue;
             // Only persist models that are in the tier's selectable list —
-            // auto-resolved values like "fallback" or "(key missing)" are
-            // transient and must not land in .relay/config.json.
+            // an auto-resolved value like "fallback" is transient and must
+            // not land in .relay/config.json.
             if (!row.SelectableModels.Contains(row.SelectedModel, StringComparer.Ordinal))
                 continue;
             overrides[row.Tier] = row.SelectedModel;

@@ -74,7 +74,7 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
     /// 2026-08-26): $0.15 input, $0.03 cached input, $0.50 output per 1M tokens.
     /// Z.AI is running a 50%-off promotion on this model until 2026-09-09, and the
     /// sticker rate is what is recorded here on purpose — the same call the
-    /// claude-sonnet entry makes — so estimates do not under-count once it lapses.
+    /// vision entries make — so estimates do not under-count once it lapses.
     /// </summary>
     [Fact]
     public void Glm53Flash_PricesAtZaiStickerRates()
