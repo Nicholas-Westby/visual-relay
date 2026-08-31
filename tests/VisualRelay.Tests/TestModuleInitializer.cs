@@ -10,6 +10,16 @@ namespace VisualRelay.Tests;
 /// <c>XDG_CONFIG_HOME</c> to a unique temp directory so that even a test
 /// that constructs <c>MainWindowViewModel</c> with a null accessor can never
 /// resolve the real per-user <c>~/.config/visual-relay/.env</c>.
+/// <para>
+/// The suite's other hermeticity seam — no outbound sockets — lives in
+/// <see cref="HermeticHttpHandler"/> rather than here. .NET exposes no
+/// process-global handler factory (<c>ConnectCallback</c> is per-handler, and
+/// <c>HttpClient.DefaultProxy</c> swallows exceptions thrown from
+/// <c>IWebProxy</c>), so the gate is a single composition root plus
+/// <c>HttpClientConstructionGuard</c>, which fails the build if any other file
+/// under <c>src/</c>, <c>tools/</c> or <c>tests/</c> constructs a client,
+/// invoker or handler of its own.
+/// </para>
 /// </summary>
 internal static class TestModuleInitializer
 {

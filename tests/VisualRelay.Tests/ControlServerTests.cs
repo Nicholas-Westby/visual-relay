@@ -92,7 +92,7 @@ public sealed class ControlServerOptionsTests
 [Collection("Headless")]
 public sealed class ControlServerTests
 {
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private static readonly HttpClient Client = HermeticHttpHandler.CreateClient(TimeSpan.FromSeconds(5));
 
     private static (MainWindowViewModel, ControlApi) NewServerDeps()
     {
