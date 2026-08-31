@@ -39,9 +39,6 @@ public enum AgentEventKind
     /// <summary>A model call was retried.</summary>
     Retry,
 
-    /// <summary>The request fell through to another model in the chain.</summary>
-    FallbackHop,
-
     /// <summary>Measured usage for one model call.</summary>
     Usage,
 

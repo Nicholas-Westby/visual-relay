@@ -20,6 +20,13 @@ internal static class ToolLimits
     /// <summary>Characters returned by one <c>read_file</c> call: ~16k tokens.</summary>
     internal const int ReadFileChars = 64 * 1024;
 
+    /// <summary>
+    /// Files bigger than this are refused outright rather than streamed. A
+    /// minified bundle or a captured log has no newlines, so line-at-a-time
+    /// reading would still materialise the whole thing in memory.
+    /// </summary>
+    internal const int ReadFileBytes = 32 * 1024 * 1024;
+
     /// <summary>Paths accepted by one <c>read_multiple_files</c> call.</summary>
     internal const int MultiFileCount = 20;
 
@@ -31,6 +38,16 @@ internal static class ToolLimits
 
     /// <summary>Entries returned by one <c>list_files</c> call.</summary>
     internal const int ListEntries = 500;
+
+    /// <summary>
+    /// Entries <c>list_files</c> will visit before it stops walking. The output
+    /// cap alone bounds memory; this bounds the time a walk of a repository with
+    /// a vendored dependency tree can burn before answering.
+    /// </summary>
+    internal const int ListWalkEntries = 20_000;
+
+    /// <summary>Directory levels <c>list_files</c> will descend when asked for more.</summary>
+    internal const int ListMaxDepth = 20;
 
     /// <summary>Matching lines returned by one <c>grep</c> call.</summary>
     internal const int GrepMatches = 200;

@@ -211,6 +211,52 @@ public sealed partial class AgentTurnLoopTests
         Assert.Contains("turn budget", result.Error!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Tool events carry the name and the real elapsed duration, which is what
+    /// the trace and the timeline are built from. The old path had neither: the
+    /// trace was written at process exit with every record stamped milliseconds
+    /// apart, so per-call timing did not exist.
+    /// </summary>
+    [Fact]
+    public async Task ToolEvents_CarryTheNameAndARealDuration()
+    {
+        var tool = new StubTool("read_file", ToolResult.Ok("contents"));
+        var transport = new ScriptedModelTransport()
+            .CallsTool("read_file", """{"path":"a.txt"}""")
+            .Answer("done");
+        var (loop, sink) = Build(transport, tool);
+
+        await RunAsync(loop);
+
+        var started = Assert.Single(sink.Events, e => e.Kind == AgentEventKind.ToolCallStarted);
+        var finished = Assert.Single(sink.Events, e => e.Kind == AgentEventKind.ToolCallFinished);
+
+        Assert.Equal("read_file", started.ToolName);
+        Assert.Equal("read_file", finished.ToolName);
+        Assert.Contains("a.txt", started.Text!, StringComparison.Ordinal);
+        Assert.NotNull(finished.Duration);
+        Assert.Equal("ok", finished.Detail);
+    }
+
+    /// <summary>
+    /// The usage event carries the measured numbers and the concrete model that
+    /// served them, which is what cost is attributed to.
+    /// </summary>
+    [Fact]
+    public async Task UsageEvents_CarryTheNumbersAndTheServingModel()
+    {
+        var transport = new ScriptedModelTransport().Answer("done");
+        var (loop, sink) = Build(transport);
+
+        await RunAsync(loop);
+
+        var usage = Assert.Single(sink.Events, e => e.Kind == AgentEventKind.Usage);
+        Assert.Equal("fake-1", usage.Model);
+        Assert.NotNull(usage.Usage);
+        Assert.Equal(10, usage.Usage!.PromptTokens);
+        Assert.Equal(4, usage.Usage.CompletionTokens);
+    }
+
     /// <summary>Measured usage accumulates across turns rather than being estimated.</summary>
     [Fact]
     public async Task Usage_IsMeasuredAndAccumulated()

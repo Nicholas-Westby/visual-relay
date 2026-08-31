@@ -90,16 +90,10 @@ public static class ToolArgumentRepair
                 continue;
             }
 
-            switch (c)
-            {
-                case '"': inString = true; break;
-                case '{': stack.Push('}'); break;
-                case '[': stack.Push(']'); break;
-                case '}' or ']':
-                    if (stack.Count == 0 || stack.Pop() != c) return null;
-                    break;
-                default: break;
-            }
+            if (c == '"') inString = true;
+            else if (c == '{') stack.Push('}');
+            else if (c == '[') stack.Push(']');
+            else if (c is '}' or ']' && (stack.Count == 0 || stack.Pop() != c)) return null;
         }
 
         if (!inString && stack.Count == 0) return null;
@@ -127,17 +121,16 @@ public static class ToolArgumentRepair
             if (!arguments.TryGetPropertyValue(name, out var value) || value is null) continue;
             if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var text)) continue;
 
-            switch (expected)
+            // Anything less obvious than a mistyped primitive is left alone.
+            if (expected is "number" or "integer" && double.TryParse(text, out var number))
             {
-                case "number" or "integer" when double.TryParse(text, out var number):
-                    arguments[name] = JsonValue.Create(number);
-                    repairs.Add($"coerced '{name}' from string to {expected}");
-                    break;
-                case "boolean" when bool.TryParse(text, out var flag):
-                    arguments[name] = JsonValue.Create(flag);
-                    repairs.Add($"coerced '{name}' from string to boolean");
-                    break;
-                default: break;
+                arguments[name] = JsonValue.Create(number);
+                repairs.Add($"coerced '{name}' from string to {expected}");
+            }
+            else if (expected == "boolean" && bool.TryParse(text, out var flag))
+            {
+                arguments[name] = JsonValue.Create(flag);
+                repairs.Add($"coerced '{name}' from string to boolean");
             }
         }
 

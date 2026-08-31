@@ -17,18 +17,20 @@ public sealed partial class ChatCompletionClientTests
     [Fact]
     public async Task SlowButHealthyStream_IsNotKilled()
     {
+        // Twenty-five two-minute gaps is fifty virtual minutes. Virtual time is
+        // free; the real cost is per step, and this suite has a 60 s ceiling.
         var steps = new List<(TimeSpan, string?)>();
-        for (var i = 0; i < 100; i++) steps.Add((TimeSpan.FromSeconds(30), Delta("x")));
-        steps.Add((TimeSpan.FromSeconds(30), Stop));
+        for (var i = 0; i < 25; i++) steps.Add((TimeSpan.FromMinutes(2), Delta("x")));
+        steps.Add((TimeSpan.FromMinutes(2), Stop));
         steps.Add((Zero, Done));
 
         // Time to first byte is raised to match the idle budget so the first gap
         // is judged by the same rule as every later one; this test is about
         // duration, not about the first-byte case.
-        var completion = await RunAsync(steps, timeouts: Budgets(firstByte: 45, idle: 45));
+        var completion = await RunAsync(steps, timeouts: Budgets(firstByte: 300, idle: 300));
 
         Assert.Equal(CompletionOutcome.Completed, completion.Outcome);
-        Assert.Equal(100, completion.Content.Length);
+        Assert.Equal(25, completion.Content.Length);
     }
 
     /// <summary>

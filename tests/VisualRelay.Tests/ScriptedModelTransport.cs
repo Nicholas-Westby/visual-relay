@@ -72,11 +72,7 @@ internal sealed class ScriptedModelTransport : IProviderTransport
         + Sse("""{"model":"fake-1","choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"completion_tokens_details":{"reasoning_tokens":20}}}""")
         + "data: [DONE]\n\n");
 
-    /// <summary>Queues an exact response body.</summary>
-    /// <param name="status">The HTTP status.</param>
-    /// <param name="body">The raw body.</param>
-    /// <returns>This, for chaining.</returns>
-    public ScriptedModelTransport Raw(int status, string body)
+    private ScriptedModelTransport Raw(int status, string body)
     {
         _script.Enqueue((status, body));
         return this;

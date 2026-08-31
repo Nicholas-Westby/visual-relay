@@ -237,7 +237,7 @@ public sealed partial class AgentTurnLoopTests
         for (var i = 0; i < turns; i++)
         {
             var id = $"c{i}";
-            messages.Add(new ChatMessage("assistant", null,
+            messages.Add(new ChatMessage("assistant",
                 ToolCalls: [new ToolCall(id, "read_file", """{"path":"x"}""")]));
             messages.Add(new ChatMessage("tool", new string('x', 200), ToolCallId: id));
         }

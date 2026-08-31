@@ -3,6 +3,28 @@ using System.Diagnostics.CodeAnalysis;
 namespace VisualRelay.Core.Agent.Tools;
 
 /// <summary>
+/// Where a walk started, and how paths beneath it are rendered.
+///
+/// <see cref="ToolPaths.Display"/> canonicalises the root on every call, which
+/// costs two syscalls per path segment. A walk visits thousands of entries, so
+/// the walking tools resolve their root once into one of these and render each
+/// child by joining strings.
+/// </summary>
+/// <param name="Shown">The walk's root as the model should type it.</param>
+/// <param name="Root">The walk's root as an absolute, already-canonical path.</param>
+internal sealed record ToolPathScope(string Shown, string Root)
+{
+    /// <summary>Renders a path beneath the root.</summary>
+    /// <param name="absolute">An absolute path under <see cref="Root"/>.</param>
+    /// <returns>The path as the model should type it.</returns>
+    internal string Display(string absolute)
+    {
+        var relative = Path.GetRelativePath(Root, absolute).Replace(Path.DirectorySeparatorChar, '/');
+        return Shown == "." ? relative : $"{Shown}/{relative}";
+    }
+}
+
+/// <summary>
 /// Path plumbing shared by every file tool: resolve what the model typed against
 /// the run's target root and refuse anything that lands outside it.
 ///
@@ -94,12 +116,8 @@ internal static class ToolPaths
         return relative == "." ? "." : relative.Replace(Path.DirectorySeparatorChar, '/');
     }
 
-    /// <summary>
-    /// Expands a path to its real location, following a symlink at every segment.
-    /// </summary>
-    /// <param name="path">Any path, existing or not.</param>
-    /// <returns>The canonical absolute path.</returns>
-    internal static string Canonicalize(string path)
+    // Expands a path to its real location, following a symlink at every segment.
+    private static string Canonicalize(string path)
     {
         var full = Path.GetFullPath(path);
         var prefix = Path.GetPathRoot(full);

@@ -21,7 +21,18 @@ public sealed record ToolDefinition(string Name, string Description, JsonNode Pa
 /// True when the call failed. The loop counts these for the consecutive-error
 /// guardrail, and the model still sees <paramref name="Content"/> so it can adapt.
 /// </param>
-public sealed record ToolResult(string Content, bool IsError = false)
+/// <param name="Images">
+/// Image content the call produced, as <c>data:image/...;base64,</c> URIs; null
+/// for the text-only tools, which is all of them but <c>view_image</c>. It is a
+/// field rather than something smuggled inside <paramref name="Content"/>
+/// because the tool-result message itself stays text on the wire — the
+/// <c>tool</c> role carries no image parts on these OpenAI-compatible providers
+/// — so the loop turns each URI into a <c>ContentPart.FromImage</c> on a
+/// following user message. Keeping the blob out of the text also means the
+/// compaction ladder can drop an old screenshot without shredding the words
+/// beside it, and no base64 is ever counted or truncated as prose.
+/// </param>
+public sealed record ToolResult(string Content, bool IsError = false, IReadOnlyList<string>? Images = null)
 {
     /// <summary>A successful result.</summary>
     /// <param name="content">The text the model sees.</param>
@@ -32,6 +43,13 @@ public sealed record ToolResult(string Content, bool IsError = false)
     /// <param name="message">What went wrong, in terms the model can act on.</param>
     /// <returns>The result.</returns>
     public static ToolResult Error(string message) => new(message, IsError: true);
+
+    /// <summary>A successful result carrying image content alongside its text.</summary>
+    /// <param name="content">The text the model sees, describing what was attached.</param>
+    /// <param name="images">One or more <c>data:image/...;base64,</c> URIs.</param>
+    /// <returns>The result.</returns>
+    public static ToolResult WithImages(string content, IReadOnlyList<string> images) =>
+        new(content, Images: images);
 }
 
 /// <summary>
