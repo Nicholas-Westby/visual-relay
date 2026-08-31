@@ -21,12 +21,16 @@ public static partial class BackendConfigGenerator
     /// (which itself resolves to <see cref="FallbackFloorModel"/>).
     /// WATCH: if DeepSeek ever starts ENFORCING reasoning_content on tool-call
     /// history, the failure signature is HTTP 400 from turn 2 of tool-calling
-    /// stages — that day, swival's placeholder injection (alias containing
-    /// "deepseek") is the known mitigation: rename these aliases back to
-    /// include a "deepseek" substring so swival's _needs_reasoning_content
-    /// allowlist injects the placeholder into resent assistant tool-call
-    /// history. Until then the clean names are fine empirically (swival 1.0.30
-    /// on generic-provider + localhost LiteLLM, 33 proxied calls, zero 4xx).
+    /// stages. RENAMING THESE ALIASES WOULD NOT HELP — that remedy was recorded
+    /// in error and is corrected here on 2026-08-31: swival 1.0.38's
+    /// _needs_reasoning_content keys on BASE URL, never the model name, and says
+    /// so in its own docstring. The relay always points swival at 127.0.0.1:4000,
+    /// so the gate is false whatever an alias is called, and litellm's
+    /// DeepSeekChatConfig._fill_reasoning_content is inert too — it fires only
+    /// once the caller sends thinking/reasoning_effort, which nothing here does.
+    /// Both nets are off; the stack passes empirically (33 proxied calls, zero
+    /// 4xx) only because DeepSeek does not enforce the rule today. Real levers
+    /// that day: pass swival's --reasoning-effort, or replay it via --llm-filter.
     /// </summary>
     internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {
