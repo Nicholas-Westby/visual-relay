@@ -24,19 +24,15 @@ public sealed class SseFrameParserRealStreamTests
         return frames;
     }
 
-    /// <summary>Reads the usage object from wherever a provider chose to put it.</summary>
-    private static JsonElement? UsageIn(SseFrame frame)
+    /// <summary>
+    /// Reads usage through the production reader, so these captures exercise the
+    /// shipped code rather than a helper that only agrees with it by accident.
+    /// </summary>
+    private static ProviderUsage? UsageIn(SseFrame frame)
     {
         if (frame.Kind != SseFrameKind.Event) return null;
         using var doc = JsonDocument.Parse(frame.Data);
-        var root = doc.RootElement;
-        if (root.TryGetProperty("usage", out var top) && top.ValueKind == JsonValueKind.Object)
-            return top.Clone();
-        if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0
-            && choices[0].TryGetProperty("usage", out var nested)
-            && nested.ValueKind == JsonValueKind.Object)
-            return nested.Clone();
-        return null;
+        return ProviderUsageReader.TryRead(doc.RootElement);
     }
 
     /// <summary>
@@ -78,7 +74,7 @@ public sealed class SseFrameParserRealStreamTests
         var usages = ParseByteAtATime(provider).Select(UsageIn).Where(u => u is not null).ToList();
 
         Assert.NotEmpty(usages);
-        Assert.True(usages[^1]!.Value.GetProperty("prompt_tokens").GetInt32() > 0);
+        Assert.True(usages[^1]!.PromptTokens > 0);
     }
 
     /// <summary>
@@ -92,9 +88,9 @@ public sealed class SseFrameParserRealStreamTests
         var usages = ParseByteAtATime("moonshot").Select(UsageIn).Where(u => u is not null).ToList();
 
         Assert.Equal(2, usages.Count);
-        Assert.Equal(
-            usages[0]!.Value.GetProperty("total_tokens").GetInt32(),
-            usages[1]!.Value.GetProperty("total_tokens").GetInt32());
+        // Identical, so summing them would bill the call twice.
+        Assert.Equal(usages[0], usages[1]);
+        Assert.Equal(usages[1], ProviderUsageReader.Merge(usages[0], usages[1]));
     }
 
     /// <summary>
@@ -105,14 +101,10 @@ public sealed class SseFrameParserRealStreamTests
     [Fact]
     public void Zai_CountsReasoningTokensInsideCompletionTokens()
     {
-        var usage = ParseByteAtATime("zai").Select(UsageIn).Last(u => u is not null)!.Value;
+        var usage = ParseByteAtATime("zai").Select(UsageIn).Last(u => u is not null)!;
 
-        var completion = usage.GetProperty("completion_tokens").GetInt32();
-        var reasoning = usage.GetProperty("completion_tokens_details")
-            .GetProperty("reasoning_tokens").GetInt32();
-
-        Assert.Equal(completion, reasoning);
-        Assert.True(reasoning > 0);
+        Assert.Equal(usage.CompletionTokens, usage.ReasoningTokens);
+        Assert.True(usage.ReasoningTokens > 0);
     }
 
     /// <summary>
