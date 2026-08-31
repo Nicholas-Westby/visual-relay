@@ -192,12 +192,34 @@ public partial class MainWindowViewModel
             TimeZoneInfo.FindSystemTimeZoneById(window.TimeZoneId); // validate
             var start = window.StartLocal.ToString("h:mm tt", CultureInfo.InvariantCulture);
             var end = window.EndLocal.ToString("h:mm tt", CultureInfo.InvariantCulture);
-            return $"({start} – {end} in {window.TimeZoneId})";
+            return $"({start} – {end}{BuildWindowDaysNote(window)} in {window.TimeZoneId})";
         }
         catch
         {
             return string.Empty;
         }
+    }
+
+    /// <summary>Day qualifier for a window that does not run every day, e.g.
+    /// " Mon–Fri". The days belong to the source note rather than the local-time
+    /// headline: converting the window into the viewer's zone can shift it onto
+    /// the neighbouring day, so a day name is only unambiguous next to the zone
+    /// the schedule is published in. Empty when the window covers every day.</summary>
+    private static string BuildWindowDaysNote(RateWindow window)
+    {
+        if (window.Days is null || window.Days.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (window.Days.SequenceEqual(RateWindow.Weekdays))
+        {
+            return " Mon–Fri";
+        }
+
+        var names = window.Days.Select(d =>
+            CultureInfo.InvariantCulture.DateTimeFormat.AbbreviatedDayNames[(int)d]);
+        return " " + string.Join(", ", names);
     }
 
     private static string ConvertWindowTimeToLocalDisplay(TimeOnly sourceTime, TimeZoneInfo sourceTz)

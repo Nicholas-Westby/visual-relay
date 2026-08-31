@@ -21,17 +21,20 @@ internal sealed record ModelPricing(
 
 internal static class RelayPricing
 {
-    // DeepSeek time-of-day peak pricing (CONFIRMED 2026-08-17 against
-    // api-docs.deepseek.com/quick_start/pricing, which now publishes the schedule):
-    // 2× during 09:00–12:00 and 14:00–18:00 Asia/Shanghai (UTC+8, no DST).
+    // DeepSeek time-of-day peak pricing (RE-CONFIRMED 2026-08-31 against
+    // api-docs.deepseek.com/quick_start/pricing): 2× during 09:00–12:00 and
+    // 14:00–18:00 Asia/Shanghai (UTC+8, no DST), MONDAY THROUGH FRIDAY.
     // The docs state the windows as 01:00–04:00 and 06:00–10:00 UTC — identical
     // instants, since Asia/Shanghai is a fixed UTC+8 with no daylight saving.
     // Kept in Asia/Shanghai because that is the zone DeepSeek prices against, so a
     // future UTC-offset change would be a data edit here rather than silent drift.
+    // The weekday restriction landed 2026-08-23, six days after the windows were
+    // first recorded here: DeepSeek moved Saturday and Sunday to off-peak rates
+    // outright, so an all-day window double-charged seven hours of every weekend.
     private static readonly RateWindow[] DeepseekPeakWindows =
     [
-        new(new(9, 0), new(12, 0), "Asia/Shanghai", 2.0),
-        new(new(14, 0), new(18, 0), "Asia/Shanghai", 2.0),
+        new(new(9, 0), new(12, 0), "Asia/Shanghai", 2.0, RateWindow.Weekdays),
+        new(new(14, 0), new(18, 0), "Asia/Shanghai", 2.0, RateWindow.Weekdays),
     ];
 
     /// <summary>Concrete-model-only pricing. Tier-alias lookups resolve via

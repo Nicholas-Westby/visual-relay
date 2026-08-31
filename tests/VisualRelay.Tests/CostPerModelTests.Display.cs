@@ -107,7 +107,7 @@ public sealed partial class CostPerModelTests
 
         var flash = vm.ModelCostRows.Single(r => r.ModelKey == "deepseek-v4-flash");
         var w = flash.Windows[0];
-        Assert.Equal("(9:00 AM – 12:00 PM in Asia/Shanghai)", w.SourceNote);
+        Assert.Equal("(9:00 AM – 12:00 PM Mon–Fri in Asia/Shanghai)", w.SourceNote);
     }
 
     [Fact]

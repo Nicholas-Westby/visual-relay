@@ -144,7 +144,11 @@ public static class RelayCostEstimator
                 var tz = TimeZoneInfo.FindSystemTimeZoneById(window.TimeZoneId);
                 var local = TimeZoneInfo.ConvertTimeFromUtc(utcInstant, tz);
                 var localTime = TimeOnly.FromDateTime(local);
-                if (localTime >= window.StartLocal && localTime < window.EndLocal)
+                // The day is read in the window's own zone, not UTC or the
+                // viewer's: a schedule published as weekday-only means weekdays
+                // where the provider prices it.
+                if (window.MatchesDay(local.DayOfWeek)
+                    && localTime >= window.StartLocal && localTime < window.EndLocal)
                 {
                     return window.Multiplier;
                 }
