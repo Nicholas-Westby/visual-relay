@@ -140,6 +140,16 @@ public sealed class ProviderUsageReaderTests
         Assert.Equal(0, usage.ReasoningTokens);
     }
 
+    /// <summary>An explicitly reported cache-write count is carried through.</summary>
+    [Fact]
+    public void CacheWriteTokens_AreCarried()
+    {
+        var usage = ProviderUsageReader.TryRead(Parse(
+            """{"usage":{"prompt_tokens":100,"completion_tokens":5,"cache_creation_input_tokens":40}}"""));
+
+        Assert.Equal(40, usage!.CacheWriteTokens);
+    }
+
     /// <summary>A usage object missing every field reads as zeros, not a throw.</summary>
     [Fact]
     public void EmptyUsageObject_ReadsAsZero()

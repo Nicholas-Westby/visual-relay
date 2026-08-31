@@ -99,20 +99,17 @@ public sealed class SseFrameParser
         // Exactly one leading space is stripped, per the SSE grammar.
         if (value.StartsWith(' ')) value = value[1..];
 
-        switch (field)
+        // Anything else (id, retry, an unknown field) is not needed by this consumer.
+        if (field == "data")
         {
-            case "data":
-                // Multiple data lines in one event join with a newline.
-                if (_sawData) _data.Append('\n');
-                _data.Append(value);
-                _sawData = true;
-                break;
-            case "event":
-                _eventType = value;
-                break;
-            default:
-                // id, retry and unknown fields are not needed by this consumer.
-                break;
+            // Multiple data lines in one event join with a newline.
+            if (_sawData) _data.Append('\n');
+            _data.Append(value);
+            _sawData = true;
+        }
+        else if (field == "event")
+        {
+            _eventType = value;
         }
 
         return [];

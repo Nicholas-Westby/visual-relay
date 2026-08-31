@@ -37,7 +37,7 @@ public sealed class LiveProviderTransport : IProviderTransport, IDisposable
     }
 
     /// <summary>The handler this transport sends through.</summary>
-    public HttpMessageHandler Handler { get; }
+    private HttpMessageHandler Handler { get; }
 
     /// <inheritdoc />
     public async Task<ProviderResponse> SendAsync(

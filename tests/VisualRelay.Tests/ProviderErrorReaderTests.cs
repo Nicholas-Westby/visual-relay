@@ -20,7 +20,8 @@ public sealed class ProviderErrorReaderTests
         var error = ProviderErrorReader.TryRead(401, """{"error":"Invalid username or password."}""");
 
         Assert.NotNull(error);
-        Assert.Equal("Invalid username or password.", error!.Message);
+        Assert.Equal(401, error!.StatusCode);
+        Assert.Equal("Invalid username or password.", error.Message);
         Assert.Equal(ProviderErrorKind.Auth, error.Kind);
         Assert.False(error.IsRetryable);
     }
