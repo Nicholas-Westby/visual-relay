@@ -101,6 +101,36 @@ public sealed class ProviderErrorReaderTests
         Assert.Equal("1210", error!.Code);
     }
 
+    /// <summary>
+    /// The already-parsed overload agrees with the string one. The streaming
+    /// fold uses it so a healthy chunk is not parsed twice on the hot path.
+    /// </summary>
+    [Fact]
+    public void ParsedOverload_AgreesWithTheStringOverload()
+    {
+        const string body = """{"error":{"code":"1210","message":"thinking cannot be disabled"}}""";
+        using var document = System.Text.Json.JsonDocument.Parse(body);
+
+        var fromString = ProviderErrorReader.TryRead(200, body);
+        var fromElement = ProviderErrorReader.TryRead(200, document.RootElement);
+
+        Assert.Equal(fromString, fromElement);
+        Assert.Equal("1210", fromElement!.Code);
+    }
+
+    /// <summary>
+    /// A healthy content delta carries no error, and the parsed overload says so
+    /// without serializing the chunk back to a string.
+    /// </summary>
+    [Fact]
+    public void ParsedOverload_OnAHealthyDelta_ReturnsNull()
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(
+            """{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}""");
+
+        Assert.Null(ProviderErrorReader.TryRead(200, document.RootElement));
+    }
+
     /// <summary>A genuine success reads as no error at all.</summary>
     [Fact]
     public void CleanSuccess_ReadsAsNoError()

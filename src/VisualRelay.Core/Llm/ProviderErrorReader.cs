@@ -35,13 +35,37 @@ public static class ProviderErrorReader
     /// <returns>The normalized error, or <c>null</c> for a clean 2xx.</returns>
     public static ProviderError? TryRead(int statusCode, string body)
     {
-        var ok = statusCode is >= 200 and < 300;
         var (code, message, sawErrorKey) = ReadEnvelope(body);
+        if (IsSuccess(statusCode, sawErrorKey)) return null;
+        return Build(statusCode, code, message, body);
+    }
 
-        // A clean 2xx with no error key is a success. A 2xx WITH one is not:
-        // that is how Z.AI reports failure without changing the status.
-        if (ok && !sawErrorKey) return null;
+    /// <summary>
+    /// Reads an error from an element that is already parsed. The streaming fold
+    /// probes every chunk for an error key, so re-parsing the same JSON a second
+    /// time would double the parse cost of the hot path.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status the chunk arrived under.</param>
+    /// <param name="root">The parsed chunk object.</param>
+    /// <returns>The normalized error, or <c>null</c> when the chunk carries none.</returns>
+    public static ProviderError? TryRead(int statusCode, JsonElement root)
+    {
+        var (code, message, sawErrorKey) = ReadEnvelope(root);
+        // Return before serializing: on a healthy stream every chunk reaches
+        // here and none of them carries an error.
+        if (IsSuccess(statusCode, sawErrorKey)) return null;
+        return Build(statusCode, code, message, root.ToString());
+    }
 
+    /// <summary>
+    /// A clean 2xx with no error key is a success. A 2xx WITH one is not: that
+    /// is how Z.AI reports failure without changing the status.
+    /// </summary>
+    private static bool IsSuccess(int statusCode, bool sawErrorKey) =>
+        statusCode is >= 200 and < 300 && !sawErrorKey;
+
+    private static ProviderError Build(int statusCode, string? code, string? message, string body)
+    {
         if (string.IsNullOrWhiteSpace(message))
             message = string.IsNullOrWhiteSpace(body)
                 ? $"provider returned HTTP {statusCode} with an empty body"
@@ -86,11 +110,10 @@ public static class ProviderErrorReader
     {
         if (string.IsNullOrWhiteSpace(body)) return (null, null, false);
 
-        JsonElement root;
         try
         {
             using var document = JsonDocument.Parse(body);
-            root = document.RootElement.Clone();
+            return ReadEnvelope(document.RootElement);
         }
         catch (JsonException)
         {
@@ -98,7 +121,10 @@ public static class ProviderErrorReader
             // with HTML. The body itself becomes the message.
             return (null, null, false);
         }
+    }
 
+    private static (string? Code, string? Message, bool SawErrorKey) ReadEnvelope(JsonElement root)
+    {
         if (root.ValueKind != JsonValueKind.Object) return (null, null, false);
 
         if (root.TryGetProperty("error", out var error))

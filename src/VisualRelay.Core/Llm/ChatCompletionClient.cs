@@ -116,8 +116,9 @@ public sealed class ChatCompletionClient
                 }
 
                 // Hugging Face signals a mid-stream failure on an already-200
-                // response by putting an error key in a chunk.
-                var error = ProviderErrorReader.TryRead(200, frame.Data);
+                // response by putting an error key in a chunk. Probed from the
+                // element already parsed above, not by re-parsing the frame.
+                var error = ProviderErrorReader.TryRead(200, root);
                 if (error is not null) return error;
 
                 var added = accumulator.Append(root);
@@ -197,12 +198,25 @@ public sealed class ChatCompletionClient
             ? CompletionOutcome.LengthWithoutContent
             : CompletionOutcome.Completed;
 
-    private static async Task<ProviderError> ReadErrorAsync(
+    /// <summary>
+    /// Drains an error body under the idle budget rather than the whole-request
+    /// one. A provider that answers 429 and then stops writing must fail in
+    /// seconds, not hold the turn open for the total ceiling.
+    /// </summary>
+    private async Task<ProviderError> ReadErrorAsync(
         ProviderStreamResponse response, CancellationToken cancellationToken)
     {
         var body = new System.Text.StringBuilder();
-        await foreach (var chunk in response.ReadChunksAsync(cancellationToken).ConfigureAwait(false))
-            body.Append(System.Text.Encoding.UTF8.GetString(chunk.Span));
+        try
+        {
+            await foreach (var chunk in WithIdleBudgetAsync(response, first: true, cancellationToken)
+                .ConfigureAwait(false))
+                body.Append(System.Text.Encoding.UTF8.GetString(chunk.Span));
+        }
+        catch (OperationCanceledException)
+        {
+            // Whatever arrived before the stall is still the best description.
+        }
 
         return ProviderErrorReader.TryRead(response.StatusCode, body.ToString())
             ?? new ProviderError(response.StatusCode, null, body.ToString(), ProviderErrorKind.Unknown);
