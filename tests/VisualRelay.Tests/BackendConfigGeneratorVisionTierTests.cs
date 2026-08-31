@@ -94,6 +94,10 @@ public sealed class BackendConfigGeneratorVisionTierTests
         Assert.DoesNotContain("hf-qwen3-coder-next", chain);
         Assert.DoesNotContain("deepseek-v4-pro", chain);
         Assert.DoesNotContain("deepseek-v4-flash", chain);
+        // Named "vision" and image-capable upstream, but it is the cheap-tier
+        // primary and litellm's DeepSeek route drops image parts — the vision
+        // chain stays the two VL models the tier is sized and priced around.
+        Assert.DoesNotContain("deepseek-v4-flash-vision-exp", chain);
         // Vision-capable or not, the frontier primary is not a vision route: GLM
         // 5.3 Flash does take images, but the vision chain stays the two VL
         // models the tier is sized and priced around.

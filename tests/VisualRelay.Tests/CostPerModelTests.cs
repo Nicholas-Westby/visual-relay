@@ -39,7 +39,7 @@ public sealed partial class CostPerModelTests
         vm.PopulateModelCostRows();
 
         var cheapCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("cheap"));
-        Assert.Equal("deepseek-v4-flash", cheapCard.ModelKey);
+        Assert.Equal("deepseek-v4-flash-vision-exp", cheapCard.ModelKey);
         Assert.True(cheapCard.IsActive);
 
         var balancedCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("balanced"));
@@ -88,7 +88,7 @@ public sealed partial class CostPerModelTests
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
 
-        Assert.Equal("deepseek-v4-flash", vm.ModelCostRows[0].ModelKey);
+        Assert.Equal("deepseek-v4-flash-vision-exp", vm.ModelCostRows[0].ModelKey);
         Assert.Contains("cheap", vm.ModelCostRows[0].TierBadges);
     }
 

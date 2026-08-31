@@ -72,6 +72,7 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
         // hung DeepSeek call hits this Timeout first → fallback engages.
         Assert.Equal(75, timeouts["deepseek-v4-pro"]);
         Assert.Equal(75, timeouts["deepseek-v4-flash"]);
+        Assert.Equal(75, timeouts["deepseek-v4-flash-vision-exp"]);
     }
 
     [Fact]
@@ -120,6 +121,7 @@ public sealed class BackendConfigGeneratorPerModelTimeoutTests
         Assert.Equal(480, timeouts["kimi-k2"]);
         Assert.Equal(75, timeouts["deepseek-v4-pro"]);
         Assert.Equal(75, timeouts["deepseek-v4-flash"]);
+        Assert.Equal(75, timeouts["deepseek-v4-flash-vision-exp"]);
         Assert.Equal(120, timeouts["hf-qwen3-coder-next"]);
         Assert.Equal(120, timeouts["hf-qwen3-vl-235b"]);
         Assert.Equal(120, timeouts["hf-qwen3-vl-30b"]);

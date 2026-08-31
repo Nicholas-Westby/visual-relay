@@ -30,8 +30,13 @@ public static partial class BackendConfigGenerator
     /// </summary>
     internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {
+        // The vision-exp head and the text-only -flash behind it are the same
+        // size at the same rates, so the second DeepSeek hop costs nothing and
+        // covers the one risk the experimental model carries: withdrawal without
+        // notice. Provider diversification resumes at the fallback tier.
         ["cheap"] =
         [
+            ("deepseek-v4-flash-vision-exp", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("fallback", "HF_TOKEN"),

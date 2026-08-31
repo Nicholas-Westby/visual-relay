@@ -97,10 +97,12 @@ model_list:
   # Per-model timeout (s): DeepSeek intermittently hangs at byte 0 under sustained
   # load. 75s is well above its healthy first-output (≤46s max) but BELOW the
   # relay's per-tier first-output watchdog (cheap 90s / balanced 120s), so a hung
-  # DeepSeek call hits this Timeout first → triggers the `fallbacks` below (to
-  # kimi-k2 / HF, different providers) instead of the watchdog killing swival on
-  # the same provider. (frontier=kimi-k2 has no such cap — its Review reasoning is
-  # legitimately long.)
+  # DeepSeek call hits this Timeout first → triggers the `fallbacks` below instead
+  # of the watchdog killing swival on the same provider. (frontier=kimi-k2 has no
+  # such cap — its Review reasoning is legitimately long.) Note the escape is
+  # quickest on `balanced`, whose first fallback is kimi-k2 on another provider;
+  # `cheap` walks two more DeepSeek entries before it reaches the HF floor, so a
+  # provider-wide wedge there is more likely to hit the watchdog than to fail over.
   # upstream model: DeepSeek-V4-Pro-0813 (GA). The dated snapshot is NOT addressable
   # on the first-party API — api-docs.deepseek.com documents `deepseek-v4-pro` as the
   # only Pro model id, and points it at the newest snapshot. Keep the undated id here
@@ -121,6 +123,29 @@ model_list:
   - model_name: deepseek-v4-flash
     litellm_params:
       model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
+      timeout: 75
+      # Fresh TCP per request — same DeepSeek pooled-connection wedge as -pro above.
+      extra_headers:
+        Connection: close
+
+  # upstream model: DeepSeek-V4-Flash-Vision-Exp (experimental); same undated-id
+  # rule as -pro. This is the cheap-tier primary: identical 1M context, identical
+  # published rates and identical peak windows to -flash above. "Exp" means
+  # DeepSeek can withdraw it without notice, which is exactly why -flash stays in
+  # the cheap chain directly behind it.
+  # IMAGES DO NOT SURVIVE THIS ROUTE (verified 2026-08-31, litellm 1.92.0):
+  # DeepSeekChatConfig._transform_messages calls
+  # handle_messages_with_content_list_to_str_conversion on EVERY deepseek model,
+  # which flattens list-format content to a plain string and silently discards
+  # image parts — a screenshot sent through here arrives as text only (96 prompt
+  # tokens vs 435 posting the same request straight to api.deepseek.com). So this
+  # is a text model in practice; the `vision` tier still owns image work. Routing
+  # it as `openai/…` with an api_base would preserve the image parts, at the cost
+  # of litellm's DeepSeek-specific reasoning_content and tool-type handling.
+  - model_name: deepseek-v4-flash-vision-exp
+    litellm_params:
+      model: deepseek/deepseek-v4-flash-vision-exp
       api_key: os.environ/DEEPSEEK_API_KEY
       timeout: 75
       # Fresh TCP per request — same DeepSeek pooled-connection wedge as -pro above.
@@ -210,7 +235,7 @@ router_settings:
     # generic-provider + localhost the stripping gate is inert regardless of
     # alias. The "-kimi" suffix was vestigial — the clean tier names are fine.
     balanced: deepseek-v4-pro
-    cheap: deepseek-v4-flash
+    cheap: deepseek-v4-flash-vision-exp
     vision: hf-qwen3-vl-235b
     claude: claude-opus-1m
     fallback: hf-qwen3-coder-next
@@ -221,7 +246,7 @@ router_settings:
   fallbacks:
     - frontier: [hf-glm-5.3-flash, kimi-k2, deepseek-v4-pro, hf-qwen3-coder-next, fallback]
     - balanced: [kimi-k2, deepseek-v4-flash, fallback]
-    - cheap: [deepseek-v4-pro, fallback]
+    - cheap: [deepseek-v4-flash, deepseek-v4-pro, fallback]
     - vision: [hf-qwen3-vl-30b]
     - claude: [claude-sonnet]
 

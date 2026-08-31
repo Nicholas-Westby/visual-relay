@@ -25,19 +25,20 @@ public sealed class BackendConfigGeneratorTests
         Assert.DoesNotContain("kimi-k2", aliases.Values);
         Assert.DoesNotContain("deepseek-v4-pro", aliases.Values);
         Assert.DoesNotContain("deepseek-v4-flash", aliases.Values);
+        Assert.DoesNotContain("deepseek-v4-flash-vision-exp", aliases.Values);
 
         Assert.Contains("HF_TOKEN", summary, StringComparison.Ordinal);
     }
 
     // ── 2. HF + DeepSeek ─────────────────────────────────────────────────
     [Fact]
-    public void HfPlusDeepSeek_CheapFlash_BalancedPro_FrontierPro()
+    public void HfPlusDeepSeek_CheapFlashVision_BalancedPro_FrontierPro()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
         var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
-        Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
+        Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
         // The frontier primary needs HF_TOKEN (present), so it wins ahead
         // of the deepseek-v4-pro fallback even when DEEPSEEK_API_KEY is set.
@@ -65,7 +66,7 @@ public sealed class BackendConfigGeneratorTests
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
         var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
-        Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
+        Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
         // The HF route to GLM 5.3 Flash is the frontier primary; kimi-k2 drops
         // to the first fallback.
@@ -195,7 +196,7 @@ public sealed class BackendConfigGeneratorTests
         var ds = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
         var dsRows = BackendConfigGenerator.GetTierRows(ds);
         var cheapDs = dsRows.First(r => r.Tier == "cheap");
-        Assert.Equal("deepseek-v4-flash", cheapDs.Model);
+        Assert.Equal("deepseek-v4-flash-vision-exp", cheapDs.Model);
         Assert.Equal("DeepSeek", cheapDs.ProviderName);
         Assert.True(cheapDs.KeyPresent);
         var balanced = dsRows.First(r => r.Tier == "balanced");

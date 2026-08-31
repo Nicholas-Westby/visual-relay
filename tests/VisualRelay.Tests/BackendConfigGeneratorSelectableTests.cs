@@ -21,7 +21,7 @@ public sealed class BackendConfigGeneratorSelectableTests
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present, overrides);
         var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present, overrides);
 
-        // cheap should use the override model gpt-5, not deepseek-v4-flash.
+        // cheap should use the override model gpt-5, not its auto-resolved model.
         Assert.Equal("gpt-5", aliases["cheap"]);
 
         // The fallback chain for cheap must still terminate in fallback.

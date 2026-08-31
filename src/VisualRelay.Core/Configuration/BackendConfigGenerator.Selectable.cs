@@ -25,10 +25,13 @@ public static partial class BackendConfigGenerator
                 "deepseek-v4-pro", "kimi-k2", "deepseek-v4-flash",
                 "gpt-5", "hf-qwen3-coder-next", "claude-sonnet",
             },
+            // deepseek-v4-flash keeps its slot behind the vision-exp default: it
+            // is the auto-resolved first fallback, and dropping it from the
+            // picker would silently discard a saved override that names it.
             ["cheap"] = new List<string>
             {
-                "deepseek-v4-flash", "deepseek-v4-pro",
-                "hf-qwen3-coder-next", "gpt-5",
+                "deepseek-v4-flash-vision-exp", "deepseek-v4-flash",
+                "deepseek-v4-pro", "hf-qwen3-coder-next", "gpt-5",
             },
             ["vision"] = new List<string>
             {

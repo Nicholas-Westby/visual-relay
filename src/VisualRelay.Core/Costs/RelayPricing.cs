@@ -46,6 +46,12 @@ internal static class RelayPricing
             // deepseek-v4-pro → DeepSeek-V4-Pro-0813 (api-docs.deepseek.com, 2026-08-17);
             // off-peak base rates; same cache-write rationale as -flash above.
             ["deepseek-v4-pro"] = new(0.66, 1.98, 0.022, 0.66) { Windows = DeepseekPeakWindows },
+            // deepseek-v4-flash-vision-exp → DeepSeek-V4-Flash-Vision-Exp
+            // (api-docs.deepseek.com, 2026-08-31); billed at the text-only -flash rates
+            // on the same peak schedule. No image rate is recorded: DeepSeek bills
+            // images as input tokens, and litellm's DeepSeek route strips them before
+            // they reach the provider anyway (see the model_list entry's note).
+            ["deepseek-v4-flash-vision-exp"] = new(0.22, 0.66, 0.007, 0.22) { Windows = DeepseekPeakWindows },
             // GLM 5.3 Flash first-party on Z.AI (docs.z.ai/guides/overview/pricing,
             // 2026-08-26). These are the sticker rates: Z.AI is running a 50%-off
             // promotion on this model until 2026-09-09, and pricing the promo
