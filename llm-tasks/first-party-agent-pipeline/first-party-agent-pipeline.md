@@ -91,12 +91,25 @@ the compaction ladder (414 firings), the consecutive-error guardrail (95), the
 repeat-call storm breaker (41, with the tuning escape hatch it currently lacks),
 unknown-tool-name recovery (13), and schema-aware argument repair.
 
+**Drop Anthropic and OpenAI entirely, before building anything.** Visual Relay is
+for people who want capable work at an affordable price, and those two providers
+serve neither that audience nor this repo: they have never been used here, the
+`claude` tier is opt-in premium that is omitted whenever its key is absent (which
+is always), and `gpt-5` is reachable only as a manual override. Removing them is
+not merely deletion — it collapses the design. Every remaining provider speaks
+OpenAI-compatible `/chat/completions`, so the one genuine wire adapter disappears,
+and with it the reason to take an SDK dependency at all (step 8). It also removes
+the `claude` tier's bespoke resolver special-casing, which is threaded through six
+separate branches of `BackendConfigGenerator` purely because that one tier is
+allowed to vanish. Do this first, so everything after it is designed against four
+providers rather than six.
+
 **Four components**, each with one job:
 
-1. **`VisualRelay.Core/Llm` — provider clients.** Direct HTTPS to the six
-   providers, streaming and non-streaming, tool calls, and real `usage`. One
-   `HttpClient` whose `HttpMessageHandler` is constructor-injected, behind an
-   `IProviderTransport` seam. No local server, no YAML.
+1. **`VisualRelay.Core/Llm` — provider clients.** Direct HTTPS to the four
+   remaining providers, streaming and non-streaming, tool calls, and real
+   `usage`. One `HttpClient` whose `HttpMessageHandler` is constructor-injected,
+   behind an `IProviderTransport` seam. No local server, no YAML.
 2. **`VisualRelay.Core/Llm/Routing` — policy.** Tier aliases, the provider-
    diversified fallback cascade, per-model timeouts, retries and backoff. The
    routing table moves from generated YAML into the existing
@@ -198,16 +211,35 @@ and commit at each phase boundary.
    entire corpus**, so any non-zero from the replacement is a regression needing
    no statistics.
 
-**Phase 1 — the transport seam and its test apparatus. No behaviour change yet.**
+**Phase 1 — retire the premium providers, then build the transport seam.**
 
-3. Add `IProviderTransport` with `SendAsync` and `StreamAsync`, plus
+3. Remove Anthropic and OpenAI from the catalog in one commit. The `claude` tier
+   goes from `Chains` along with its six special-case branches in
+   `BackendConfigGenerator` (the opt-in omission at `ResolveTiers`, the
+   placeholder row in `GetTierRows`, the `claude→(absent)` summary line, and the
+   `tier is "claude" or "vision"` guards in both the resolver and the override
+   path — `vision` keeps its own). `claude-opus-1m`, `claude-sonnet` and `gpt-5`
+   go from `RelayPricing`, from every `SelectableModelsByTier` list including the
+   frontier, balanced and cheap ones that carry `gpt-5`, and from the template's
+   `model_list`. `ModelToRequiredKey` existed solely to give `gpt-5` a provider
+   key, so it and the merge branch in `GetRequiredKey` both collapse.
+   `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` go from `Providers`, from
+   `MainWindowViewModel.AllProviderKeys`, and from `.env.example`; the
+   `ProviderKeyNames`-versus-settings-panel membership test then proves the two
+   stayed in step. Drop `"claude"` from the cost panel's `TierOrder`, and the
+   `claude`, `opus`, `sonnet` and `gpt5` profiles from `SwivalProfileSession`.
+   Five test files use `gpt-5` as their canonical "override to a model outside the
+   auto-resolved chain" subject — substitute `hf-qwen3-coder-next`, which is in
+   the cheap selectable list and needs only `HF_TOKEN`.
+
+4. Add `IProviderTransport` with `SendAsync` and `StreamAsync`, plus
    `LiveProviderTransport` (constructor-injected `HttpMessageHandler`),
    `RecordingTransport` and `ReplayTransport`. `ReplayTransport` **throws loudly
    on a cassette miss** — never falls through to the network — mirroring
    `GitSimCommandRouter`'s behaviour on an unmodelled argv, and the miss message
    carries a structural diff against the nearest cassette so the changed field is
    visible.
-4. Cassettes live at `tests/VisualRelay.Tests/Cassettes/<provider>/<scenario>/`,
+5. Cassettes live at `tests/VisualRelay.Tests/Cassettes/<provider>/<scenario>/`,
    one JSON file per exchange, keyed by SHA-256 over a canonical form of
    `(method, path, model, allowlisted headers, body)` with `Authorization`,
    `x-api-key`, request ids, timestamps and nonces elided and object keys sorted
@@ -215,58 +247,62 @@ and commit at each phase boundary.
    is a deliberate re-record rather than a silent mass miss. Add to the csproj
    copy glob beside `Fixtures\**\*`, and mark the directory `-diff` in
    `.gitattributes`.
-5. Two guards, both Tier-2 guard-as-tests (see Guardrails on why not `check`
+6. Two guards, both Tier-2 guard-as-tests (see Guardrails on why not `check`
    steps): a secret-redaction guard scanning every committed cassette for `sk-`,
    `hf_`, `Bearer `, each of the six key names in `.env.example`, the live values
    of any of those currently set in the environment, and any 32+ char base64url
    run outside a known-safe field; and a no-`new HttpClient` guard modelled on
    `FakeClockGuard`, allowlisting one composition root by filename. Make
    `RecordingTransport` redact on write too, so the guard is a second line.
-6. Make the fast suite hermetic: install a `SocketsHttpHandler` factory that
+7. Make the fast suite hermetic: install a `SocketsHttpHandler` factory that
    throws on any connect attempt. One test opening a socket fails the suite.
 
 **Phase 2 — the provider layer.**
 
-7. Build on `Microsoft.Extensions.AI` 10.9.0 (GA) rather than raw `HttpClient`:
-   `Microsoft.Extensions.AI.OpenAI` covers the five OpenAI-compatible providers,
-   and Anthropic now ships an **official first-party C# SDK** (`Anthropic`
-   12.44.0, MIT) with `AsIChatClient()` built in. `UsageDetails` already models
-   this domain 1:1 — input, output, cached-input and reasoning counts plus a typed
-   `AdditionalCounts` bag. Reach past the abstraction in exactly three places:
-   `RawRepresentation as StreamingChatCompletionUpdate` for incremental tool-call
-   deltas (the adapter otherwise buffers them to stream end),
-   `ChatOptions.RawRepresentationFactory` plus `JsonPatch` for per-provider
-   request shaping, and `RawRepresentation as ChatCompletion` for vendor usage
-   fields. `<NoWarn>$(NoWarn);MEAI001;SCME0001</NoWarn>` is required under this
-   repo's `TreatWarningsAsErrors`.
-8. Encode the wire quirks that were measured live, not assumed. Provider
-   disagreements that will silently corrupt results if abstracted over:
-   **usage lands in four different places** (top-level on the `finish_reason`
-   chunk for DeepSeek and Z.AI, nested in `choices[0].usage` for Moonshot, a
-   trailing `choices: []` chunk for HF and OpenAI) and Moonshot emits it
-   **twice** — so take last-writer-wins over the union, never accumulate.
-   **Cached tokens are a subset of `prompt_tokens` on the OpenAI family but
-   Anthropic's `input_tokens` excludes cache entirely**, and the two M.E.AI
-   adapters faithfully reproduce that opposite convention behind one
-   `InputTokenCount` property; pricing it at the plain rate over-charges roughly
-   3.4× on a cached Anthropic call, so compute uncached explicitly and regression-
-   test it on day one. **Z.AI can return HTTP 200 with an error body**, so probe
-   every response for an `error` key rather than trusting the status. Error
-   envelopes differ five ways (HF's `error` is a string on auth failure, an object
-   on bad model, and absent entirely on provider passthrough), so accept `error`
-   as string or object and `code` as string or integer. Two status codes an
-   OpenAI-shaped classifier misses: **Anthropic's 529** for overload and **HF's
-   410** for a model a provider dropped. 429 means both "slow down" and "out of
-   money" on every provider, so discriminate on the body code before retrying.
-   HF model ids are **case-sensitive on request but lowercased in the response**,
-   so echoing a response id into a retry 404s.
-9. Request real usage everywhere, including `stream_options: {include_usage:
+8. Use raw `HttpClient` plus `System.Text.Json`, with the in-box
+   `System.Net.ServerSentEvents` (present in .NET 10, no PackageReference) for
+   stream framing. Take **no LLM SDK dependency at all.** An abstraction layer
+   such as `Microsoft.Extensions.AI` earns its keep by normalizing across
+   incompatible provider families, and with Anthropic and OpenAI gone there is
+   only one family left: all four remaining providers speak OpenAI-compatible
+   `/chat/completions`. Worse, its adapter would have to be bypassed for exactly
+   the three things this project exists to get right — it buffers tool-call
+   fragments and emits them only after the stream ends, which defeats streaming to
+   the UI; per-provider request shaping needs raw JSON patching; and the vendor
+   usage fields that make costing accurate are all off-contract. Reaching past an
+   abstraction for all three of its core requirements is a dependency paying no
+   rent. Direct HTTP also keeps `SocketsHttpHandler` configuration, connection
+   pooling and cancellation entirely in view, which the timeout work in step 10
+   depends on.
+9. Encode the wire quirks that were measured live, not assumed. Even inside one
+   nominal wire format the four providers disagree in ways that silently corrupt
+   results: **usage lands in three different places** — top-level on the
+   `finish_reason` chunk for DeepSeek and Z.AI, nested in `choices[0].usage` for
+   Moonshot, and a trailing `choices: []` chunk for Hugging Face — and Moonshot
+   emits it **twice**, so take last-writer-wins over the union and never
+   accumulate. Cached tokens are a subset of `prompt_tokens`, so compute uncached
+   as the difference rather than treating the two as disjoint, which is what the
+   current estimator's fields assume. **Z.AI can return HTTP 200 with an error
+   body**, so probe every response for an `error` key rather than trusting the
+   status. Error envelopes differ four ways: HF's `error` is a string on auth
+   failure, an object on a bad model, and absent entirely on provider passthrough,
+   while Z.AI's error object is variously `{code,message}`, `{message}` or
+   `{code}`. Accept `error` as string or object and `code` as string or integer,
+   fall back to top-level `message`/`reason`, and never assume a non-2xx body is
+   JSON. **HF returns 410** for a model a provider has dropped, which an
+   OpenAI-shaped retry classifier will miss. 429 means both "slow down" and "out
+   of money" on every provider, so discriminate on the body code before retrying —
+   Z.AI's quota exhaustion is a 429 carrying code 1113, not a 402. HF model ids
+   are **case-sensitive on request but lowercased in the response**, so echoing a
+   response id into a retry 404s. Only exponential backoff with jitter is
+   available: none of the four documents `Retry-After`, and none was observed.
+10. Request real usage everywhere, including `stream_options: {include_usage:
    true}` on the OpenAI-compatible streaming path, which Swival never sets.
    Reasoning tokens are **included in `completion_tokens`** on every reasoning
    provider — measured, and documented by none of them — which is why the current
    `answer.Length / 4` estimate under-counts output cost by close to an order of
    magnitude: on one GLM measurement, reasoning was 137 of 141 completion tokens.
-10. Replace LiteLLM's single timeout knob with four separate budgets, because the
+11. Replace LiteLLM's single timeout knob with four separate budgets, because the
     per-model ceilings in the config rest on a false premise. Streaming TTFB was
     measured at 0.43 s (DeepSeek Pro), 1.12 s (GLM 5.3 Flash) and 0.87 s
     (Kimi), with a **maximum inter-chunk gap of 1.12 s across 1502 chunks** —
@@ -276,7 +312,7 @@ and commit at each phase boundary.
     wall clock 600 s. The idle budget is the real stall detector and has a 30×
     margin over the measured worst gap; it would have cut the 18- and 30-minute
     byte-0 wedges at 30 seconds.
-11. Never cap output low on a reasoning model, and treat
+12. Never cap output low on a reasoning model, and treat
     `finish_reason == "length"` with empty content as a **distinct retryable
     outcome** — retry with a larger budget or lower effort rather than reporting
     an empty answer. Reproduced on all three reasoning models at `max_tokens: 20`,
@@ -288,30 +324,29 @@ and commit at each phase boundary.
     escape hatch the config does not record; `tool_choice: "required"` is not
     portable and the abstraction must either disable reasoning or fall back to
     prompt-level coercion.
-12. Carry `reasoning_content` forward verbatim on every assistant message bearing
+13. Carry `reasoning_content` forward verbatim on every assistant message bearing
     tool calls. Whether DeepSeek *enforces* this is contested: one probe recorded
     a hard 400 when the field is absent, but a direct test across all three
     DeepSeek models, both the bare and `/beta` paths, and three shapes of the
     replayed message returned 200 in all eighteen combinations on 2026-08-31.
-    Replaying it is free and quality-relevant on Moonshot and Z.AI regardless, and
-    Anthropic does enforce the equivalent for signed thinking blocks. Do not build
-    on the assumption that omission is safe.
-13. Write the SSE parser as a unit-testable component with no transport
+    Replaying it is free and quality-relevant on Moonshot and Z.AI regardless. Do
+    not build on the assumption that omission is safe.
+14. Write the SSE parser as a unit-testable component with no transport
     dependency, covering: an event split mid-UTF-8-codepoint, `data: [DONE]`,
     comment keepalives classified **as keepalives**, multi-line `data:`
     concatenation, CRLF and LF, two complete events plus a partial third in one
     chunk, an empty chunk mid-stream, and first-event latency that does not
     require buffering the whole stream. Treat a stream that ends **without its
-    terminator** (`[DONE]`, or `message_stop` on Anthropic) as a failure, and
-    check every chunk for a top-level `error` key before parsing it as a delta —
-    that is how HF and OpenAI signal a mid-stream error on an already-200
-    response, while Z.AI signals it only through `finish_reason` and Anthropic
-    through an `event: error` frame. Key tool-call accumulation **strictly on
+    `data: [DONE]` terminator** as a failure, and check every chunk for a
+    top-level `error` key before parsing it as a delta — that is how HF signals a
+    mid-stream error on an already-200 response, while Z.AI signals it only
+    through `finish_reason`, whose enum includes `sensitive` and `network_error`
+    beyond the usual set. Key tool-call accumulation **strictly on
     `index`**, never on `id`: HF emits a duplicate `id` with an empty `function`
     object, and a client that starts a new call on each `id` invents a phantom
     one. Z.AI emits a whole tool call in a single delta, so any logic assuming the
     first delta has empty arguments is wrong.
-14. Delete `Connection: close`, and correct the diagnosis in the process. The
+15. Delete `Connection: close`, and correct the diagnosis in the process. The
     byte-0 stall is real but the config's explanation is not: it was reproduced
     deterministically as a **server-side hang triggered by request content** —
     sending `role: "developer"` to an HF-routed model hangs indefinitely with zero
@@ -324,10 +359,10 @@ and commit at each phase boundary.
     `PooledConnectionIdleTimeout` actually forces a new connection. Give each
     provider its own `SocketsHttpHandler` with a short `PooledConnectionLifetime`
     (which also fixes stale DNS against these load balancers) and let the
-    inter-chunk idle budget catch stalls. Also map `developer` → `system` for
-    every provider except OpenAI; three of the others return 400 on it and the
-    fourth hangs.
-15. Golden the serialized request body per model at
+    inter-chunk idle budget catch stalls. Also map `developer` → `system`
+    unconditionally: three of the four providers return 400 on that role and the
+    fourth hangs on it.
+16. Golden the serialized request body per model at
     `tests/VisualRelay.Tests/Goldens/request/<model>/<stage>.json`, refreshed by
     `VR_UPDATE_GOLDENS=1`. **Every golden must be paired with a live-suite
     assertion that the named provider accepts that body**, and no golden may be
@@ -337,19 +372,21 @@ and commit at each phase boundary.
 
 **Phase 3 — routing and the catalog.**
 
-16. Move tier resolution, the fallback cascade and per-model timeouts into
+17. Move tier resolution, the fallback cascade and per-model timeouts into
     `BackendConfigGenerator`'s existing structures as the single source of truth,
     and delete `tools/backend/litellm-config.yaml`. Preserve the key-gated
-    semantics exactly: the vision and claude tiers are **omitted entirely** when
-    their key is absent so a request errors rather than silently degrading to a
-    text model, and every other chain terminates in the fallback tier.
-17. Rewrite `ModelCatalogParityTests` and `BackendConfigGeneratorTemplateCoverageTests`
+    semantics exactly: the vision tier is **omitted entirely** when `HF_TOKEN` is
+    absent so an image request errors rather than silently degrading to a text
+    model, and every other chain terminates in the fallback tier. With `claude`
+    gone, `vision` is the only tier carrying that exception, so express it as one
+    named rule rather than the scattered `tier is "claude" or "vision"` tests.
+18. Rewrite `ModelCatalogParityTests` and `BackendConfigGeneratorTemplateCoverageTests`
     against the C# catalog, keeping each guard's negative control. Keep the
     per-model-timeout and alias-consistency guards alive. Derive the required
     golden set from the catalog constant so adding a model without pricing or a
     golden fails the build — the self-maintaining pattern `ControlIndexPageTests`
     already uses for commands and routes.
-18. Delete the proxy lifecycle: `BackendLifecycle*.cs`, `BackendProcess.cs`,
+19. Delete the proxy lifecycle: `BackendLifecycle*.cs`, `BackendProcess.cs`,
     `BackendVenv.cs`, `BackendStartOptions.cs`, `BackendSocketProbe.cs`,
     `BackendConfigStep.cs`, `BackendReadinessProbe.cs`, `BackendPaths.cs`,
     `tools/VisualRelay.Backend/`, `tools/VisualRelay.GenBackendConfig/`, their
@@ -358,9 +395,9 @@ and commit at each phase boundary.
     one-click recovery. Port `LlmTestCommandFinder` onto the provider layer,
     keeping `BuildPrompt` and `ExtractCommand` semantics and finally covering the
     transport, which has zero test coverage today.
-19. Drop `depends_on "uv"` from `packaging/visual-relay.rb`. `nono` stays — it is
+20. Drop `depends_on "uv"` from `packaging/visual-relay.rb`. `nono` stays — it is
     the sandbox, not a thing being replaced.
-20. Derive Hugging Face pricing from the live catalog rather than hand-copying it.
+21. Derive Hugging Face pricing from the live catalog rather than hand-copying it.
     `GET https://router.huggingface.co/v1/models` works unauthenticated and returns
     per-model `providers[]` with `status`, `context_length`, `pricing.{input,output}`,
     `supports_tools` and latency — so an unpinned model's envelope is discoverable
@@ -368,17 +405,16 @@ and commit at each phase boundary.
     price or context window**: `Qwen3-VL-235B` is 131,072 tokens at 0.30/1.50 on
     novita and 262,144 at 0.20/0.88 on deepinfra, and the catalog currently records
     only one of them. Either pin the provider suffix so the envelope is fixed, or
-    price the worst case; do not leave both floating. Confirm the `gpt-5` target
-    while here — OpenAI marks that alias deprecated and scheduled for shutdown.
+    price the worst case; do not leave both floating.
 
 **Phase 4 — the agent loop.**
 
-21. Implement the turn loop against `ISubagentRunner`. Return the stage contract
+22. Implement the turn loop against `ISubagentRunner`. Return the stage contract
     as a **typed result**, not fenced JSON on stdout: `FencedJsonExtractor`,
     `ValidateContractShape`'s key-presence regex, the prompt-echo heuristic that
     reads `arguments[^1]`, and the nono banner-noise distiller all delete. Keep
     the per-stage contract *shapes* in `RelayStages.cs` unchanged.
-22. Port the resilience machinery the corpus justifies, and only that: a
+23. Port the resilience machinery the corpus justifies, and only that: a
     compaction ladder, the consecutive-error guardrail, the repeat-call storm
     breaker **with a configurable window and threshold** (its hardcoded 6/3
     suppresses a legitimate re-run of the same test command to check for
@@ -387,27 +423,27 @@ and commit at each phase boundary.
     unless evidence appears. Do not reproduce Swival's two `AgentError` landmines
     that abort the whole run on a second repair failure — the driver owns
     escalation and is the right layer to decide.
-23. Tools: `read_file`, `read_multiple_files`, `write_file`, `edit_file`,
+24. Tools: `read_file`, `read_multiple_files`, `write_file`, `edit_file`,
     `list_files`, `grep`, `outline`, `run_command`, `run_shell_command`, `think`,
     `todo`, `view_image`, `delete_file`, `snapshot`. **`view_image` and
     `list_files` must keep those exact names** — `RelayStages.cs:86` and
     `RelayDriver.ReviewPairTriage.cs:99,113,118` name them in prompts. Every
     command tool goes through the sandboxed-command path; the guard applies to
     all of them, closing the `python`-tool bypass.
-24. Reimplement the command-guard policy **in-process**: strip `--no-verify`
+25. Reimplement the command-guard policy **in-process**: strip `--no-verify`
     unconditionally, strip `-n` and the `n` from combined short flags only within
     a `git commit`, fail-open for non-git and fail-closed for git commit. This
     stops being an external binary execed by a Python process, which also means
     it applies in every target repo rather than only in this one. Extend
     `CommandGuardDecider*Tests` to the new call path and keep both argv-mode and
     shell-mode coverage.
-25. Emit one structured event stream. Publish token deltas, tool-call start and
+26. Emit one structured event stream. Publish token deltas, tool-call start and
     finish with real timestamps and durations, turn boundaries, compactions,
     guardrail and storm interventions, retries, fallback hops, and per-call
     usage. The trace file, the cost ledger and the watchdog all derive from it.
     Throttle or coalesce before `Dispatcher.UIThread.Post`, which is
     fire-and-forget with no backpressure today.
-26. Rewrite the watchdog against direct signals — last token received, last tool
+27. Rewrite the watchdog against direct signals — last token received, last tool
     call started and returned, request state — replacing CPU-tree sampling and
     TCP-table scraping. Preserve all five `ActivityWatchdog.Outcome` values and
     the `HardAbort` classification (`absolute_ceiling`, `output_silence_ceiling`
@@ -419,16 +455,16 @@ and commit at each phase boundary.
     a naive port recreates that 44-minute hang in a new guise. Add the missing
     `vision` entries to `firstOutputTimeoutMsByTier` and `inactivityTimeoutMsByTier`
     while here; stage 8 silently inherits the flat fallbacks today.
-27. Write the report atomically on every exit path including cancellation, and
+28. Write the report atomically on every exit path including cancellation, and
     promote `result.outcome` and `result.error_message` to a typed result the
     driver branches on. Ten historical failures carried an exact cause and the
     driver saw only "exit 1"; seven carried `exhausted` and it escalated by luck.
-28. Cost: record real `usage` per interaction against the concrete served model.
+29. Cost: record real `usage` per interaction against the concrete served model.
     Emit both the measured value and the legacy estimate during the transition,
     keeping the estimate authoritative until the Phase 6 benchmark completes,
     then switch and delete the estimator's fabrication path. Fix the input-token
     derivation as part of the switch.
-29. Delete what the boundary required: `SwivalProfileSession*.cs` and its
+30. Delete what the boundary required: `SwivalProfileSession*.cs` and its
     391-line ref-counted pinned registry, the five Python-containment environment
     overrides in `ProcessRunners.SandboxEnv.cs` (`HF_HOME`, `XDG_CACHE_HOME`,
     `UV_CACHE_DIR`, `PYTHONDONTWRITEBYTECODE`, `PYTHONPYCACHEPREFIX`, and the two
@@ -437,7 +473,7 @@ and commit at each phase boundary.
 
 **Phase 5 — verification.**
 
-30. Build the scripted fake model at turn granularity (today's doubles script one
+31. Build the scripted fake model at turn granularity (today's doubles script one
     canned contract per stage and never reach inside a turn). It must express, and
     the loop must be asserted against, at minimum: unknown tool name; arguments
     failing schema; truncated JSON arguments; a truncated fenced answer; a closing
@@ -453,22 +489,22 @@ and commit at each phase boundary.
     and turn-budget exhaustion producing `outcome: "exhausted"` with exit code 2.
     Expose the captured requests too — half of what is under test is what the loop
     *sends* after a fault. All of it on `ManualTimeProvider`, zero network.
-31. Cancellation: user-stop and watchdog-kill must remain separate tokens, as
+32. Cancellation: user-stop and watchdog-kill must remain separate tokens, as
     `ProcessCapture.RunAsync` separates them today. Cover cancel mid-stream,
     cancel before first byte, cancel during tool execution, and double cancel
     producing one outcome and no `ObjectDisposedException`.
-32. Schema round-trip: assert the new runner's `report.json` drives
+33. Schema round-trip: assert the new runner's `report.json` drives
     `RelayCostEstimator.EstimateReport` and `RelayRunHistory.ReadStageMetric` to
     the same values as a golden Swival report, and that `RelayTraceParser`
     produces an identical `TraceEntry` sequence from the new `.jsonl` as from a
     recorded one.
-33. Offline differential, free and deterministic: replay every recorded trace's
+34. Offline differential, free and deterministic: replay every recorded trace's
     model turns through the new loop via `ReplayTransport` and assert the same
     tool calls in the same order and matching `stats` and `result.outcome`. This
     is `ParityHarness.cs` — which already does old-versus-new for GitSim against
     real git — applied to the agent. **Nothing goes to a paid benchmark until it
     replays clean.**
-34. Target-repository matrix, because Visual Relay is general-purpose and is
+35. Target-repository matrix, because Visual Relay is general-purpose and is
     pointed at arbitrary projects. Tier A is detection-only, free, and belongs in
     the fast suite: materialize marker files in temp dirs and assert
     `DetectCandidates` order and the resulting config bytes. Tier B runs the full
@@ -493,14 +529,14 @@ and commit at each phase boundary.
     nested `.gitignore` files, which GitSim structurally cannot model. Add the
     missing JVM detectors as part of this step, and add the absent
     `GuardCommandDetectorTests`.
-35. Fix `TestCommandValidator.Classify` accepting non-zero-exit-with-any-output,
+36. Fix `TestCommandValidator.Classify` accepting non-zero-exit-with-any-output,
     which currently persists `npm test` as a repo's test command on a repo that
     has no test script. Fix the generated `scripts/reset-sample.sh`, which still
     shells out to the deliberately-removed `sample-reset` verb and is broken today.
 
 **Phase 6 — prove it is as good, then cut over.**
 
-36. Benchmark twelve tasks drawn from `llm-tasks/completed/`, each frozen at its
+37. Benchmark twelve tasks drawn from `llm-tasks/completed/`, each frozen at its
     `run-base.txt` SHA: three mechanical, three medium, three needing real
     diagnosis, one UI/visual exercising stage 8 and the vision tier, one that
     legitimately escalated a tier, one that legitimately needed the fix-verify
@@ -509,7 +545,7 @@ and commit at each phase boundary.
     the sample repo defaults differ from this one and would make the arms
     incomparable. Alternating also controls for DeepSeek's weekday peak windows,
     which would otherwise show a phantom 2× cost regression.
-37. Accept on per-stage pass rate with Wilson 95% intervals: no stage's lower
+38. Accept on per-stage pass rate with Wilson 95% intervals: no stage's lower
     bound more than five points below the old arm's point estimate. Report
     secondary metrics against the Phase 0 corpus baselines — turns, tool calls,
     failed tool calls, retry rate (2.3% today, the sharpest single signal),
@@ -517,10 +553,10 @@ and commit at each phase boundary.
     on the produced diff, and manifest-violation counts as an off-task measure via
     the `EarlyImplementationDetector` and `WorktreeFilter` machinery that already
     computes them.
-38. Run shadow mode for a few weeks of real drains before deleting the old path:
+39. Run shadow mode for a few weeks of real drains before deleting the old path:
     execute the new runner alongside Swival, take Swival's result, record the
     new one. Cheapest route to a large N, at real production distribution.
-39. Cut over, delete the Swival runner and its 16 partials, and update
+40. Cut over, delete the Swival runner and its 16 partials, and update
     `AGENTS.md`, `README.md`, `docs/OPERATIONS.md`, `docs/DESIGN.md` (whose
     live-tailing claim becomes true for the first time) and `docs/relay-artifacts.md`.
 
@@ -558,6 +594,14 @@ and commit at each phase boundary.
   hidden one.** If any budget is ever reduced, the tool result must say so.
 - **`view_image` and `list_files` keep their names.** Stage prompts reference
   them as strings.
+- **Do not touch `ClaudeTrailerStripper` when removing the `claude` tier.** It
+  matches the substring "claude" in commit trailers to keep authorship attribution
+  out of commits, and has nothing to do with the model tier. A grep-driven sweep
+  will find it; leave it alone, along with the `nick-claude` skill references.
+- **Do not reintroduce Anthropic or OpenAI as a "just in case" adapter,** and do
+  not leave a dormant provider enum entry or key row behind. The point of removing
+  them is that the remaining set is homogeneous; a dormant sixth provider puts the
+  abstraction back and forfeits the simplification.
 - Leave `nono` in place. It is the sandbox and is not part of this change.
 
 ## Done when
@@ -566,7 +610,13 @@ and commit at each phase boundary.
 handler installed, zero network, zero provider spend — and still inside the 60 s
 ceiling. No Python remains: `backend-venv` and the Swival install are gone, `uv`
 is no longer a prerequisite or a Homebrew dependency, and the app reaches
-control-API-ready without a proxy boot. The offline differential replays all 967
+control-API-ready without a proxy boot. Anthropic and OpenAI are gone root and
+branch: no `claude` tier, no `claude-opus-1m`, `claude-sonnet` or `gpt-5` in the
+catalog, pricing or any selectable list, no `ANTHROPIC_API_KEY` or
+`OPENAI_API_KEY` probed or offered in settings, and no provider-family
+conditional left in the resolver — while `ClaudeTrailerStripper` and the
+authorship rules it enforces are untouched. The project takes no LLM SDK
+dependency. The offline differential replays all 967
 recorded traces through the new loop with identical tool-call sequences. The
 twelve-task benchmark meets the Phase 6 acceptance bar. Tier A of the target
 matrix runs in the fast suite and Tier B passes replayed, with the JVM detectors
