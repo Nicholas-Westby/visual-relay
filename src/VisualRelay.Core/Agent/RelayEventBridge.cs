@@ -1,3 +1,4 @@
+using VisualRelay.Core.Llm;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
@@ -91,8 +92,35 @@ public sealed class RelayEventBridge(IRelayEventSink sink, StageInvocation invoc
                 Describe(agentEvent.Kind),
                 agentEvent.Text ?? agentEvent.Detail ?? string.Empty),
 
+        // The one place a run says which concrete model answered and what it
+        // measured. Without this the trace and the run log named only the tier
+        // alias, so a fallback hop and its cost were invisible to anyone
+        // reading them.
+        AgentEventKind.Usage when agentEvent.Usage is { } usage =>
+            new TraceEntry(TraceEntryKind.UserText, "usage", DescribeUsage(agentEvent.Model, usage)),
+
         _ => null,
     };
+
+    /// <summary>One line naming the model that answered and what it counted.</summary>
+    /// <param name="model">The concrete model the provider named, if it named one.</param>
+    /// <param name="usage">The measured usage for the call.</param>
+    /// <returns>A line for the trace.</returns>
+    private static string DescribeUsage(string? model, ProviderUsage usage)
+    {
+        var parts = new List<string>
+        {
+            $"model {model ?? "unreported"}",
+            $"in {usage.PromptTokens}",
+            $"out {usage.CompletionTokens}",
+        };
+
+        if (usage.CachedTokens > 0) parts.Add($"cached {usage.CachedTokens}");
+        if (usage.CacheWriteTokens > 0) parts.Add($"cache-write {usage.CacheWriteTokens}");
+        if (usage.ReasoningTokens > 0) parts.Add($"reasoning {usage.ReasoningTokens}");
+
+        return string.Join("  ", parts);
+    }
 
     private static string Describe(AgentEventKind kind) => kind switch
     {
