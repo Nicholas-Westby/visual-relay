@@ -6,16 +6,16 @@ namespace VisualRelay.Domain;
 // callers use WithHint to append the hint and keep the original text.
 public static class ErrorHintClassifier
 {
-    // User-facing copy. The base URL comes from the centralized ModelBackend so
-    // the port lives in exactly one place; here it is display text.
+    // User-facing copy. There is no local backend to start any more: the
+    // providers are called directly, so an unreachable one is a network or key
+    // problem, not a service the user forgot to run.
     private const string ConnectionHint =
-        "Hint: Can't reach the model backend at " + ModelBackend.BaseUrl +
-        " — is the LiteLLM proxy running? Start it (see " +
-        "autostart-model-backend-on-launch.md) and re-run.";
+        "Hint: Can't reach the model provider — check your network, and that the " +
+        "provider key for this tier is set (see .env.example for the key names).";
 
     private const string TimeoutHint =
         "Hint: The stage timed out. Try raising maxTurns/the timeout, " +
-        "or check the model backend's latency.";
+        "or check the provider's latency.";
 
     private const string TestTimeoutHint =
         "Hint: The test command exceeded the configured time cap and was halted. " +
@@ -26,7 +26,8 @@ public static class ErrorHintClassifier
         "TestFileCommand \"{files}\" pattern) to narrow the scope.";
 
     private const string AuthHint =
-        "Hint: Provider key missing or invalid — check the backend's provider config.";
+        "Hint: Provider key missing or invalid — set it in the key panel or " +
+        "~/.config/visual-relay/.env (see .env.example for the key names).";
 
     private const string MissingJsonHint =
         "Hint: The model didn't return the required JSON contract — usually a " +

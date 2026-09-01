@@ -37,7 +37,13 @@ public sealed class RelayDriverTests
         Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 12 });
         var stage12Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 12 });
         Assert.False(stage12Done.Data?.ContainsKey("turns"));
-        Assert.Contains(sink.Events, e => e is { EventName: "run_start", Data: not null } && e.Data["base_url"] == ModelBackend.BaseUrl);
+        // run_start carries the version, not a base URL: there is no single
+        // endpoint any more. Each tier resolves its own provider, and the model
+        // that actually served a stage is on that stage's report.
+        var runStart = Assert.Single(sink.Events, e => e.EventName == "run_start");
+        Assert.NotNull(runStart.Data);
+        Assert.True(runStart.Data!.ContainsKey("version"));
+        Assert.False(runStart.Data.ContainsKey("base_url"));
     }
 
     [Fact]

@@ -14,8 +14,8 @@ public sealed class ErrorHintClassifierTests
         var hint = ErrorHintClassifier.HintFor(raw);
 
         Assert.NotNull(hint);
-        Assert.Contains("http://127.0.0.1:4000", hint);
-        Assert.Contains("LiteLLM", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("provider", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("4000", hint);
     }
 
     [Fact]
@@ -26,7 +26,7 @@ public sealed class ErrorHintClassifierTests
         var hint = ErrorHintClassifier.HintFor(raw);
 
         Assert.NotNull(hint);
-        Assert.Contains("http://127.0.0.1:4000", hint);
+        Assert.Contains("provider", hint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class ErrorHintClassifierTests
         var connectionHint = ErrorHintClassifier.HintFor(
             "swival exit 1: OpenAIException - Connection error.");
         Assert.NotNull(connectionHint);
-        Assert.Contains("http://127.0.0.1:4000", connectionHint);
+        Assert.Contains("provider", connectionHint, StringComparison.OrdinalIgnoreCase);
 
         var authHint = ErrorHintClassifier.HintFor(
             "swival exit 1: Error code: 401 - invalid api_key");
@@ -175,7 +175,7 @@ public sealed class ErrorHintClassifierTests
         // Exact contract: raw text verbatim, blank-line separator, then the hint.
         // Three later tasks render this combined string, so pin the format.
         Assert.Equal($"{raw}\n\n{ErrorHintClassifier.HintFor(raw)}", combined);
-        Assert.Contains("http://127.0.0.1:4000", combined);
+        Assert.Contains("provider", combined, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

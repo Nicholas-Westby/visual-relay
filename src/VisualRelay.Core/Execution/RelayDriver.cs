@@ -57,7 +57,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             if (flaggedOutcome is not null) return flaggedOutcome;
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-            var runStartData = new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl, ["version"] = VersionHelper.ReadInformationalVersion() };
+            // No base_url: there is no single endpoint any more. Each tier resolves its
+            // own provider, and the served model is recorded per stage on the report.
+            var runStartData = new Dictionary<string, string> { ["version"] = VersionHelper.ReadInformationalVersion() };
             if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
             await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
             await WarnTestFileCmdAsync(config, runId, rootPath, taskId, cancellationToken);
