@@ -67,7 +67,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
     {
         var snapshotPath = WriteSnapshot(
             ("VR_SNAP_MARKER", "present"),
-            ("PYTHONDONTWRITEBYTECODE", "0"),
+            ("MSBUILDDISABLENODEREUSE", "0"),
             ("SOME_USER_VAR", "user-value"),
             ("PATH", "/usr/bin:/bin"));
         _env["VISUAL_RELAY_USER_ENV_SNAPSHOT"] = snapshotPath;
@@ -78,7 +78,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
         var overrides = result.Overrides;
         Assert.Equal("present", overrides["VR_SNAP_MARKER"]);
         Assert.Equal("user-value", overrides["SOME_USER_VAR"]);
-        Assert.Equal("1", overrides["PYTHONDONTWRITEBYTECODE"]); // VR wins on collision
+        Assert.Equal("1", overrides["MSBUILDDISABLENODEREUSE"]); // VR wins on collision
         Assert.Equal("1", overrides["MSBUILDDISABLENODEREUSE"]);
         Assert.Equal("1", overrides["DOTNET_CLI_TELEMETRY_OPTOUT"]);
         Assert.False(overrides.ContainsKey("SDKROOT"));
@@ -91,7 +91,6 @@ public sealed class UserEnvSnapshotTests : IDisposable
 
         Assert.NotNull(result);
         var overrides = result.Overrides;
-        Assert.Equal("1", overrides["PYTHONDONTWRITEBYTECODE"]);
         Assert.Equal("1", overrides["MSBUILDDISABLENODEREUSE"]);
         Assert.Equal("1", overrides["DOTNET_CLI_TELEMETRY_OPTOUT"]);
         Assert.False(overrides.ContainsKey("VR_SNAP_MARKER"));
@@ -169,10 +168,8 @@ public sealed class UserEnvSnapshotTests : IDisposable
         var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env, processEnv);
 
         Assert.NotNull(result);
-        Assert.Equal("1", result.Overrides["PYTHONDONTWRITEBYTECODE"]);
         Assert.Equal("1", result.Overrides["MSBUILDDISABLENODEREUSE"]);
         Assert.Equal("1", result.Overrides["DOTNET_CLI_TELEMETRY_OPTOUT"]);
-        Assert.DoesNotContain("PYTHONDONTWRITEBYTECODE", result.Remove);
         Assert.DoesNotContain("MSBUILDDISABLENODEREUSE", result.Remove);
         Assert.DoesNotContain("DOTNET_CLI_TELEMETRY_OPTOUT", result.Remove);
         Assert.Contains("SHELL", result.Remove);

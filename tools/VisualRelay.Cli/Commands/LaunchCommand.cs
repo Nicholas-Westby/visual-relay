@@ -17,12 +17,6 @@ public static class LaunchCommand
             return nono;
         Gates.NonoGate.Provision(paths.Root);
 
-        var swival = Gates.SwivalGate.Require(paths.Root);
-        if (swival != 0)
-            return swival;
-
-        Gates.SwivalUpgradeCheck.Run(paths.Root);
-
         // Best-effort backend start via the published VisualRelay.Backend tool
         // (the C# successor to backend.sh; same shared lifecycle the app autostart
         // runs). A fresh launch can run a task without a manual proxy step; if it

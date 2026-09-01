@@ -34,7 +34,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
             await NonoProfileEnsurer.EnsureAsync(_dependencies.EnvironmentAccessor, cancellationToken);
             _ = await CommandGuardEnsurer.EnsureAsync(rootPath, cancellationToken);
-            var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(rootPath, taskDirectory, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);
             var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);
@@ -81,8 +80,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     var pairState = await RunReviewPairAsync(rootPath, runId, taskId, taskDirectory,
                         config, input, ledger, seals, statusEntries, manifest,
                         previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
-                        task?.SiblingPaths ?? [],
-                        pinnedSwivalProfileContent, cancellationToken);
+                        task?.SiblingPaths ?? [], cancellationToken);
                     if (pairState.FlaggedOutcome is { } fo)
                         return fo;
                     previousSeal = pairState.PreviousSeal;
@@ -157,7 +155,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     // Stage 10 Verify gets no imperative test command; only coding stages (6/9) do.
                     var invocation = BuildStageInvocation(rootPath, runId, taskId, taskDirectory,
                         config, stage, input, ledger, manifest, targetedTestCommand,
-                        implementationFrontLoaded, stage10TestResult, pinnedSwivalProfileContent);
+                        implementationFrontLoaded, stage10TestResult);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     // Fold every attempt RunAsync ran (escalation writes per-attempt reports), so
                     // the card and sessionCostUsd match the archived squash, not just attempt 1.
@@ -198,7 +196,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             ledger.AppendLine();
                         }
                         await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
-                        (body, targetedTestCommand, var cd, var ud) = await TryPlanCompletenessRetryAsync(body, json, manifest, rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, pinnedSwivalProfileContent, targetedTestCommand, cancellationToken);
+                        (body, targetedTestCommand, var cd, var ud) = await TryPlanCompletenessRetryAsync(body, json, manifest, rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, targetedTestCommand, cancellationToken);
                         sessionCostUsd += cd; unknownCostStageCount += ud;
                         if (config.DownshiftOnEarlyImplementation)
                             implementationFrontLoaded = await EarlyImplementationDetector
@@ -257,7 +255,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                                 // Genuinely red — record stage 10, enter fix-verify loop.
                                 (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
-                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage10VerifyOutputPath, stage10BootstrapCmd, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
+                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage10VerifyOutputPath, stage10BootstrapCmd, config.GuardCommand, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;

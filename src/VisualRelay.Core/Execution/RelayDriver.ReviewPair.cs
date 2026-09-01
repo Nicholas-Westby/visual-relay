@@ -20,8 +20,7 @@ public sealed partial class RelayDriver
         List<string> seals, List<StageStatusEntry> statusEntries,
         IReadOnlyList<string> manifest,
         string previousSeal, string taskHash, double sessionCostUsd,
-        int unknownCostStageCount, IReadOnlyList<string> taskImagePaths,
-        string pinnedSwivalProfileContent, CancellationToken cancellationToken)
+        int unknownCostStageCount, IReadOnlyList<string> taskImagePaths, CancellationToken cancellationToken)
     {
         var reviewStage = RelayStages.All[6];    // Stage 7 — Review
         var visualStage = RelayStages.All[7];    // Stage 8 — Visual-review
@@ -37,12 +36,12 @@ public sealed partial class RelayDriver
 
         // Launch Review immediately.
         var reviewTask = RunSingleStageAsync(rootPath, runId, taskId, taskDirectory,
-            config, reviewStage, input, ledger, manifest, pinnedSwivalProfileContent, cancellationToken);
+            config, reviewStage, input, ledger, manifest, cancellationToken);
 
         // Launch triage concurrently.
         var triageTask = visionConfigured
             ? RunTriageAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger,
-                manifest, pinnedSwivalProfileContent, cancellationToken)
+                manifest, cancellationToken)
             : Task.FromResult<TriageResult?>(null);
 
         // Wait for triage first to decide routing.
@@ -59,7 +58,7 @@ public sealed partial class RelayDriver
                 renderOutput.PngPaths, renderOutput.ErrorOutput, taskImagePaths);
             var visualInvocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,
                 config, visualStage, input with { Markdown = visualInput },
-                ledger, manifest, pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+                ledger, manifest);
             visualTask = RunStageAsync(visualInvocation, visualStage, taskDirectory, cancellationToken);
         }
 
@@ -82,8 +81,7 @@ public sealed partial class RelayDriver
                 {
                     var retryResult = await RunReviewPairStageWithRetryAsync(
                         rootPath, runId, taskId, taskDirectory,
-                        config, reviewStage, input, ledger, manifest,
-                        pinnedSwivalProfileContent, reviewResult.Kill,
+                        config, reviewStage, input, ledger, manifest, reviewResult.Kill,
                         cancellationToken);
                     if (retryResult.Check != "red")
                     {
@@ -127,8 +125,7 @@ public sealed partial class RelayDriver
                 {
                     var retryResult = await RunReviewPairStageWithRetryAsync(
                         rootPath, runId, taskId, taskDirectory,
-                        config, visualStage, input, ledger, manifest,
-                        pinnedSwivalProfileContent, fastVisual.Kill,
+                        config, visualStage, input, ledger, manifest, fastVisual.Kill,
                         cancellationToken);
                     if (retryResult.Check != "red")
                     {
@@ -184,8 +181,7 @@ public sealed partial class RelayDriver
             {
                 var retryResult = await RunReviewPairStageWithRetryAsync(
                     rootPath, runId, taskId, taskDirectory,
-                    config, reviewStage, input, ledger, manifest,
-                    pinnedSwivalProfileContent, reviewResult.Kill,
+                    config, reviewStage, input, ledger, manifest, reviewResult.Kill,
                     cancellationToken);
                 if (retryResult.Check != "red")
                 {
@@ -248,8 +244,7 @@ public sealed partial class RelayDriver
             {
                 var retryResult = await RunReviewPairStageWithRetryAsync(
                     rootPath, runId, taskId, taskDirectory,
-                    config, visualStage, input, ledger, manifest,
-                    pinnedSwivalProfileContent, visualResult.Kill,
+                    config, visualStage, input, ledger, manifest, visualResult.Kill,
                     cancellationToken);
                 if (retryResult.Check != "red")
                 {

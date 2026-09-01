@@ -22,7 +22,6 @@ public sealed partial class RelayDriver
         string? lastTestOutput = null,
         string? testCommand = null,
         string? fullTestCommand = null,
-        string? pinnedSwivalProfileContent = null,
         string? verifyOutputPath = null)
     {
         var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;
@@ -46,7 +45,6 @@ public sealed partial class RelayDriver
             TaskContext: input.Context,
             TestCommand: testCommand,
             FullTestCommand: fullTestCommand,
-            PinnedSwivalProfileContent: pinnedSwivalProfileContent,
             AbsoluteCeilingMs: ceilingMs,
             VerifyOutputPath: verifyOutputPath,
             IsTurnBoosted: boosted,
@@ -58,15 +56,14 @@ public sealed partial class RelayDriver
         RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
         StringBuilder ledger, IReadOnlyList<string> manifest,
         string targetedTestCommand, bool implementationFrontLoaded,
-        TestRunResult? verifyTestResult, string pinnedSwivalProfileContent)
+        TestRunResult? verifyTestResult)
     {
         var effectiveStage = implementationFrontLoaded && stage.Number == 6
             ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
         return BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
             testCommand: stage.Number is 6 or 9 ? targetedTestCommand : null,
             fullTestCommand: stage.Number is 6 or 9 ? config.TestCommand : null,
-            lastTestOutput: verifyTestResult?.Output,
-            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+            lastTestOutput: verifyTestResult?.Output);
     }
 
     /// <summary>

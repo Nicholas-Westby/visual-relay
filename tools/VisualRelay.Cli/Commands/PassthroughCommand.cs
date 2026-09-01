@@ -15,9 +15,6 @@ public static class PassthroughCommand
         var nono = Gates.NonoGate.Require(paths.Root);
         if (nono != 0)
             return nono;
-        var swival = Gates.SwivalGate.Require(paths.Root);
-        if (swival != 0)
-            return swival;
         return ForwardToTool(paths, "VisualRelay.RunTask", args);
     }
 

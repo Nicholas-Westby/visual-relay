@@ -17,7 +17,6 @@ public sealed record StageInvocation(
     string? TaskContext = null,
     string? TestCommand = null,
     string? FullTestCommand = null,
-    string? PinnedSwivalProfileContent = null,
     int AbsoluteCeilingMs = 0,
     // Absolute path to the persisted FULL verify output (stageN-attemptM.verify-output.txt)
     // whose TAIL is in LastTestOutput. Surfaced in the prompt's ## Verify output section so

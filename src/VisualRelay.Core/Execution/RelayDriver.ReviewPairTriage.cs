@@ -9,8 +9,7 @@ public sealed partial class RelayDriver
     private async Task<TriageResult?> RunTriageAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, RelayTaskInput input, StringBuilder ledger,
-        IReadOnlyList<string> manifest, string pinnedSwivalProfileContent,
-        CancellationToken cancellationToken)
+        IReadOnlyList<string> manifest, CancellationToken cancellationToken)
     {
         var triagePrompt =
             "You are a triage agent. Decide whether a visual review of rendered output " +
@@ -24,8 +23,7 @@ public sealed partial class RelayDriver
             """End your reply with a single fenced ```json block, nothing after it, matching: { "visualReview": "needed"|"skip", "reason": string }""");
 
         var triageInvocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,
-            config, triageStage, input, ledger, manifest,
-            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+            config, triageStage, input, ledger, manifest);
         triageInvocation = triageInvocation with
         {
             Tier = "cheap",

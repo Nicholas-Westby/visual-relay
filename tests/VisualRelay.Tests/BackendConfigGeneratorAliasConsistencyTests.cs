@@ -44,19 +44,5 @@ public sealed class BackendConfigGeneratorAliasConsistencyTests
             Assert.DoesNotContain(tier, pricingKeys);
         }
 
-        // 4. Swival profile tier-name assertions (keep unchanged).
-        var swivalModelValues = BackendConfigGeneratorTestHelpers.ParseSwivalProfileModelValues(
-            SwivalProfileSession.DefaultToml);
-
-        var balancedTier = swivalModelValues["balanced"];
-        var cheapTier = swivalModelValues["cheap"];
-
-        Assert.DoesNotContain("-kimi", balancedTier, StringComparison.Ordinal);
-        Assert.DoesNotContain("-kimi", cheapTier, StringComparison.Ordinal);
-        Assert.Equal("balanced", balancedTier);
-        Assert.Equal("cheap", cheapTier);
-
-        Assert.Contains(balancedTier, tierAliases);
-        Assert.Contains(cheapTier, tierAliases);
     }
 }

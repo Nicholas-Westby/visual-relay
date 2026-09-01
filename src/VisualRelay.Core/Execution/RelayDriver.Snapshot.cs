@@ -118,8 +118,7 @@ public sealed partial class RelayDriver
             string body, JsonElement json, List<string> manifest,
             string rootPath, string runId, string taskId, string taskDirectory,
             RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
-            StringBuilder ledger, string? pinnedSwivalProfileContent,
-            string targetedTestCommand,
+            StringBuilder ledger, string targetedTestCommand,
             CancellationToken cancellationToken)
     {
         if (_options.LastStageToRun == 4) return (body, targetedTestCommand, 0, 0);
@@ -129,8 +128,7 @@ public sealed partial class RelayDriver
         if (ce is null) return (body, targetedTestCommand, 0, 0);
 
         var ri = BuildInvocation(rootPath, runId, taskId, taskDirectory,
-            config, stage, input, ledger, manifest,
-            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+            config, stage, input, ledger, manifest);
         var rr = await _dependencies.SubagentRunner.RunAsync(
             ri with { LastTestOutput = ce }, cancellationToken);
         double cd = 0; int ud = 0;

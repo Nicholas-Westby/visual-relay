@@ -43,7 +43,6 @@ public sealed partial class RelayDriver
         string? failingVerifyOutputPath,
         string? bootstrapCheckCmd,
         string? guardCmd,
-        string pinnedSwivalProfileContent,
         CancellationToken cancellationToken)
     {
         var stage = RelayStages.All[10]; // Stage 11 — Fix-verify
@@ -89,8 +88,7 @@ public sealed partial class RelayDriver
 
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
-                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
-                pinnedSwivalProfileContent: pinnedSwivalProfileContent, verifyOutputPath: failingVerifyOutputPath);
+                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand, verifyOutputPath: failingVerifyOutputPath);
             // Pin this run's escalated tier + budget; MaxSelfEscalations=0 so the inner
             // RunAsync does not also escalate (this loop owns the stage-10 run budget).
             invocation = invocation with { Tier = tier, MaxTurns = turns, AbsoluteCeilingMs = ceilingMs, MaxSelfEscalations = 0 };
@@ -265,23 +263,4 @@ public sealed partial class RelayDriver
         return System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
     }
 
-    /// <summary>
-    /// Snapshot the effective swival.toml content once at run start so task
-    /// edits to swival.toml cannot change the profile for later stages.
-    /// </summary>
-    private async Task<string> ResolvePinnedSwivalProfileContentAsync(
-        string rootPath, string taskDirectory, CancellationToken cancellationToken)
-    {
-        var pinnedProfilePath = Path.Combine(taskDirectory, "pinned-swival.toml");
-        if (_options.Resume && File.Exists(pinnedProfilePath))
-        {
-            return await File.ReadAllTextAsync(pinnedProfilePath, cancellationToken);
-        }
-        var treeProfilePath = Path.Combine(rootPath, SwivalProfileSession.FileName);
-        var content = File.Exists(treeProfilePath)
-            ? await File.ReadAllTextAsync(treeProfilePath, cancellationToken)
-            : SwivalProfileSession.DefaultToml;
-        await File.WriteAllTextAsync(pinnedProfilePath, content, cancellationToken);
-        return content;
-    }
 }

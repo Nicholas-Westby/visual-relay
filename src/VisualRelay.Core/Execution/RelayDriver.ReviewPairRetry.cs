@@ -60,8 +60,7 @@ public sealed partial class RelayDriver
     private async Task<StageRunResult> RunReviewPairStageWithRetryAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
-        StringBuilder ledger, IReadOnlyList<string> manifest,
-        string pinnedSwivalProfileContent, KillSignature? originalKill,
+        StringBuilder ledger, IReadOnlyList<string> manifest, KillSignature? originalKill,
         CancellationToken cancellationToken)
     {
         var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;
@@ -85,8 +84,7 @@ public sealed partial class RelayDriver
             fromTier, toTier, baseTurns, toTurns, cancellationToken);
 
         var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,
-            config, stage, input, ledger, manifest,
-            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+            config, stage, input, ledger, manifest);
         invocation = invocation with
         {
             Tier = toTier,
@@ -101,12 +99,10 @@ public sealed partial class RelayDriver
     private async Task<StageRunResult> RunSingleStageAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
-        StringBuilder ledger, IReadOnlyList<string> manifest,
-        string pinnedSwivalProfileContent, CancellationToken cancellationToken)
+        StringBuilder ledger, IReadOnlyList<string> manifest, CancellationToken cancellationToken)
     {
         var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,
-            config, stage, input, ledger, manifest,
-            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+            config, stage, input, ledger, manifest);
         return await RunStageAsync(invocation, stage, taskDirectory, cancellationToken);
     }
 

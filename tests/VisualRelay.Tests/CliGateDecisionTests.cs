@@ -61,33 +61,4 @@ public sealed class CliGateDecisionTests
 
         Assert.DoesNotContain("jedisct1/nono", message);
     }
-
-    // ── SwivalGate ───────────────────────────────────────────────────────
-
-    [Fact]
-    public void Swival_Present_AnyOs_Proceeds()
-    {
-        Assert.Equal(0, SwivalGate.Decide(onPath: true, isWindows: false).ExitCode);
-        Assert.Equal(0, SwivalGate.Decide(onPath: true, isWindows: true).ExitCode);
-    }
-
-    [Fact]
-    public void Swival_Missing_NonWindows_HardFails127WithTapHint()
-    {
-        var (exitCode, message) = SwivalGate.Decide(onPath: false, isWindows: false);
-
-        Assert.Equal(127, exitCode);
-        Assert.NotNull(message);
-        Assert.Contains("swival/tap/swival", message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Swival_Missing_Windows_SoftWarns_NoBrewAssumption_Proceeds()
-    {
-        var (exitCode, message) = SwivalGate.Decide(onPath: false, isWindows: true);
-
-        Assert.Equal(0, exitCode);
-        Assert.NotNull(message);
-        Assert.DoesNotContain("brew", message, StringComparison.OrdinalIgnoreCase);
-    }
 }

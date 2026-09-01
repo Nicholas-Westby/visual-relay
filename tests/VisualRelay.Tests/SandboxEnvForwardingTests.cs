@@ -4,34 +4,21 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Regression anchor for the nono "Review denied paths" launch prompt: a Python
-/// invoked under the nono (vr-guard) sandbox imports stdlib modules and CPython
-/// writes __pycache__/*.pyc back into its (denied) stdlib dir — e.g. the Homebrew
-/// python@3.14 Cellar — which raises an interactive ~50-path prompt that blocks
-/// the run. The fix sets PYTHONDONTWRITEBYTECODE=1 in BuildSandboxEnvironment,
-/// the single env seam EVERY nono-wrapped invocation shares (the swival stage in
-/// ProcessRunners.RunAsync and the verify command in SandboxedTestRunner).
-///
-/// These tests prove the value (a) is present in that shared env and (b) actually
-/// reaches a real spawned child via ProcessCapture's env-application plumbing —
-/// the exact plumbing both nono-wrapped seams use to hand the env to nono, which
-/// (Seatbelt on macOS) inherits env into its sandboxed child. vr-guard.json
-/// defines no env allowlist/scrub, so the value survives into the swival process.
+/// Proves the shared sandbox environment reaches a real spawned child through
+/// ProcessCapture's env-application plumbing — the same plumbing every
+/// nono-wrapped invocation uses to hand the env to nono, which (Seatbelt on
+/// macOS) inherits it into the sandboxed child. vr-guard.json defines no env
+/// allowlist or scrub, so the values survive.
+/// <para>
+/// This class used to anchor a Python bytecode-suppression fix: a Python run
+/// under the sandbox wrote .pyc into its denied stdlib dir and raised a blocking
+/// "Review denied paths" prompt. No Python runs inside this sandbox any more, so
+/// that variable and its test went with the subprocess. What remains is the
+/// forwarding itself, which every target's test command still depends on.
+/// </para>
 /// </summary>
 public sealed class SandboxEnvForwardingTests
 {
-    [Fact]
-    public void BuildSandboxEnvironment_SandboxEnabled_CarriesBytecodeSuppression()
-    {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        var env = SandboxedStage.BuildSandboxEnvironment(SandboxOn());
-
-        Assert.NotNull(env);
-        Assert.Equal("1", env["PYTHONDONTWRITEBYTECODE"]);
-        Assert.Equal(Path.Combine(home, ".config", "swival", "pycache"), env["PYTHONPYCACHEPREFIX"]);
-    }
-
     [Fact]
     public void BuildSandboxEnvironment_CarriesDotnetLeakReductionVars()
     {
@@ -61,7 +48,7 @@ public sealed class SandboxEnvForwardingTests
 
         var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
             "/bin/sh",
-            new[] { "-c", "printf '%s' \"$PYTHONDONTWRITEBYTECODE\"" },
+            new[] { "-c", "printf '%s' \"$MSBUILDDISABLENODEREUSE\"" },
             Path.GetTempPath(),
             TimeSpan.FromSeconds(10),
             CancellationToken.None,
