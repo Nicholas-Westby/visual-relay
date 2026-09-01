@@ -35,8 +35,11 @@ public sealed partial class FirstPartySubagentRunner
             ResolveStallWindows(_config, invocation.Tier);
         var watchdog = new AgentWatchdog(
             firstOutput, inactivity, budget, outputSilence, _timeProvider);
+        // The transcript is what the autopsy writes: a cancelled loop returns
+        // nothing, so without this a killed stage leaves no trace of how far it got.
+        var transcript = new AgentTranscriptBuffer();
         var loop = new AgentTurnLoop(
-            client, _tools, new FanOutAgentEventSink(events, watchdog), _timeProvider);
+            client, _tools, new FanOutAgentEventSink(events, watchdog, transcript), _timeProvider);
 
         var options = new AgentLoopOptions(
             Model: route.UpstreamModel,
@@ -55,11 +58,23 @@ public sealed partial class FirstPartySubagentRunner
 
         try
         {
-            return await SuperviseAsync(
+            var supervised = await SuperviseAsync(
                 watchdog,
                 token => loop.RunAsync(
                     conversation, options, new ToolContext(invocation.TargetRoot, budget), token),
                 cancellationToken).ConfigureAwait(false);
+
+            if (supervised.Kill is not { } kill) return supervised;
+
+            // A kill is the one case where the partial output is the whole story.
+            return supervised with
+            {
+                Kill = kill with
+                {
+                    AutopsyPath = AgentAutopsy.TryWrite(
+                        invocation.ReportFile, kill.Reason, transcript.Text()),
+                },
+            };
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or SocketException)
         {
