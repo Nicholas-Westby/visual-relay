@@ -282,3 +282,47 @@ gets `pytest` as its second candidate purely from a root `tests/` directory;
 `GuardCommandDetector` still enumerates a `tools/guards/*.sh` directory that was
 ported to C# and no longer exists here; and GitSim reads only the root
 `.gitignore`, so a nested one has no effect.
+
+## The A/B benchmark, and the bug it found
+
+Spec steps 37-39 ask for a paid A/B against the old path. At full scale that is
+120 runs and weeks of drains, which was not on the table. What ran instead was
+the same design at 1/10 scale: 3 seeded tasks against a small Python repo, 2
+repetitions, both arms, 12 paid runs. Each run started from the same commit with
+the working tree reset, and counted as a pass only if the repo's own test script
+came back green AND a commit had actually been made.
+
+| arm | runs | passed | 95% interval | median | mean | turns/run | tool calls/run |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| swival | 6 | 6 (100%) | 54-100% | 394s | 420s | 42.8 | 78.2 |
+| firstparty | 6 | 5 (83%) | 36-100% | 238s | 258s | 34.0 | 48.8 |
+
+The intervals overlap almost completely. Six runs an arm cannot separate a 100%
+pass rate from an 83% one, so **the honest reading is that the benchmark did not
+detect a quality difference**, not that the old path is more reliable. The
+timing gap is the part worth trusting: the first-party arm finished in roughly
+60% of the time, using about 80% of the turns and 60% of the tool calls, and
+that ordering held on every one of the three tasks independently.
+
+### The one failure was real, and worth the whole exercise
+
+The single failure was not noise. Its plan stage wrote a correct contract and was
+told `the contract is missing the required key "plan"`.
+
+`StageContractReader` had been searching BACKWARD from the last `{` in the
+answer. The last brace in a plan that describes code is very often inside a
+string value: this one said
+
+    "plan": "Add apply_all(a, b) returning {\"add\": add(a,b)} and register a case."
+
+A backward search starts in the middle of that string, and the scan from there
+has no idea it is inside one, so it lifted a fragment that parsed as valid JSON
+and was not the contract. The reader then reported a missing key against text
+that plainly had it. The run stopped after 4 of 9 stages.
+
+It now scans FORWARD once, tracking string state, and prefers the last candidate
+that both parses and satisfies the contract. Two further paid runs of the exact
+task that failed both passed, in 337s and 316s.
+
+This is the kind of defect no fixture would have produced, because writing the
+fixture requires already knowing that models put braces inside prose about code.
