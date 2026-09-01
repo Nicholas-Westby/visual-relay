@@ -60,9 +60,9 @@ limitations; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
   manifest, seal, event, report, and trace artifacts. These help keep the pipeline honest.
 - Presents a command center GUI: select your project folder, queue/archive controls,
   per-stage status, structured run logs, and stage cards that double as log filters.
-- Streams [Swival](https://swival.dev/) trace events live into the GUI as assistant text,
-  tool calls, tool results, and thinking records.
-- Estimates time and monetary cost per task and per stage from Swival reports.
+- Streams model output live into the GUI as assistant text, tool calls, tool
+  results, and thinking records, while the stage is still running.
+- Reports time and measured token cost per task and per stage.
 
 # Tests
 
@@ -95,7 +95,7 @@ The code is mostly C# and the UI is built with [Avalonia](https://avaloniaui.net
 
 ## Learn more
 
-- [docs/OPERATIONS.md](docs/OPERATIONS.md) - model backend (LiteLLM proxy lifecycle) and the nono sandbox.
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) - provider keys, model routing, and the nono sandbox.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - diagnosing the dev loop and test hangs.
 - [AGENTS.md](AGENTS.md) - contributing, the control API, and dev-only tooling.
 - [docs/DESIGN.md](docs/DESIGN.md) for the full architecture and the 12-stage mapping.

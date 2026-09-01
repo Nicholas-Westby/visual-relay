@@ -1,8 +1,7 @@
 # Relay Artifacts Reference
 
 This is the authoritative list of every file Visual Relay reads or writes under a
-target project's `.relay/` directory, plus the Swival-owned files that live
-alongside them and the `logSources` contract. Use it to identify any file you
+target project's `.relay/` directory, plus the `logSources` contract. Use it to identify any file you
 find in a target's `.relay/<task>/` folder.
 
 "Written-by / read-by" tells you who owns the file. "Committed?" tells you
@@ -19,18 +18,11 @@ gitignored in generated samples).
 | `.relay/<task>/ledger.md` | Running record of each stage (one section per stage). | Written by Visual Relay. | Yes |
 | `.relay/<task>/<task>.seals` | The provenance hash chain. The `seal` term is stamped into every task commit as the `Relay-Seal:` trailer. | Written by Visual Relay. | Yes |
 | `.relay/<task>/stage{n}-attempt{m}.input.json` | Per-attempt stage input (system prompt, task input, metadata). | Written by Visual Relay; read by Visual Relay (UI). | Yes (force-added, final attempt only) |
-| `.relay/<task>/stage{n}-attempt{m}.report.json` | Per-attempt Swival report (outcome, cost, `error_message`). | Written by Swival; read by Visual Relay (cost/outcome). | Yes (force-added, final attempt only) |
-| `.relay/<task>/stage{n}-attempt{m}/<uuid>.jsonl` | Swival trace session for one attempt. The UUID filename is chosen by Swival. | Written by Swival; read by Visual Relay's trace pane. | No (gitignored) |
+| `.relay/<task>/stage{n}-attempt{m}.report.json` | Per-attempt stage report (outcome, measured usage, served model, `error_message`). | Written by Visual Relay; read by Visual Relay (cost/outcome). | Yes (force-added, final attempt only) |
+| `.relay/<task>/stage{n}-attempt{m}/<uuid>.jsonl` | Trace session for one attempt. The UUID filename is kept from the format the archived corpus uses. | Written by Visual Relay; read by Visual Relay's trace pane. | No (gitignored) |
 | `.relay/<task>/run.log` | Visual Relay's own durable, human-readable run log (one line per event). Distinct from the target's `logs/app.log`. | Written by Visual Relay. | No (gitignored) |
 | `.relay/<task>/NEEDS-REVIEW` | Control marker: a runner crash or gate failure flagged this task for review so drains do not loop on it. | Written by Visual Relay. | No |
 | `.relay/DRAIN-HALTED` | Control marker: repeated commit-gate rejections halted the drain. | Written by Visual Relay. | No |
-
-## Swival-owned files (cannot rename — documentation only)
-
-| Path | What it is | Written by / read by | Committed? |
-| --- | --- | --- | --- |
-| `swival.toml` | Swival profile config. The exact name is required by Swival. | Owned by Swival. | No |
-| `.swival/` | Swival state directory. The exact name is required by Swival. | Owned by Swival. | No (gitignored) |
 
 ## The `logSources` contract
 
@@ -51,12 +43,11 @@ meaning or break tooling:
 - **`ledger.md`** — already self-describing; it is a running ledger of stages.
 - **`logs/app.log`** — the target app's own log, surfaced via `logSources`. It
   is the target's file, not Visual Relay's, so we do not touch it.
-- **`swival.toml` / `.swival/`** — exact names required by Swival.
 - **`NEEDS-REVIEW` / `DRAIN-HALTED`** — self-describing control markers.
-- **`stage{n}-attempt{m}/<uuid>.jsonl`** — the UUID trace filenames are fixed by
-  Swival.
+- **`stage{n}-attempt{m}/<uuid>.jsonl`** — the UUID trace filenames are kept so
+  the archived corpus and its parsers still read.
 
 The one bare, extensionless name (`manifest`) was the only genuinely confusing
-artifact, so it is now `manifest.txt`. The Swival stage-4 JSON contract key
+artifact, so it is now `manifest.txt`. The stage-4 JSON contract key
 `"manifest"` (`{ "plan": string, "manifest": string[] }`) is a separate thing
 and is unchanged.

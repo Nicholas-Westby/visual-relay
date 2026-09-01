@@ -47,16 +47,14 @@ dev loop.
 
 ## Which agent runs a stage
 
-Two agents can run a stage, chosen by the `VR_AGENT` environment variable:
+One does: the in-process turn loop, built by `SubagentRunnerFactory`. It calls
+providers directly over their OpenAI-compatible endpoints, with no proxy and no
+subprocess, and streams model output into the Activity column while the stage is
+still running.
 
-- unset (default) — the Swival subprocess behind the local LiteLLM proxy.
-- `firstparty` — the in-process turn loop, calling providers directly with no
-  proxy and no `swival` binary.
-
-Both read the same config and write the same `report.json`. The first-party loop
-streams model output into the Activity column while a stage runs; the subprocess
-runner can only fill it in once the stage has exited. Launch with
-`VR_AGENT=firstparty ./visual-relay launch` to compare them on the same task.
+There used to be a `VR_AGENT` selector choosing between this and a `swival`
+subprocess behind a local LiteLLM proxy. Both the subprocess and the proxy were
+removed on 2026-09-01, so the variable now selects nothing and is ignored.
 
 ## Driving the running app (control API — PREFERRED over the CLI)
 
@@ -64,7 +62,7 @@ When the desktop app is running it exposes a **loopback-only HTTP control API** 
 can drive it from the shell exactly as a user would by clicking — and fetch screenshots
 of the live window. **Prefer this over the dev-only `run-task` CLI**: it performs the
 real UI actions (honoring each button's enabled/disabled state), shares the app's single
-backend/run lifecycle, and gives visual observability for troubleshooting.
+run lifecycle, and gives visual observability for troubleshooting.
 
 - Bound to `http://127.0.0.1:8765/` (loopback only — not remotely reachable). Override the
   port with `VR_CONTROL_PORT`, disable entirely with `VR_CONTROL_DISABLE=1`. If
@@ -76,7 +74,7 @@ Endpoints:
 - `GET /` — HTML index page documenting the API surface (routes and commands).
 - `GET /health` — liveness, `{ "status": "ok", "app": "Visual Relay" }`.
 - `GET /state` — JSON snapshot: `rootPath`, `isBusy`, `pauseRequested`, `statusText`,
-  `backend`, `selectedTask`, `tasks[]`, `stages[]`, and a `commands` map giving each
+  `selectedTask`, `tasks[]`, `stages[]`, and a `commands` map giving each
   command's `enabled` flag (mirrors which buttons are clickable).
 - `POST /command/{name}` — invokes the same command the button binds. A **disabled**
   command is refused with `409` (never executed); unknown names return `404`. Async run
@@ -86,7 +84,7 @@ Endpoints:
   and the pre-commit hook; the placeholder is upgraded to the real test command
   automatically once the project gains a toolchain), `run-all`, `run-selected`,
   `resume`, `refresh`, `pause-toggle`, `archive-toggle`,
-  `new-task`, `follow-running`, `start-backend`, `edit`, plus property actions
+  `new-task`, `follow-running`, `edit`, plus property actions
   `open-folder` (body `{"path":"<dir>"}` — the programmatic Browse: point the app at a
   project), `select-task` (body `{"id":"<taskId>"}`),
   `boost-turns` (body `{"value":true|false}`).

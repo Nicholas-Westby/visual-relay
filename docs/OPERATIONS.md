@@ -1,64 +1,47 @@
 # Operations
 
-Operational reference for Visual Relay's model backend and sandbox. For a first
+Operational reference for Visual Relay's model routing and sandbox. For a first
 encounter start with the [README](../README.md); for architecture see
 [docs/DESIGN.md](DESIGN.md).
 
 ## Model Backend
 
-Every Visual Relay profile targets a local OpenAI-compatible proxy (LiteLLM) at `http://127.0.0.1:4000`. Visual Relay owns this proxy's lifecycle, so `./visual-relay launch` auto-starts it before opening the app: the launch hook runs the `VisualRelay.Backend start` tool best-effort, and the app's GUI shares the same C# lifecycle for its one-click recovery. When the backend is already healthy this is a fast no-op, and if it cannot start the app still launches and the in-app pre-flight probe surfaces the down backend.
+Visual Relay calls the providers directly, in process, over their
+OpenAI-compatible `/chat/completions` endpoints. There is nothing to start and
+no local service: `./visual-relay launch` opens the app and that is the whole
+setup. The only thing a stage needs is a provider key.
 
-On first start the tool provisions LiteLLM itself — there is no manual install step. It uses [`uv`](https://docs.astral.sh/uv/) to create a virtualenv at `$XDG_DATA_HOME/visual-relay/backend-venv` (default `~/.local/share/visual-relay/backend-venv`) pinned to Python 3.13 (LiteLLM's `uvloop` crashes on 3.14+) and installs `litellm[proxy]` into it; `uv` fetches the pinned Python automatically. The venv lives under the user's XDG data home (never the repo tree, so host and VM each own their own) and is reused on later starts, so only the first launch pays the install cost. The single prerequisite is `uv` on `PATH` (`curl -LsSf https://astral.sh/uv/install.sh | sh`); if a `litellm` is already on `PATH` and `uv` is absent, the tool falls back to that.
-
-Manage the proxy directly with:
-
-```bash
-VisualRelay.Backend start    # idempotent; brings the proxy up on 127.0.0.1:4000 and waits for /health/readiness
-VisualRelay.Backend status   # reports up/down
-VisualRelay.Backend stop     # SIGTERM then SIGKILL, and removes the PID file
-```
-
-(From a source checkout: `VISUAL_RELAY_SCRIPT_DIR=$PWD dotnet run --project tools/VisualRelay.Backend -- {start|stop|status}`. That variable is how `start` finds the config template — the `./visual-relay` launcher exports it, a bare `dotnet run` does not, and without it litellm boots with an empty model list and 400s every request while still reporting ready.)
-
-`start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under `$XDG_DATA_HOME/visual-relay/scratch/` (`litellm.pid`, `litellm.log`).
-
-### Choosing the agent
-
-Two agents can run a stage, selected by the `VR_AGENT` environment variable:
-
-| Value | Agent |
-| --- | --- |
-| unset (default) | The Swival subprocess behind the local LiteLLM proxy. |
-| `firstparty` | The in-process turn loop, calling providers directly. |
-
-The first-party loop needs no proxy and no `swival` binary. It resolves provider
-keys the same way everything else does (process environment first, then the
-user-level `.env`), routes each tier's chain to the providers itself, and streams
+`SubagentRunnerFactory` builds the agent that runs a stage. It resolves the
+tier's model chain, calls the first provider whose key is present, and streams
 what the model produces into the Activity column as it arrives rather than when
 the stage ends.
 
-Both read the same configuration and write the same `report.json`, so a run under
-either is directly comparable with the archived corpus.
+Until 2026-09-01 this worked differently: each stage was a `swival` subprocess
+talking to a LiteLLM proxy that Visual Relay started on `127.0.0.1:4000` and
+provisioned into a `uv`-built Python venv. The proxy, the venv, the subprocess
+and the `uv` dependency have all been removed. If you have an old
+`~/.local/share/visual-relay/backend-venv` or a stray `litellm.pid`, nothing
+reads them any more and they are safe to delete.
 
 ### Provider keys
 
-The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap`, `balanced`, `frontier`, `vision`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.3-flash`, `hf-glm-5.3-flash`, `fallback`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`.
+`BackendConfigGenerator` defines the model aliases each tier resolves to (`cheap`, `balanced`, `frontier`, `vision`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.3-flash`, `hf-glm-5.3-flash`, `fallback`), and `ProviderRoutes` maps each alias to its endpoint, upstream model id and timeouts. No secrets are committed: every key is read from the environment.
 
 The **`fallback`** tier is the always-available floor: it resolves to `hf-qwen3-coder-next` (Hugging Face Novita Qwen3-Coder-480B, ~$0.38/$1.55 per 1M tokens in/out) and requires only `HF_TOKEN`. Every other tier can fall through to it when its provider keys are absent. Override the default model via `tierProfiles.fallback` in `.relay/config.json`.
 
 See [`.env.example`](../.env.example) for the full provider key set, both key locations, and the resolution precedence (process env > user-level `~/.config/visual-relay/.env`). The in-app key panel reads and writes the user-level path.
 
-`VisualRelay.Backend start` loads keys from the user-level file automatically. Before launching LiteLLM it **generates a key-aware config** at `$XDG_DATA_HOME/visual-relay/scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. Config generation is bounded by a timeout; on timeout or any failure it falls back to the static template so a wedged generator never blocks startup.
+Key resolution happens per stage: each tier's chain is filtered to the models whose provider key is actually present, so a missing key skips that model rather than spending an auth-error retry on it. A tier with no usable model fails the stage immediately and says which key would fix it.
 
 ## Sandbox
 
-Every Swival subagent runs under **nono** OS-level sandboxing by default (Seatbelt on macOS,
+Every agent command runs under **nono** OS-level sandboxing by default (Seatbelt on macOS,
 Landlock on Linux). The sandbox confines writes and deletes to the target workspace while
 leaving reads, network, and all tools — including Playwright/Chromium — unrestricted. This is
 **accident containment**, not defense against a malicious agent: a stray `rm -rf` or `mv`
 outside the workspace is blocked by the OS.
 
-The sandbox is **always on** — there is no opt-out. Every Swival subagent and every
+The sandbox is **always on** — there is no opt-out. Every agent command and every
 verification command runs under nono with the `vr-guard` profile, and `nono` is a hard,
 always-required dependency.
 
@@ -81,6 +64,6 @@ For exotic toolchains whose cache paths the baseline profile does not cover, add
 }
 ```
 
-Each entry is appended as `-a <path>` to both the Swival and verification nono invocations.
+Each entry is appended as `-a <path>` to both the agent and verification nono invocations.
 Entries are validated at config load: `..` (path traversal) is rejected; `~` and `$HOME`
 are expanded; and each path must resolve under `$HOME` or the workspace root.

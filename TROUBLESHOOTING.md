@@ -53,30 +53,21 @@ Serial mode appends `-- xUnit.ParallelizeTestCollections=false` and raises the w
 timeout to 1800s (unless `VISUAL_RELAY_TEST_TIMEOUT` is set). The stderr output prints a
 `serial mode:` banner so it is obvious in saved logs.
 
-## Backend state lives under `$XDG_DATA_HOME/visual-relay/`
+## Leftover backend state under `$XDG_DATA_HOME/visual-relay/`
 
-The model backend (LiteLLM proxy) keeps all per-machine state in your user data
-directory, never in the repo tree. This prevents host/VM venv collisions when the
-working copy is shared.
+Until 2026-09-01 a LiteLLM proxy ran behind every stage, provisioned into a
+`uv`-built Python venv under your user data directory. The proxy, the venv and
+the `uv` dependency are gone: providers are called directly, in process.
+
+Nothing reads these any more, so delete them if you want the space back:
 
 | What | Location |
 |------|----------|
 | LiteLLM venv | `$XDG_DATA_HOME/visual-relay/backend-venv/` |
-| Scratch (pidfile, log, generated config) | `$XDG_DATA_HOME/visual-relay/scratch/` |
-| LiteLLM log | `$XDG_DATA_HOME/visual-relay/scratch/litellm.log` |
-| Pidfile | `$XDG_DATA_HOME/visual-relay/scratch/litellm.pid` |
+| Pidfile, log, generated config | `$XDG_DATA_HOME/visual-relay/scratch/` |
 
-`XDG_DATA_HOME` defaults to `~/.local/share` if unset, so typical paths are
-`~/.local/share/visual-relay/backend-venv/` and
-`~/.local/share/visual-relay/scratch/`.
-
-The venv is a **disposable cache** — you can delete it at any time. The next
-`start` rebuilds it from pinned inputs. If a venv becomes broken (e.g. its Python
-interpreter path goes stale after a uv update), the launch detects this and
-rebuilds automatically.
-
-Legacy repo-local state (`tools/backend/.venv/` and `.relay-scratch/`) is cleaned
-up on first start by the new code.
+`XDG_DATA_HOME` defaults to `~/.local/share` if unset. Settings and sandbox
+policy live elsewhere and are still in use — remove only the two paths above.
 
 ## Windows
 
@@ -86,7 +77,6 @@ standard Windows folders (XDG/`HOME` still win when explicitly set):
 | What | Location |
 |------|----------|
 | UI state, settings (`.env`), sandbox policy | `%APPDATA%\visual-relay\` |
-| LiteLLM venv, scratch (pidfile, log) | `%LOCALAPPDATA%\visual-relay\` |
 | Provisioned .NET SDK (when the launcher installs it) | `%LOCALAPPDATA%\visual-relay\dotnet\` |
 
 **`.\visual-relay` is blocked / "running scripts is disabled".** The PowerShell execution
@@ -102,7 +92,7 @@ PATH for that session only (no global machine change). Re-run through `.\visual-
 (MXC); when `wxc-exec` is not provisioned and no opt-in is set, execution is blocked rather
 than run uncontained. Run `visual-relay provision-mxc` to download and install the pinned,
 Microsoft-signed `wxc-exec` runtime into `%LOCALAPPDATA%\visual-relay\mxc\` (a no-op if it is
-already present); set `VR_WINDOWS_SANDBOX=builtin` for swival's degraded sandbox; or run
+already present); set `VR_WINDOWS_SANDBOX=builtin` for the degraded built-in sandbox; or run
 execution inside WSL2 with `nono`. Inspection (queue, logs, traces, settings) works without any
 sandbox.
 

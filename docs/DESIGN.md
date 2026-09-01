@@ -29,7 +29,7 @@ The original Relay pipeline is represented as stage definitions:
 11. Fix-verify
 12. Commit
 
-Each stage carries its tier, file access scope, command scope, prompt, and JSON contract. The UI shows stage progress and the runner uses those definitions to build prompts for real Swival calls or mocked tests.
+Each stage carries its tier, file access scope, command scope, prompt, and JSON contract. The UI shows stage progress and the runner uses those definitions to build prompts for real model calls or mocked tests.
 
 ## GUI Views
 - Root bar: selected repository, browse button, refresh button, install/config status.
@@ -42,12 +42,9 @@ Each stage carries its tier, file access scope, command scope, prompt, and JSON 
 ## Execution Model
 Runs are serialized. A `RelayQueueController` owns the in-memory queue order, selected task, run state, pause request, and boundary decisions. A `RelayDriver` owns one task's staged execution and emits structured events. Reliable simulated runners back the tests.
 
-Which agent runs a stage is chosen by `SubagentRunnerFactory`, and there are two:
+A stage is run by the in-process agent loop, built by `SubagentRunnerFactory`. It calls the providers directly over their OpenAI-compatible endpoints, with no proxy and no subprocess, and publishes token deltas, tool calls and interventions as they happen — so the LLM command pane populates *while the stage is running*.
 
-- **The subprocess runner (default).** Invokes Swival through a C# runner and generates a temporary local proxy profile when needed. It reads Swival's JSONL transcript, but that transcript is written *at process exit*: measured across 957 archived stages, 99.96% of agent wall time carries no live model output at all, so the LLM command pane stays empty for the duration of every stage and fills in only once the stage ends.
-- **The first-party loop** (`VR_AGENT=firstparty`). Runs the turn loop in this process and calls the providers directly, with no proxy. It publishes token deltas, tool calls and interventions as they happen, so the LLM command pane populates *while the stage is running*.
-
-The two are selectable so they can be compared on real drains before either is removed.
+That last part is new. Until 2026-09-01 a stage ran as a Swival subprocess whose JSONL transcript was written *at process exit*: measured across 957 archived stages, 99.96% of agent wall time carried no live model output at all, so the pane stayed empty for the whole stage and filled in only once it ended. The subprocess and the LiteLLM proxy behind it have been removed.
 
 ## Safety
 - The app never runs two Relay tasks at once.
@@ -59,4 +56,4 @@ The two are selectable so they can be compared on real drains before either is r
 - Repeated commit-gate rejections halt drain with `.relay/DRAIN-HALTED`.
 
 ## Artifacts
-Every file Visual Relay reads or writes under a target's `.relay/`, the Swival-owned files, and the `logSources` contract are catalogued in [relay-artifacts.md](relay-artifacts.md): what each file is, who writes/reads it, and whether it is committed.
+Every file Visual Relay reads or writes under a target's `.relay/`, and the `logSources` contract, are catalogued in [relay-artifacts.md](relay-artifacts.md): what each file is, who writes/reads it, and whether it is committed.
