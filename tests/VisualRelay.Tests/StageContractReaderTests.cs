@@ -88,6 +88,29 @@ public sealed class StageContractReaderTests
         Assert.True(result.Succeeded);
     }
 
+    /// <summary>
+    /// A brace span in prose balances perfectly without being JSON. The walk
+    /// must skip it and keep looking, not stop and report a parse error against
+    /// the prose while the real contract sits just above it. This came off a
+    /// live run: a diagnose stage wrote a sentence containing braces after its
+    /// contract block and the whole stage was flagged.
+    /// </summary>
+    [Fact]
+    public void BalancedProseAfterTheContract_IsSkipped()
+    {
+        const string answer = """
+            {"evidence":"e","excerpts":["x"],"repro":"r"}
+
+            Note that the helper returns {file, line} for each hit.
+            """;
+
+        var result = StageContractReader.Read(
+            answer, """matching: { "evidence": string, "excerpts": string[], "repro": string }""");
+
+        Assert.True(result.Succeeded, result.Error);
+        Assert.Contains("evidence", result.Json!, StringComparison.Ordinal);
+    }
+
     /// <summary>A missing required key is reported by name.</summary>
     [Fact]
     public void AMissingRequiredKey_IsReportedByName()

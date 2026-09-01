@@ -93,20 +93,39 @@ public static class StageContractReader
     }
 
     /// <summary>
-    /// The last JSON object in the answer. Walking from the end matters: the
-    /// contract is the last thing the model writes, and an earlier object may
-    /// appear inside prose or an example.
+    /// The last JSON object in the answer that actually parses.
+    /// <para>
+    /// Both halves matter. Walking from the END finds the contract, which is the
+    /// last thing the model writes. Requiring the candidate to PARSE is what
+    /// stops a brace in prose from winning: a sentence like "returns {file, line}"
+    /// balances perfectly and is not JSON, and accepting it reported a parse
+    /// error against prose instead of finding the contract sitting just above it.
+    /// </para>
     /// </summary>
     private static string? ExtractObject(string answer)
     {
         for (var start = answer.LastIndexOf('{'); start >= 0; start = answer.LastIndexOf('{', start - 1))
         {
             var candidate = MatchObject(answer, start);
-            if (candidate is not null) return candidate;
+            if (candidate is not null && ParsesAsObject(candidate)) return candidate;
             if (start == 0) break;
         }
 
         return null;
+    }
+
+    /// <summary>Whether a candidate is a JSON object, not merely balanced text.</summary>
+    private static bool ParsesAsObject(string candidate)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(candidate);
+            return document.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Scans a balanced object from an opening brace, string-aware.</summary>

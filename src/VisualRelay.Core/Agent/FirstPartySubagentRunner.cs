@@ -26,7 +26,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
 {
     private readonly IProviderTransport _transport;
     private readonly RelayConfig _config;
-    private readonly IEnvironmentAccessor _environment;
+    private readonly ProviderKeyResolver _keys;
     private readonly Func<StageInvocation, IAgentEventSink> _events;
     private readonly IReadOnlyList<IAgentTool> _tools;
     private readonly TimeProvider _timeProvider;
@@ -35,7 +35,10 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     /// <summary>Creates a runner.</summary>
     /// <param name="transport">The provider transport to send through.</param>
     /// <param name="config">The repository's relay configuration.</param>
-    /// <param name="environment">Where provider keys are read from.</param>
+    /// <param name="environment">
+    /// The process environment. Keys are resolved through it AND through the
+    /// user-level dotenv, because that is where the key panel writes them.
+    /// </param>
     /// <param name="events">
     /// Builds the event sink for a stage. It is per-invocation because the sink
     /// labels each event with the stage it belongs to, and the stage is not
@@ -59,7 +62,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
         _retryBackoffBase = retryBackoffBase;
         _transport = transport;
         _config = config;
-        _environment = environment;
+        _keys = new ProviderKeyResolver(environment);
         _events = events;
         _tools = tools ?? [];
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -117,9 +120,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     /// </summary>
     private List<ProviderRoute> ResolveChain(string tier)
     {
-        var present = BackendConfigGenerator.ProviderKeyNames
-            .Where(name => !string.IsNullOrWhiteSpace(_environment.GetEnvironmentVariable(name)))
-            .ToHashSet(StringComparer.Ordinal);
+        var present = _keys.PresentKeys();
 
         var chains = BackendConfigGenerator.ResolveChains(present, _config.TierModelOverrides);
         if (!chains.TryGetValue(tier, out var models)) return [];

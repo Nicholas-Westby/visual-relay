@@ -20,7 +20,7 @@ public sealed partial class FirstPartySubagentRunner
         IAgentEventSink events,
         CancellationToken cancellationToken)
     {
-        var apiKey = _environment.GetEnvironmentVariable(route.ApiKeyEnvVar) ?? string.Empty;
+        var apiKey = _keys.Resolve(route.ApiKeyEnvVar) ?? string.Empty;
         var client = new ChatCompletionClient(_transport, route.Timeouts, _timeProvider);
         var loop = new AgentTurnLoop(client, _tools, events, _timeProvider);
 
