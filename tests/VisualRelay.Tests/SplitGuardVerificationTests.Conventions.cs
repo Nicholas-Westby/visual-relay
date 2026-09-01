@@ -143,7 +143,7 @@ public sealed partial class SplitGuardVerificationTests
         Assert.Empty(violations);
     }
 
-    /// <summary>After the split the shared helpers must live in StageTestHelpers.cs, not duplicated across Swival* test files.</summary>
+    /// <summary>After the split the shared helpers must live in StageTestHelpers.cs, not duplicated across the stage test files.</summary>
     [Fact]
     public void StageTestHelpers_ExistsAndContainsSharedMethods()
     {
@@ -169,19 +169,19 @@ public sealed partial class SplitGuardVerificationTests
         Assert.DoesNotContain("class TransientGitShim", File.ReadAllText(gitPath), StringComparison.Ordinal);
     }
 
-    /// <summary>After consolidation, private helpers must not appear as method definitions in individual Swival* files.</summary>
+    /// <summary>After consolidation, private helpers must not appear as method definitions in individual stage test files.</summary>
     [Fact]
     public void SandboxedStageTestFiles_DoNotContainDuplicatedPrivateHelpers()
     {
-        // The Swival runner's own test families went with the runner. What is
-        // left are the tests of the stage support that outlived it.
-        string[] swivalFiles =
+        // The subprocess runner's own test families went with the runner. What
+        // is left are the tests of the stage support that outlived it.
+        string[] stageFiles =
         [
             "SandboxedStageSandboxTests.cs",
             "SandboxedStageManifestExistenceTests.cs",
         ];
 
-        foreach (var fileName in swivalFiles)
+        foreach (var fileName in stageFiles)
         {
             var filePath = Path.Combine(TestsDir, fileName);
             Assert.True(File.Exists(filePath), $"Missing: {fileName}");

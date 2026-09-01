@@ -15,7 +15,7 @@ namespace VisualRelay.Tests;
 /// task kept showing the prior run's failure.
 ///
 /// Drives the exact drain lifecycle seam (<c>CreateDrainLifecycleCallbacks</c>)
-/// rather than a real swival/relay run, so no process is spawned.
+/// rather than a real relay run, so no process is spawned.
 /// </summary>
 [Collection("Headless")]
 public sealed class TaskDetailErrorRefreshTests

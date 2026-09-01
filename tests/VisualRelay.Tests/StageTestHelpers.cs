@@ -3,8 +3,8 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Shared helpers for tests that drive a real command on disk.
 /// <para>
-/// These were consolidated out of six duplicated copies in the Swival runner's
-/// test files. The runner is gone; writing an executable fixture is not about
+/// These were consolidated out of six duplicated copies in the subprocess
+/// runner's test files. It is gone; writing an executable fixture is not about
 /// it, and several surviving tests still need one.
 /// </para>
 /// </summary>

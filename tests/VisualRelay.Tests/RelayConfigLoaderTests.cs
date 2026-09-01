@@ -155,11 +155,9 @@ public sealed partial class RelayConfigLoaderTests
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
 
         // And the sandbox is still effectively on: nono is reported missing on a
-        // PATH that lacks it (swival present so only nono is flagged), proving the
-        // stale opt-out does not make nono optional.
+        // PATH that lacks it, proving the stale opt-out does not make nono optional.
         var stubBin = Path.Combine(repo.Root, "bin");
         Directory.CreateDirectory(stubBin);
-        await File.WriteAllTextAsync(Path.Combine(stubBin, "swival"), "#!/bin/sh\nexit 0\n");
         var missing = SandboxedStage.MissingRequiredTools(result.Config, pathValue: stubBin);
         Assert.Contains("nono", missing);
     }

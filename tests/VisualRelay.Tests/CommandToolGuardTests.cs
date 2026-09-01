@@ -7,10 +7,10 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// The command guard now runs IN-PROCESS, on every command tool.
 ///
-/// <para>It used to be an external binary swival exec'd through
-/// <c>--command-middleware</c>, wired only when <c>.githooks/command-guard</c> exists
+/// <para>It used to be an external binary the subprocess agent exec'd through its
+/// command-middleware hook, wired only when <c>.githooks/command-guard</c> exists
 /// in the target repository — a file Visual Relay never provisions, so every repository
-/// but this one ran unguarded, and swival's <c>python</c> tool skipped the middleware
+/// but this one ran unguarded, and that agent's <c>python</c> tool skipped the middleware
 /// outright (89 uninspected calls in this repo's history). Calling the decider directly
 /// closes both holes. The policy itself is unchanged: <c>--no-verify</c> always
 /// stripped, <c>-n</c> and a combined short flag's <c>n</c> stripped only inside a
@@ -68,7 +68,7 @@ public sealed class CommandToolGuardTests
         Assert.Contains("removed git hook-bypass flags", result.Content, StringComparison.Ordinal);
     }
 
-    /// <summary>The interpreter that swival's python tool used to bypass entirely is inspected like anything else — a commit chained onto it is still stripped.</summary>
+    /// <summary>The interpreter the old python tool used to bypass entirely is inspected like anything else — a commit chained onto it is still stripped.</summary>
     [Fact]
     public async Task RunShellCommand_InspectsCommandsTheOldPythonToolBypassed()
     {

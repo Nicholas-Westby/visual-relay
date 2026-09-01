@@ -6,8 +6,8 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Guards that <see cref="ProcessCapture"/> strips VR's leaked nix apple-sdk env
 /// (DEVELOPER_DIR/SDKROOT, exported by <c>nix develop</c> for VR's own .NET build)
-/// from spawned child processes. Without this, swival (which runs <c>git</c> inside
-/// nono) and the verify test command invoke <c>/usr/bin/git</c> — the macOS xcrun
+/// from spawned child processes. Without this, an agent command (which runs <c>git</c>
+/// inside nono) and the verify test command invoke <c>/usr/bin/git</c> — the macOS xcrun
 /// shim — with a nix-store DEVELOPER_DIR, which has no Command Line Tools, popping
 /// the "install the command line developer tools" dialog mid-run.
 /// </summary>

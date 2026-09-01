@@ -57,7 +57,7 @@ internal sealed class RewriteFakeRunner : ISubagentRunner
 /// </summary>
 internal sealed class RewriteDiagnosticFailureRunner : ISubagentRunner
 {
-    public const string DiagnosticContents = "swival exit 1\nAuthenticationError: 401\n";
+    public const string DiagnosticContents = "provider returned HTTP 401 with an empty body\n";
 
     public string DiagnosticRelativePath { get; private set; } = string.Empty;
 
@@ -71,7 +71,7 @@ internal sealed class RewriteDiagnosticFailureRunner : ISubagentRunner
         File.WriteAllText(diagnosticPath, DiagnosticContents);
         DiagnosticRelativePath = Path.GetRelativePath(invocation.TargetRoot, diagnosticPath);
 
-        var error = $"swival exit 1: model call failed — AuthenticationError: 401 " +
+        var error = "provider returned HTTP 401 with an empty body " +
             $"(full output: {diagnosticPath})";
         return Task.FromResult(new SubagentResult(string.Empty, null, false, error));
     }

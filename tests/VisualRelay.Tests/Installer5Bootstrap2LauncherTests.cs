@@ -5,9 +5,9 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Tests for bootstrap-2: the bash launcher re-enters <c>nix develop</c> exactly
 /// once (the reentry marker prevents a loop), execs the C# CLI otherwise, and the
-/// prerequisite gates that hard-fail on a missing nono/swival now live in the CLI
-/// (covered by <c>CliNonoGateTests</c>/<c>CliSwivalGateTests</c>). The sandbox is
-/// always on with no opt-out, so the launcher reads no bypass key.
+/// prerequisite gate that hard-fails on a missing nono now lives in the CLI
+/// (covered by <c>CliNonoGateTests</c>). The sandbox is always on with no
+/// opt-out, so the launcher reads no bypass key.
 /// </summary>
 public sealed class Installer5Bootstrap2LauncherTests
 {

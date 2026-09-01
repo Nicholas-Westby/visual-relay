@@ -151,7 +151,7 @@ internal sealed class FlagAtStageSubagentRunner(int flagAtStage, ISubagentRunner
         }
 
         // Create the trace directory so RelayAttempt.Next sees this attempt
-        // (matching real Swival behavior where trace dirs exist even for failures).
+        // (matching the real runner, where trace dirs exist even for failures).
         Directory.CreateDirectory(invocation.TraceDirectory);
         return new SubagentResult(
             RawText: string.Empty,
@@ -256,7 +256,7 @@ internal sealed class KillSubagentRunner(int killAtStage) : ISubagentRunner
             var autopsyPath = Path.Combine(traceDirParent, $"stage{killAtStage}-attempt1.killed-output.txt");
             return Task.FromResult(new SubagentResult(
                 RawText: string.Empty, Json: null, IsValid: false,
-                Error: "swival timed out after 55m 00s absolute ceiling. Last signal: cpu, silence: 52373ms.",
+                Error: "the stage stalled: the stage hit its absolute ceiling",
                 HardAbort: true,
                 Kill: new KillSignature("absolute_ceiling", "cpu", 52373, autopsyPath)));
         }
@@ -289,7 +289,7 @@ internal sealed class TwoPhaseKillSubagentRunner(int killAtStage) : ISubagentRun
                 var autopsyPath = Path.Combine(traceDirParent, $"stage{killAtStage}-attempt1.killed-output.txt");
                 return new SubagentResult(
                     RawText: string.Empty, Json: null, IsValid: false,
-                    Error: "swival timed out after 55m 00s absolute ceiling. Last signal: cpu, silence: 52373ms.",
+                    Error: "the stage stalled: the stage hit its absolute ceiling",
                     HardAbort: true,
                     Kill: new KillSignature("absolute_ceiling", "cpu", 52373, autopsyPath));
             }

@@ -252,12 +252,6 @@ public sealed partial class Installer5LauncherTests
             exit 0
             X
 
-            # Stub swival: hard-required tool, must be present for run-task to proceed
-            cat > "$STUB_DIR/swival" << 'X' && chmod +x "$STUB_DIR/swival"
-            #!/bin/bash
-            exit 0
-            X
-
             # Minimal .relay/config.json (the CLI's nono gate is stubbed out here —
             # dotnet is a stub, so this bash-layer test never reaches the real gate)
             mkdir -p "$TEST_DIR/.relay"

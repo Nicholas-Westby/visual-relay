@@ -35,7 +35,7 @@ public sealed partial class MainWindowViewModelFixTaskTests
     /// status.json with a Flagged stage entry.
     /// </summary>
     private static async Task WriteFlaggedRelayDataAsync(
-        string root, string taskId, string reason = "swival timed out", int stage = 6)
+        string root, string taskId, string reason = "the stage stalled", int stage = 6)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);
         Directory.CreateDirectory(taskDirectory);
@@ -243,7 +243,7 @@ public sealed partial class MainWindowViewModelFixTaskTests
             // Write NEEDS-REVIEW with a flag reason.
             await File.WriteAllTextAsync(
                 Path.Combine(relayDir, "NEEDS-REVIEW"),
-                "swival timed out after 3 retries\nstage 10\n");
+                "the stage stalled after 3 retries\nstage 10\n");
 
             // Write one verify-output.txt.
             await File.WriteAllTextAsync(
@@ -268,7 +268,7 @@ public sealed partial class MainWindowViewModelFixTaskTests
             var prompt = fake.LastInvocation!.TaskInput;
 
             // Prompt should contain evidence from NEEDS-REVIEW.
-            Assert.Contains("swival timed out", prompt, StringComparison.Ordinal);
+            Assert.Contains("the stage stalled", prompt, StringComparison.Ordinal);
             // Prompt should contain the verify-output evidence.
             Assert.Contains("guard crash", prompt, StringComparison.Ordinal);
         }

@@ -9,7 +9,7 @@ namespace VisualRelay.Tests;
 /// Covers the stage-input artifact the runner writes beside a stage's report.
 /// <para>
 /// The GUI's stage-input pane reads this file, so it is the only way a user can
-/// see the prompt a stage was given. The Swival runner wrote it while building
+/// see the prompt a stage was given. The subprocess runner wrote it while building
 /// its argument list; when that runner was deleted the behaviour had to move to
 /// the in-process loop rather than disappear with it. These tests are the guard
 /// that it did.

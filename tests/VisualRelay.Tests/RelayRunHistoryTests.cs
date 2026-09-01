@@ -135,13 +135,13 @@ public sealed class RelayRunHistoryTests
     [Fact]
     public async Task ReadStatusRecord_StatusFromRecordNotFromReportOutcome()
     {
-        // A report with "outcome": "success" (what swival actually emits) must not
+        // A report with "outcome": "success" (what the runner actually emits) must not
         // cause the stage to be misclassified. The status comes from the record, not
         // from re-parsing report outcomes.
         using var repo = TestRepository.Create();
         var taskDir = Path.Combine(repo.Root, ".relay", "success-task");
         Directory.CreateDirectory(taskDir);
-        // Write a report with "outcome": "success" (swival's actual output).
+        // Write a report with "outcome": "success" (the runner's actual output).
         File.WriteAllText(
             Path.Combine(taskDir, "stage1-attempt1.report.json"),
             """{ "timestamp": "2026-06-07T16:00:00+00:00", "model": "cheap", "result": { "outcome": "success" }, "stats": { "total_llm_time_s": 1 }, "timeline": [] }""");

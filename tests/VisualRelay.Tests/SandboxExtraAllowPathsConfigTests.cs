@@ -217,7 +217,7 @@ public sealed class SandboxExtraAllowPathsConfigTests
     // ── Builder integration: -a flags appear in both invocations ───────
 
     [Fact]
-    public void ExtraAllowPaths_AppendedAsAFlags_InSwivalPrefix()
+    public void ExtraAllowPaths_AppendedAsAFlags_InAgentPrefix()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var extra = Path.Combine(home, ".cache", "exotic-tool");

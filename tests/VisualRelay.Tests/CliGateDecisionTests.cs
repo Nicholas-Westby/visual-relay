@@ -5,10 +5,10 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Pure-decision tests for the launch gates' OS-aware behavior. The gates are
 /// hard prerequisites on macOS/Linux (exit 127 when missing) but must not block
-/// the GUI on Windows, where the OS sandbox (nono) does not exist and swival is
-/// only needed to <em>run</em> stages (Phase 3), not to open the window for
-/// inspection. Asserted via the extracted <c>Decide</c> functions so the Windows
-/// branch is covered on any OS.
+/// the GUI on Windows, where the OS sandbox (nono) does not exist and the
+/// container that replaces it is only needed to <em>run</em> stages (Phase 3),
+/// not to open the window for inspection. Asserted via the extracted
+/// <c>Decide</c> functions so the Windows branch is covered on any OS.
 /// </summary>
 public sealed class CliGateDecisionTests
 {

@@ -58,7 +58,7 @@ public sealed partial class SplitGuardVerificationTests
     /// the baseline of 143: 127 established on 2026-06-10 before any split,
     /// +3 on 2026-06-10 (CpuPulse partial: cpu-pulse survival, true-wedge kill,
     /// killed-output persistence — the fs-blinded-watchdog regression family),
-    /// +3 on 2026-06-11 (NonzeroExit: retry-and-persist nonzero swival exits),
+    /// +3 on 2026-06-11 (NonzeroExit: retry-and-persist nonzero stage exits),
     /// +2 on 2026-06-11 (manifest gitignore validation: GitCommitter backstop
     /// + RelayDriverGitCommitTests end-to-end backstop),
     /// +2 on 2026-06-12 (watchdog socket-wedge regression:
@@ -110,7 +110,7 @@ public sealed partial class SplitGuardVerificationTests
         // VisualRelay.Cli, so the bash-asserting Installer5LauncherTests family lost
         // 9 facts (per-command published-binary/needs_dotnet/init-dispatch checks).
         // The behavior is now covered by the Cli* suites (CliInitCommandTests,
-        // CliNonoGateTests, CliSwivalGateTests, CliSwivalUpgradeCheckTests,
+        // CliNonoGateTests, the retired agent's gate and upgrade-check suites,
         // CliWatchdogTests, CliCommandRouterTests), which are not oversized families.
         // Dropped 151→150 on 2026-06-21: porting tools/backend/backend.sh to the
         // published VisualRelay.Backend C# tool retired the script, so the
@@ -122,7 +122,7 @@ public sealed partial class SplitGuardVerificationTests
         // Installer5LauncherTests family. Its replacement (a stale-key still-requires-
         // nono regression) lives in the non-oversized CliNonoGateTests suite.
         // Bumped 149→150 on 2026-06-22: surfacing the real model-backend cause on a
-        // swival nonzero exit added RunAsync_ModelAuthFailureSurfacesProxyAuthCause-
+        // stage's nonzero exit added RunAsync_ModelAuthFailureSurfacesProxyAuthCause-
         // NotPromptEcho to the SandboxedStageTests family.
         // Bumped 150→152 on 2026-06-22: the improve-live-tiers-ui task added two
         // TierRows_* [Fact]s to the BackendConfigGeneratorTests family
@@ -206,7 +206,7 @@ public sealed partial class SplitGuardVerificationTests
         // GetTierRows_MissingKeyTierIsNotEditable (-3) across the
         // BackendConfigGenerator families. This is the first downward bump.
         //
-        // 2026-09-01: 175 -> 140. The Swival subprocess runner was deleted, and
+        // 2026-09-01: 175 -> 140. The subprocess runner was deleted, and
         // its three tracked test families (Watchdog, Tests, CommandFilter) went
         // with it. Their prefixes are gone from the list below.
         //

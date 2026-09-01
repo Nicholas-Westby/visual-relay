@@ -29,7 +29,7 @@ public sealed partial class MainWindowViewModelCeilingBumpTests
     /// status.json with a Flagged stage entry.
     /// </summary>
     private static async Task WriteFlaggedRelayDataAsync(
-        string root, string taskId, string reason = "swival timed out", int stage = 6)
+        string root, string taskId, string reason = "the stage stalled", int stage = 6)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);
         Directory.CreateDirectory(taskDirectory);
@@ -54,7 +54,7 @@ public sealed partial class MainWindowViewModelCeilingBumpTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteNestedTask("flagged", "# Flagged\n");
         await WriteFlaggedRelayDataAsync(repo.Root, "flagged",
-            "swival timed out after 30m 00s (1800000 ms) absolute ceiling. Last signal: cpu, silence: 970ms.");
+            "the stage stalled: the stage hit its absolute ceiling");
 
         var vm = NewViewModel(repo);
         await vm.LoadInitialAsync();
@@ -107,7 +107,7 @@ public sealed partial class MainWindowViewModelCeilingBumpTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteNestedTask("flagged", "# Flagged\n");
         await WriteFlaggedRelayDataAsync(repo.Root, "flagged",
-            "swival timed out after 30m 00s (1800000 ms) absolute ceiling.");
+            "the stage stalled: the stage hit its absolute ceiling");
 
         var vm = NewViewModel(repo);
         await vm.LoadInitialAsync();
@@ -148,7 +148,7 @@ public sealed partial class MainWindowViewModelCeilingBumpTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteNestedTask("flagged", "# Flagged\n");
         await WriteFlaggedRelayDataAsync(repo.Root, "flagged",
-            "swival timed out after 30m 00s (1800000 ms) absolute ceiling.");
+            "the stage stalled: the stage hit its absolute ceiling");
 
         var vm = NewViewModel(repo);
         await vm.LoadInitialAsync();
@@ -173,7 +173,7 @@ public sealed partial class MainWindowViewModelCeilingBumpTests
         // Seed the config with a known subagent timeout so the bump is predictable.
         RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 1_800_000);
         await WriteFlaggedRelayDataAsync(repo.Root, "flagged",
-            "swival timed out after 30m 00s (1800000 ms) absolute ceiling.");
+            "the stage stalled: the stage hit its absolute ceiling");
 
         var vm = NewViewModel(repo);
         await vm.LoadInitialAsync();

@@ -87,9 +87,9 @@ public sealed class GitSimParityTests
     {
         if (!Ready()) return;
         using var h = new ParityHarness();
-        h.WriteBoth(".gitignore", "swival.toml\ndir/\n");
+        h.WriteBoth(".gitignore", "config.local.toml\ndir/\n");
         h.SeedCommit("a.txt", "1", "seed");
-        h.AssertPathSetParity('\n', "check-ignore", "--", "swival.toml", "src/app.cs", "dir/nested.txt");
+        h.AssertPathSetParity('\n', "check-ignore", "--", "config.local.toml", "src/app.cs", "dir/nested.txt");
         h.AssertExitParity("check-ignore", "--", "src/app.cs"); // none ignored → exit 1 both
     }
 }

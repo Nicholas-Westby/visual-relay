@@ -125,10 +125,10 @@ public sealed class GitSimPlumbingTests
     {
         var (sim, repo) = NewRepo();
         using var _ = repo;
-        Write(repo, ".gitignore", "swival.toml\n");
-        var (hit, hitOut) = await sim.Git(repo.Root, "check-ignore", "--", "swival.toml", "src/app.cs");
+        Write(repo, ".gitignore", "config.local.toml\n");
+        var (hit, hitOut) = await sim.Git(repo.Root, "check-ignore", "--", "config.local.toml", "src/app.cs");
         Assert.Equal(0, hit);
-        Assert.Equal("swival.toml\n", hitOut);
+        Assert.Equal("config.local.toml\n", hitOut);
         var (miss, _) = await sim.Git(repo.Root, "check-ignore", "--", "src/app.cs");
         Assert.Equal(1, miss);
     }

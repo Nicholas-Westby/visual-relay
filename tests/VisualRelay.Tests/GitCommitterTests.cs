@@ -42,22 +42,22 @@ public sealed class GitCommitterTests
     {
         var (sim, repo) = NewRepo();
         using var _ = repo;
-        sim.Seed(repo.Root, ".gitignore", "swival.toml\n");
+        sim.Seed(repo.Root, ".gitignore", "config.local.toml\n");
         sim.Seed(repo.Root, "src/app.cs", "content");
         sim.Commit(repo.Root, "chore: seed");
 
         // Runtime artifact that exists on disk but is gitignored: the manifest must not claim it.
-        Write(repo, "swival.toml", "[runtime]\nkey = \"val\"");
+        Write(repo, "config.local.toml", "[runtime]\nkey = \"val\"");
         Write(repo, "src/app.cs", "updated");
 
         var result = await GitCommitter.CommitAsync(
-            repo.Root, "my-task", "abc123", ["feat: add widget"], ["swival.toml", "src/app.cs"], [],
+            repo.Root, "my-task", "abc123", ["feat: add widget"], ["config.local.toml", "src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
             sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
         Assert.Contains("manifest contains gitignored", result.Error, StringComparison.Ordinal);
-        Assert.Contains("swival.toml", result.Error, StringComparison.Ordinal);
+        Assert.Contains("config.local.toml", result.Error, StringComparison.Ordinal);
     }
 }

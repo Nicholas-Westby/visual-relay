@@ -26,10 +26,10 @@ public sealed class NonoProfileStructureTests
 
     /// <summary>
     /// The profile inherits from nono's own built-in base and nothing else.
-    /// It used to extend <c>swival</c> — a third-party pack the launcher had to
-    /// <c>nono pull</c> on every start — for an agent Visual Relay no longer runs.
-    /// Everything that pack contributed is now declared here, so the sandbox does
-    /// not depend on someone else's release cadence.
+    /// It used to extend a third-party pack the launcher had to <c>nono pull</c>
+    /// on every start, for an agent Visual Relay no longer runs. Everything that
+    /// pack contributed is now declared here, so the sandbox does not depend on
+    /// someone else's release cadence, and no pull runs at launch.
     /// </summary>
     [Fact]
     public void VrGuardProfile_ExtendsTheBuiltInDefault_NotAThirdPartyPack()
@@ -42,7 +42,7 @@ public sealed class NonoProfileStructureTests
     }
 
     /// <summary>
-    /// The seven groups the swival layer used to add on top of <c>default</c>.
+    /// The seven groups the third-party layer used to add on top of <c>default</c>.
     /// Dropping the inheritance without re-declaring these would silently strip
     /// unlink protection, git config access and the language-runtime caches.
     /// </summary>
@@ -69,7 +69,7 @@ public sealed class NonoProfileStructureTests
     /// <summary>
     /// <c>default</c> grants no workspace access at all (<c>workdir.access</c> is
     /// <c>none</c>) and leaves <c>capability_elevation</c> unset. Both came from
-    /// the swival layer, so the profile has to state them itself — without the
+    /// the third-party layer, so the profile has to state them itself — without the
     /// workdir grant every stage would be denied writes to its own checkout.
     /// </summary>
     [Fact]
@@ -86,20 +86,6 @@ public sealed class NonoProfileStructureTests
         Assert.Equal("isolated",
             root.GetProperty("security").GetProperty("signal_mode").GetString());
         Assert.False(root.GetProperty("network").GetProperty("block").GetBoolean());
-    }
-
-    /// <summary>
-    /// Nothing in the profile may name swival again: no inherited pack, no grant
-    /// for its config dirs, no rollback exclusion for its scratch directory.
-    /// </summary>
-    [Fact]
-    public void VrGuardProfile_NamesSwivalNowhere()
-    {
-        var profilePath = ResolveProfilePath();
-
-        var json = File.ReadAllText(profilePath);
-
-        Assert.DoesNotContain("swival", json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -30,14 +30,14 @@ public sealed partial class RelayTaskRepositoryTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay", "alpha"));
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "alpha", "NEEDS-REVIEW"), "swival exit 2\nstage 1\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "alpha", "NEEDS-REVIEW"), "the stage stalled\nstage 1\n");
 
         var tasks = await new RelayTaskRepository(repo.Root).ListAsync();
 
         var task = Assert.Single(tasks);
         Assert.True(task.NeedsReview);
         Assert.Equal("Needs review", task.StateLabel);
-        Assert.Equal("swival exit 2", task.ReviewReason);
+        Assert.Equal("the stage stalled", task.ReviewReason);
     }
 
     [Fact]

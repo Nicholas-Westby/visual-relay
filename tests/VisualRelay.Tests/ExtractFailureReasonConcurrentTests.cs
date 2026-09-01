@@ -127,7 +127,7 @@ public sealed class ExtractFailureReasonConcurrentTests
         var output = string.Join('\n', new[]
         {
             "WARN '/Users/me/.ssh' is blocked by 'deny_credentials'; use --bypass-protection /Users/me/.ssh to allow access",
-            "nono: command not found: swival",
+            "nono: command not found: shellcheck",
         });
 
         var reason = SandboxedStage.ExtractFailureReason(output);

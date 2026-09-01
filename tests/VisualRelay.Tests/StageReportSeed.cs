@@ -4,7 +4,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Writes the <c>stageN-attemptM.report.json</c> artifact that the real runner
-/// (swival) leaves behind, so tests that care about cost, model, or turn parsing
+/// leaves behind, so tests that care about cost, model, or turn parsing
 /// have something for <c>RelayCostEstimator</c> to read. Test doubles opt in —
 /// most driver tests assert against a run with no reports at all.
 /// </summary>

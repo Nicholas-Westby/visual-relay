@@ -52,7 +52,7 @@ public sealed class ProcessLauncherOnPathTests
     public void ResolveOnPath_Missing_ReturnsFalse()
     {
         var found = ProcessLauncher.ResolveOnPath(
-            Dir, Pathext, "swival", _ => false);
+            Dir, Pathext, "shellcheck", _ => false);
 
         Assert.False(found);
     }

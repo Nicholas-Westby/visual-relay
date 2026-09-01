@@ -6,7 +6,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Shared fixture for the sandbox-prefix tests. These used to hang off the
-/// Swival runner's own sandbox test class; the prefix builder outlived that
+/// subprocess runner's own sandbox test class; the prefix builder outlived that
 /// runner, so its tests did too and needed a home of their own.
 /// </summary>
 public sealed partial class SandboxedStageSandboxTests

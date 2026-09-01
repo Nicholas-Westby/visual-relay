@@ -241,11 +241,11 @@ public sealed class SandboxedTestRunnerArgumentTests
     }
 
     [Fact]
-    public void SwivalPrefix_DoesNotContainDiagnosticsJson()
+    public void AgentPrefix_DoesNotContainDiagnosticsJson()
     {
         Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         var config = TestConfig();
-        // Swival-agent path: rollback: true, no requestDiagnostics.
+        // Agent path: rollback: true, no requestDiagnostics.
         var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true);
 
         Assert.DoesNotContain("--diagnostics-json", prefix);

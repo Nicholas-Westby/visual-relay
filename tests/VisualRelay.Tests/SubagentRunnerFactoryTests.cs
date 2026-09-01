@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Covers the one place a stage's agent is built.
 /// <para>
-/// This used to choose between the Swival subprocess and the in-process loop on
+/// This used to choose between a subprocess agent and the in-process loop on
 /// a <c>VR_AGENT</c> environment variable. The subprocess is gone, so the
 /// selector is gone with it and there is exactly one answer. What still matters
 /// is that every call site funnels through here, which is what made the cutover
@@ -35,7 +35,7 @@ public sealed class SubagentRunnerFactoryTests
     /// <param name="selector">A value the old selector would have honoured.</param>
     [Theory]
     [InlineData("firstparty")]
-    [InlineData("swival")]
+    [InlineData("subprocess")]
     [InlineData("")]
     public void TheEnvironment_NoLongerSelectsAnything(string selector)
     {

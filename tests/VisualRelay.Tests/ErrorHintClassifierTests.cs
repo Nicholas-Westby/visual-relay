@@ -7,9 +7,8 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_ConnectionError_SuggestsBackendIsUnreachable()
     {
-        const string raw =
-            "swival exit 1: Error: LLM call failed (model: cheap): " +
-            "litellm.InternalServerError: InternalServerError: OpenAIException - Connection error.";
+        // A failed model call surfaces the provider's own message verbatim.
+        const string raw = "Connection error.";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -21,7 +20,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_ConnectionRefused_SuggestsBackendIsUnreachable()
     {
-        const string raw = "swival exit 1: ConnectionRefusedError: [Errno 61] Connection refused";
+        const string raw = "the connection to balanced failed: Connection refused (api.z.ai:443)";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -32,7 +31,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_Timeout_SuggestsRaisingTimeoutOrCheckingLatency()
     {
-        const string raw = "swival timed out after 600000ms";
+        const string raw = "command timed out after 240s, the timeout that was actually applied.";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -43,9 +42,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_AuthFailure_SuggestsProviderKey()
     {
-        const string raw =
-            "swival exit 1: litellm.AuthenticationError: AuthenticationError: " +
-            "OpenAIException - Error code: 401 - invalid api_key";
+        const string raw = "provider returned HTTP 401 with an empty body";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -56,7 +53,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_Forbidden_SuggestsProviderKey()
     {
-        const string raw = "swival exit 1: OpenAIException - Error code: 403 - forbidden";
+        const string raw = "provider returned HTTP 403 with an empty body";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -109,7 +106,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_CommandNotFound_SuggestsInstallingTheTool()
     {
-        const string raw = "swival exit 127: nono: command not found";
+        const string raw = "/bin/sh: shellcheck: command not found";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -136,13 +133,11 @@ public sealed class ErrorHintClassifierTests
     {
         // The missing-binary branch must not accidentally swallow a connection
         // error that happens to mention nothing about a binary.
-        var connectionHint = ErrorHintClassifier.HintFor(
-            "swival exit 1: OpenAIException - Connection error.");
+        var connectionHint = ErrorHintClassifier.HintFor("Connection error.");
         Assert.NotNull(connectionHint);
         Assert.Contains("provider", connectionHint, StringComparison.OrdinalIgnoreCase);
 
-        var authHint = ErrorHintClassifier.HintFor(
-            "swival exit 1: Error code: 401 - invalid api_key");
+        var authHint = ErrorHintClassifier.HintFor("Invalid API key provided.");
         Assert.NotNull(authHint);
         Assert.Contains("key", authHint, StringComparison.OrdinalIgnoreCase);
     }
@@ -150,7 +145,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_UnrecognizedError_ReturnsNull()
     {
-        const string raw = "swival exit 7: some entirely novel failure mode nobody has seen";
+        const string raw = "the stage reported an entirely novel failure mode nobody has seen";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -168,7 +163,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void WithHint_RecognizedError_AppendsHintKeepingRawText()
     {
-        const string raw = "swival exit 1: OpenAIException - Connection error.";
+        const string raw = "Connection error.";
 
         var combined = ErrorHintClassifier.WithHint(raw);
 
@@ -197,9 +192,9 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_GenericTimedOut_StillReturnsTimeoutHint()
     {
-        // The generic "swival timed out" pattern must still match the
-        // existing TimeoutHint (LLM-tuning advice), not the test-subset hint.
-        const string raw = "swival timed out after 600000ms";
+        // A non-test timeout must still match the TimeoutHint (LLM-tuning
+        // advice), not the test-subset hint.
+        const string raw = "guard timed out";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -208,9 +203,10 @@ public sealed class ErrorHintClassifierTests
     }
 
     [Fact]
-    public void HintFor_ReformattedCeiling_StillReturnsTimeoutHint()
+    public void HintFor_DifferentlyWordedTimeout_StillReturnsTimeoutHint()
     {
-        const string raw = "swival timed out after 30m 00s (1800000 ms) absolute ceiling. Last signal: cpu, silence: 970ms.";
+        // The branch keys on the phrase, not on one caller's exact wording.
+        const string raw = "Render command timed out: the render produced no output";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -221,7 +217,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void WithHint_UnrecognizedError_ReturnsRawUnchanged()
     {
-        const string raw = "swival exit 7: some entirely novel failure mode nobody has seen";
+        const string raw = "the stage reported an entirely novel failure mode nobody has seen";
 
         var combined = ErrorHintClassifier.WithHint(raw);
 

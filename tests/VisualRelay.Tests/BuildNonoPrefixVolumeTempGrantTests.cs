@@ -6,7 +6,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Volume .TemporaryItems auto-grant tests for BuildNonoPrefix.
-/// Exercises the grant emission/omission across rollback=true (swival agent)
+/// Exercises the grant emission/omission across rollback=true (agent)
 /// and rollback=false (verify) paths.
 /// </summary>
 public sealed class BuildNonoPrefixVolumeTempGrantTests
@@ -84,7 +84,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
             "volume temp grant must appear after templates grant");
     }
 
-    // Swival agent path (rollback:true)
+    // Agent path (rollback:true)
 
     [Fact]
     public void BuildNonoPrefix_ExternalVolumeRoot_WithRollback_EmitsGrantBeforeRollback()

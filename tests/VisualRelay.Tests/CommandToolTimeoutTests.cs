@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// The headline behaviour of the command tools: there is no hidden per-call timeout
 /// ceiling.
 ///
-/// <para>Swival clamped every command to <c>MAX_TIMEOUT = 240</c> seconds with no flag
+/// <para>The subprocess agent clamped every command to <c>MAX_TIMEOUT = 240</c> seconds with no flag
 /// and no env var, and then reported <c>command timed out after 240s</c> — a number
 /// the model never asked for. Unable to see where the limit came from, it retried at
 /// the same doomed value; 378 of the 5,750 recorded command calls asked for more than

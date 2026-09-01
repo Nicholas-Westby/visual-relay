@@ -13,7 +13,7 @@ namespace VisualRelay.Tests;
 /// <see cref="MainWindowViewModel"/> + <see cref="MainWindow"/> on the headless
 /// Avalonia dispatcher (so the UI-thread marshaling inside ControlApi runs for
 /// real) and assert the JSON contract + command gating WITHOUT triggering any
-/// relay/swival run: gating is exercised with a command that is DISABLED in the
+/// relay run: gating is exercised with a command that is DISABLED in the
 /// test state, and successful invocation uses the side-effect-free
 /// <c>pause-toggle</c> command.
 /// </summary>

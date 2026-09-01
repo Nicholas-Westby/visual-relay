@@ -9,7 +9,7 @@ namespace VisualRelay.Tests;
 /// planning message), and a committed+archived task (spec moved to completed/) must
 /// leave the active roster instead of lingering as "Pending" with a stale MarkdownPath
 /// that a later re-read throws on. Drives the internal CreateDrainLifecycleCallbacks
-/// hooks directly (no real swival run), mirroring LiveStateViewModelTests.
+/// hooks directly (no real relay run), mirroring LiveStateViewModelTests.
 /// </summary>
 public sealed class DrainLifecycleStatusTests
 {

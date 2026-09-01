@@ -10,7 +10,7 @@ namespace VisualRelay.Tests;
 /// directories under its temp namespace. If planning worktrees and rewrite
 /// worktrees shared that namespace, the drain's prune would
 /// <c>Directory.Delete</c> a LIVE rewrite worktree out from under the running
-/// swival process.
+/// rewrite.
 ///
 /// The fix gives rewrite worktrees a DISJOINT namespace so a planning-phase
 /// prune cannot see them (and a rewrite's own cleanup cannot see planning

@@ -63,10 +63,10 @@ public sealed class CliNonoGateTests
     }
 
     /// <summary>
-    /// The launch used to run <c>nono pull jedisct1/swival</c> every time, because
-    /// vr-guard extended that third-party pack. vr-guard is self-contained now, so
-    /// the launch must not shell out to nono at all — the pack's "already at x.y.z"
-    /// line was the only thing still naming an agent Visual Relay had deleted.
+    /// The launch used to pull a third-party nono pack every time, because
+    /// vr-guard extended it. vr-guard is self-contained now, so the launch must
+    /// not shell out to nono at all — the pack's "already at x.y.z" line was the
+    /// only thing still naming an agent Visual Relay had deleted.
     /// </summary>
     [Fact]
     public async Task Launch_SandboxEnabled_NonoPresent_PullsNoProfilePack()

@@ -30,7 +30,6 @@ public sealed partial class MainWindowViewModelTests
         Assert.False(runnable);
         // Names the real cause: the sandbox binary this host is missing.
         Assert.Contains("nono", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("swival", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("PATH", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
         // The drifted hand-copy used to omit this sentence; both surfaces must now
         // carry the unified runner message (MissingToolsMessage).

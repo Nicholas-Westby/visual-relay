@@ -6,8 +6,8 @@ using GitSimEngine = VisualRelay.GitSim.GitSim;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Regression tests for the in-run agent self-commit squash. When the swival
-/// agent runs `git commit` itself mid-run (authorized via RELAY_COMMIT_TOKEN),
+/// Regression tests for the in-run agent self-commit squash. When the agent
+/// runs `git commit` itself mid-run (authorized via RELAY_COMMIT_TOKEN),
 /// it lands a BARE provenance-less commit. The Commit stage must squash any
 /// such commits made since run-start into the single sealed commit, so a task
 /// is always exactly one sealed commit whose parent is the run-base.

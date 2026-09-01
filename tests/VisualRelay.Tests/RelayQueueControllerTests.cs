@@ -98,7 +98,7 @@ public sealed class RelayQueueControllerTests
         repo.WriteTask("alpha", "# Alpha\n");
         repo.WriteTask("beta", "# Beta\n");
         var runner = new ScriptedOutcomeTaskRunner(
-            new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null, "swival timed out after 300s"),
+            new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null, "the stage stalled: nothing happened for the inactivity window"),
             new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Committed, "hash", "sha", null));
         var controller = new RelayQueueController(repo.Root, runner);
 
@@ -113,7 +113,7 @@ public sealed class RelayQueueControllerTests
         var stalledTask = controller.Tasks.SingleOrDefault(t => t.Id == "alpha");
         Assert.NotNull(stalledTask);
         Assert.True(stalledTask!.NeedsReview);
-        Assert.Contains("swival timed out", stalledTask.ReviewReason, StringComparison.Ordinal);
+        Assert.Contains("the stage stalled", stalledTask.ReviewReason, StringComparison.Ordinal);
 
         // No halt marker.
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));

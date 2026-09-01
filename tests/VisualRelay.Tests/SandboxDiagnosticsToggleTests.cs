@@ -10,7 +10,7 @@ namespace VisualRelay.Tests;
 /// footer; toggling verbose ON omits --silent so nono's full diagnostics show.
 /// The flag is OUTPUT-ONLY — it must never weaken the sandbox (profile, --allow-cwd,
 /// network, child exit code unchanged). Applies to BOTH the verify path
-/// (SandboxedTestRunner) and the swival-stage launch (BuildLaunchTarget).
+/// (SandboxedTestRunner) and the agent-stage launch (BuildLaunchTarget).
 /// </summary>
 public sealed class SandboxDiagnosticsToggleTests
 {
@@ -22,13 +22,13 @@ public sealed class SandboxDiagnosticsToggleTests
         var config = TestConfig();
 
         var verify = SandboxedStage.BuildNonoPrefix(config, rollback: false);
-        var swival = SandboxedStage.BuildNonoPrefix(config, rollback: true);
+        var agent = SandboxedStage.BuildNonoPrefix(config, rollback: true);
 
         Assert.Contains("--silent", verify);
-        Assert.Contains("--silent", swival);
+        Assert.Contains("--silent", agent);
         // --silent is a nono flag, so it must precede the `--` child separator.
         Assert.True(verify.ToList().IndexOf("--silent") < verify.ToList().IndexOf("--"));
-        Assert.True(swival.ToList().IndexOf("--silent") < swival.ToList().IndexOf("--"));
+        Assert.True(agent.ToList().IndexOf("--silent") < agent.ToList().IndexOf("--"));
     }
 
     [Fact]
@@ -37,10 +37,10 @@ public sealed class SandboxDiagnosticsToggleTests
         var config = TestConfig();
 
         var verify = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true);
-        var swival = SandboxedStage.BuildNonoPrefix(config, rollback: true, verboseDiagnostics: true);
+        var agent = SandboxedStage.BuildNonoPrefix(config, rollback: true, verboseDiagnostics: true);
 
         Assert.DoesNotContain("--silent", verify);
-        Assert.DoesNotContain("--silent", swival);
+        Assert.DoesNotContain("--silent", agent);
     }
 
     [Fact]
@@ -110,10 +110,10 @@ public sealed class SandboxDiagnosticsToggleTests
         var config = TestConfig();
 
         var verify = SandboxedStage.BuildNonoPrefix(config, rollback: false, requestDiagnostics: false);
-        var swival = SandboxedStage.BuildNonoPrefix(config, rollback: true);
+        var agent = SandboxedStage.BuildNonoPrefix(config, rollback: true);
 
         Assert.DoesNotContain("--diagnostics-json", verify);
-        Assert.DoesNotContain("--diagnostics-json", swival);
+        Assert.DoesNotContain("--diagnostics-json", agent);
     }
 
     [Fact]

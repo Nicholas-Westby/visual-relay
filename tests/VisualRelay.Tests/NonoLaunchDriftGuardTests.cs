@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Drift guard: asserts that the swival-agent nono launch prefix and the verify
+/// Drift guard: asserts that the agent nono launch prefix and the verify
 /// nono launch prefix are identical except for the --rollback/--no-rollback-prompt
 /// pair that only the agent launch carries. If either test fails, sandbox parity
 /// is genuinely broken — do NOT edit the test to match; escalate instead.

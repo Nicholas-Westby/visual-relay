@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Stage 4 manifest includes <c>swival.toml</c> — a gitignored runtime artifact.
+/// Stage 4 manifest includes <c>config.local.toml</c> — a gitignored runtime artifact.
 /// Bypasses the early SandboxedStage check (this ISubagentRunner is used
 /// directly by RelayDriver) so the gitignored path reaches stage 11, exercising
 /// the GitCommitter backstop. Otherwise behaves like <see cref="EditingSubagentRunner"/>.
@@ -28,7 +28,7 @@ internal sealed class GitignoredManifestSubagentRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit files","manifest":["swival.toml","src/status.cs","tests/status.test"]}""",
+            4 => """{"plan":"edit files","manifest":["config.local.toml","src/status.cs","tests/status.test"]}""",
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",

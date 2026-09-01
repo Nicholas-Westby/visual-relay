@@ -90,7 +90,7 @@ public sealed partial class TargetRepoMatrixTierATests
     }
 
     /// <summary>
-    /// The agent honours a six-minute request verbatim. Swival clamped every
+    /// The agent honours a six-minute request verbatim. The subprocess agent clamped every
     /// command to a hidden 240-second ceiling with no flag or env var, so a
     /// healthy six-minute suite was killed regardless of what the config said —
     /// and the model was told a number it never asked for, so it could not

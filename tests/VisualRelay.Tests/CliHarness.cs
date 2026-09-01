@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// bootstrap exec — the C# replacement for the launcher tests that used to drive
 /// the bash <c>case</c> dispatch. It runs <c>&lt;real-dotnet&gt; exec VisualRelay.Cli.dll
 /// &lt;args&gt;</c> with a crafted PATH (so the CLI's own shell-outs to
-/// <c>dotnet</c>/<c>nono</c>/<c>swival</c>/<c>backend.sh</c> hit stubs), a
+/// <c>dotnet</c>/<c>nono</c>/<c>backend.sh</c> hit stubs), a
 /// sandbox repo as <c>VISUAL_RELAY_SCRIPT_DIR</c>, and the env seams the moved
 /// gates honor. The real dotnet is passed by absolute path so loading the CLI is
 /// unaffected by the stubbed PATH.
