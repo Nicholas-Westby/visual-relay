@@ -56,7 +56,7 @@ Write(
       exit 1
     fi
 
-    (cd "$visual_relay_root" && ./visual-relay sample-reset "$repo_root")
+    (cd "$visual_relay_root" && ./visual-relay gen-sample "$repo_root")
 
     if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       git -C "$repo_root" add -A

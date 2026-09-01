@@ -34,6 +34,7 @@ return cmd switch
     "check" => await CheckCommand.RunAsync(paths),
     "inspect" => InspectCommand.Run(paths),
     "gen-backend-config" => PassthroughCommand.GenBackendConfig(paths, rest),
+    "gen-sample" => PassthroughCommand.GenSample(paths, rest),
     "guards" => PassthroughCommand.Guards(paths, rest),
     "audit" => PassthroughCommand.Audit(paths, rest),
     "install-hooks" => await InstallHooksCommand.RunAsync(paths, new GitInvoker()),

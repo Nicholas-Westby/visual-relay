@@ -2,7 +2,8 @@ namespace VisualRelay.Cli.Commands;
 
 /// <summary>
 /// Commands that just forward to an existing tool project via <c>dotnet run</c>:
-/// <c>run-task</c>, <c>gen-backend-config</c>, and <c>guards</c>. The tools hold
+/// <c>run-task</c>, <c>gen-backend-config</c>, <c>gen-sample</c> and <c>guards</c>.
+/// The tools hold
 /// the real logic; the CLI only wires the project path and forwards args.
 /// </summary>
 public static class PassthroughCommand
@@ -22,6 +23,17 @@ public static class PassthroughCommand
 
     public static int GenBackendConfig(RepoPaths paths, IReadOnlyList<string> args) =>
         ForwardToTool(paths, "VisualRelay.GenBackendConfig", args);
+
+    /// <summary>
+    /// Regenerates the sample repository at the given path. This is what the
+    /// sample's own <c>scripts/reset-sample.sh</c> calls: the generator writes
+    /// the repo from scratch, so generating and resetting are the same act.
+    /// </summary>
+    /// <param name="paths">Where the checkout lives.</param>
+    /// <param name="args">The target directory, forwarded to the tool.</param>
+    /// <returns>The tool's exit code.</returns>
+    public static int GenSample(RepoPaths paths, IReadOnlyList<string> args) =>
+        ForwardToTool(paths, "VisualRelay.SampleTasks", args);
 
     public static int Guards(RepoPaths paths, IReadOnlyList<string> args) =>
         ForwardToTool(paths, "VisualRelay.Guards", args);

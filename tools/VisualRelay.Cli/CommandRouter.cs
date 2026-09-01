@@ -11,7 +11,7 @@ public static class CommandRouter
     private static readonly IReadOnlyList<string> KnownCommands =
     [
         "launch", "run", "build", "test", "format", "screenshot",
-        "run-task", "init", "check", "inspect", "gen-backend-config",
+        "run-task", "init", "check", "inspect", "gen-backend-config", "gen-sample",
         "guards", "audit", "install-hooks", "bump-version", "provision-mxc",
     ];
 
@@ -20,5 +20,5 @@ public static class CommandRouter
 
     public static string UsageLine =>
         "usage: ./visual-relay [launch|build|test [serial] [Filter]|format|screenshot|run-task|init|" +
-        "install-hooks|bump-version|check|inspect|guards|audit|gen-backend-config|provision-mxc]";
+        "install-hooks|bump-version|check|inspect|guards|audit|gen-backend-config|gen-sample|provision-mxc]";
 }
