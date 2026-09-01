@@ -55,15 +55,15 @@ timeout to 1800s (unless `VISUAL_RELAY_TEST_TIMEOUT` is set). The stderr output 
 
 ## Leftover backend state under `$XDG_DATA_HOME/visual-relay/`
 
-Until 2026-09-01 a LiteLLM proxy ran behind every stage, provisioned into a
-`uv`-built Python venv under your user data directory. The proxy, the venv and
-the `uv` dependency are gone: providers are called directly, in process.
+Until 2026-09-01 a local model gateway ran behind every stage, provisioned into
+a `uv`-built Python venv under your user data directory. The gateway, the venv
+and the `uv` dependency are gone: providers are called directly, in process.
 
 Nothing reads these any more, so delete them if you want the space back:
 
 | What | Location |
 |------|----------|
-| LiteLLM venv | `$XDG_DATA_HOME/visual-relay/backend-venv/` |
+| Gateway venv | `$XDG_DATA_HOME/visual-relay/backend-venv/` |
 | Pidfile, log, generated config | `$XDG_DATA_HOME/visual-relay/scratch/` |
 
 `XDG_DATA_HOME` defaults to `~/.local/share` if unset. Settings and sandbox

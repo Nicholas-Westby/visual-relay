@@ -53,8 +53,8 @@ subprocess, and streams model output into the Activity column while the stage is
 still running.
 
 There used to be a `VR_AGENT` selector choosing between this and a third-party
-CLI subprocess behind a local LiteLLM proxy. Both the subprocess and the proxy
-were removed on 2026-09-01, so the variable now selects nothing and is ignored.
+CLI subprocess behind a local model gateway. Both were removed on 2026-09-01, so
+the variable now selects nothing and is ignored.
 
 ## Driving the running app (control API — PREFERRED over the CLI)
 
