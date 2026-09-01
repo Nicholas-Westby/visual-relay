@@ -203,7 +203,7 @@ static void SeedActivity(MainWindowViewModel viewModel, string demoTaskMarkdown)
 static void SaveBitmap(Bitmap bitmap, string path)
 {
     using var stream = File.Create(path);
-    bitmap.Save(stream);
+    bitmap.Save(stream, new PngBitmapEncoderOptions());
 }
 
 public static class ScreenshotAppBuilder

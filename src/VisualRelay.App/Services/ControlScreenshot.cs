@@ -33,7 +33,7 @@ public sealed partial class ControlApi
         rtb.Render(window!);
 
         using var memory = new MemoryStream();
-        rtb.Save(memory);
+        rtb.Save(memory, new PngBitmapEncoderOptions());
         var bytes = memory.ToArray();
 
         string? written = null;
