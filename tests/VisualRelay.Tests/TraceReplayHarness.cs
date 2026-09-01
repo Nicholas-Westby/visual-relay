@@ -58,7 +58,7 @@ public sealed record TraceReplayResult(
 /// is explicit that nothing goes to a paid benchmark until this replays clean.
 /// </para>
 /// </summary>
-public static class TraceReplayHarness
+public static partial class TraceReplayHarness
 {
     /// <summary>
     /// The fourteen tools the new set offers. Every other name the recorded runs
@@ -180,97 +180,6 @@ public static class TraceReplayHarness
         public void Publish(AgentEvent agentEvent)
         {
             // Intentionally empty.
-        }
-    }
-
-    /// <summary>Serves the recorded assistant turns back as SSE, one per request.</summary>
-    private sealed class RecordedTurnTransport(IReadOnlyList<RecordedTurn> turns) : IProviderTransport
-    {
-        private int _next;
-
-        public Task<ProviderResponse> SendAsync(
-            ProviderRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ProviderResponse(200, new Dictionary<string, string>(), "{}"));
-
-        public Task<ProviderStreamResponse> StreamAsync(
-            ProviderRequest request, CancellationToken cancellationToken = default)
-        {
-            var body = _next < turns.Count ? Render(turns[_next++]) : RenderFinal();
-            return Task.FromResult(new ProviderStreamResponse(
-                200, new Dictionary<string, string>(), _ => Emit(body)));
-        }
-
-        private static string RenderFinal() =>
-            Frame("""{"model":"recorded","choices":[{"delta":{"content":"done"},"finish_reason":null}]}""")
-            + Frame("""{"model":"recorded","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}""")
-            + "data: [DONE]\n\n";
-
-        private static string Render(RecordedTurn turn)
-        {
-            var builder = new StringBuilder();
-
-            if (turn.Text.Length > 0)
-            {
-                var delta = new JsonObject
-                {
-                    ["model"] = "recorded",
-                    ["choices"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["delta"] = new JsonObject { ["content"] = turn.Text },
-                            ["finish_reason"] = null,
-                        },
-                    },
-                };
-                builder.Append(Frame(delta.ToJsonString()));
-            }
-
-            if (turn.ToolCalls.Count > 0)
-            {
-                var calls = new JsonArray();
-                for (var i = 0; i < turn.ToolCalls.Count; i++)
-                    calls.Add(new JsonObject
-                    {
-                        ["index"] = i,
-                        ["id"] = $"call_{i}",
-                        ["function"] = new JsonObject
-                        {
-                            ["name"] = turn.ToolCalls[i].Name,
-                            ["arguments"] = turn.ToolCalls[i].Arguments,
-                        },
-                    });
-
-                var delta = new JsonObject
-                {
-                    ["model"] = "recorded",
-                    ["choices"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["delta"] = new JsonObject { ["tool_calls"] = calls },
-                            ["finish_reason"] = null,
-                        },
-                    },
-                };
-                builder.Append(Frame(delta.ToJsonString()));
-            }
-
-            var finish = turn.ToolCalls.Count > 0 ? "tool_calls" : "stop";
-            builder.Append(Frame(
-                "{\"model\":\"recorded\",\"choices\":[{\"delta\":{},\"finish_reason\":\""
-                + finish
-                + "\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}"));
-            builder.Append("data: [DONE]\n\n");
-            return builder.ToString();
-        }
-
-        private static string Frame(string json) => "data: " + json + "\n\n";
-
-        private static async IAsyncEnumerable<ReadOnlyMemory<byte>> Emit(string body)
-        {
-            await Task.CompletedTask;
-            yield return Encoding.UTF8.GetBytes(body);
         }
     }
 
