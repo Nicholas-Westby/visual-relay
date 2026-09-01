@@ -6,10 +6,10 @@ namespace VisualRelay.Tests;
 /// Covers the init-time test-command guess now that it goes through the provider
 /// transport seam.
 /// <para>
-/// Before this it POSTed to the local proxy with an <see cref="System.Net.Http.HttpClient"/>
-/// of its own — the only place left in the project that called a model over HTTP
-/// by itself, and the only one with no coverage whatsoever. Every case here was
-/// previously untestable without a running proxy.
+/// Before this it POSTed to a local endpoint with an
+/// <see cref="System.Net.Http.HttpClient"/> of its own — the only place left in
+/// the project that called a model over HTTP by itself, and the only one with no
+/// coverage whatsoever. Every case here was previously untestable offline.
 /// </para>
 /// </summary>
 public sealed class ProviderTestCommandCompleterTests
@@ -100,9 +100,9 @@ public sealed class ProviderTestCommandCompleterTests
     }
 
     /// <summary>
-    /// The finder with no completer injected asks nothing. It used to construct
-    /// an HttpClient and POST to the proxy from a default constructor, which is
-    /// why nothing could test it.
+    /// The finder with no completer injected asks nothing. It used to construct an
+    /// HttpClient and POST from a default constructor, which is why nothing could
+    /// test it.
     /// </summary>
     [Fact]
     public async Task TheFinderWithNoCompleter_AsksNothing()

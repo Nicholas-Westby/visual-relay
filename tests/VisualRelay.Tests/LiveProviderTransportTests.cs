@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Covers <see cref="LiveProviderTransport"/> through a stub handler, so the one
 /// class allowed to hold an <see cref="HttpClient"/> is exercised without a
-/// socket. The old proxy transport shipped with no coverage at all.
+/// socket. The transport this replaced shipped with no coverage at all.
 /// </summary>
 public sealed class LiveProviderTransportTests
 {

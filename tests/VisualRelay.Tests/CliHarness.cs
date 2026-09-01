@@ -113,24 +113,15 @@ internal static class CliHarness
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
-    /// <summary>
-    /// A flag-aware <c>dotnet</c> stub body for the launch tests: when invoked as
-    /// <c>dotnet run --project …VisualRelay.Backend… -- start</c> (the launch
-    /// preamble's repointed backend start) it touches <c>$VR_BACKEND_FLAG</c>;
-    /// every other dotnet invocation (the app's <c>dotnet run</c>) is a no-op
-    /// success. Replaces the old stub <c>tools/backend/backend.sh</c> signal.
-    /// </summary>
-    public const string BackendAwareDotnetStub =
-        "for a in \"$@\"; do case \"$a\" in *VisualRelay.Backend*) IS_BACKEND=1;; start) IS_START=1;; esac; done\n" +
-        "if [[ -n \"${IS_BACKEND:-}\" && -n \"${IS_START:-}\" && -n \"${VR_BACKEND_FLAG:-}\" ]]; then echo ran >> \"$VR_BACKEND_FLAG\"; fi\n" +
-        "exit 0";
+    /// <summary>A <c>dotnet</c> stub body that appends its argv to
+    /// <paramref name="argvLog"/>, so a test can assert what the launcher ran —
+    /// or, by the log's absence, that it ran nothing at all.</summary>
+    public static string ArgvRecordingDotnetStub(string argvLog) =>
+        $"printf '%s ' \"$@\" >> '{argvLog}'; printf '\\n' >> '{argvLog}'\nexit 0";
 
     /// <summary>Creates a sandbox repo dir with a minimal <c>.relay/config.json</c>
     /// and a <c>bin/</c> stub dir. The sandbox is always on, so the config carries
-    /// no bypass key. The backend start signal now flows through the
-    /// <see cref="BackendAwareDotnetStub"/> dotnet stub (launch runs
-    /// <c>VisualRelay.Backend start</c> via dotnet, not a shell script). Returns
-    /// (repoRoot, stubBin).</summary>
+    /// no bypass key. Returns (repoRoot, stubBin).</summary>
     public static (string RepoRoot, string StubBin) NewSandboxRepo()
     {
         var repoRoot = Path.Combine(Path.GetTempPath(), "vr-cli-" + Guid.NewGuid().ToString("N"));

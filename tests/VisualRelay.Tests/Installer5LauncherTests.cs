@@ -62,24 +62,22 @@ public sealed partial class Installer5LauncherTests
     {
         var testBody = """
             NIX_LOG="/tmp/.vr-test-nix-argv"; STUB_DIR="/tmp/.vr-test-stub-bin"
-            FAKE_TMPL="/tmp/.vr-test-fake-template.yaml"
-            rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"; mkdir -p "$STUB_DIR"
+            rm -rf "$NIX_LOG" "$STUB_DIR"; mkdir -p "$STUB_DIR"
             cat > "$STUB_DIR/nix" << 'X' && chmod +x "$STUB_DIR/nix"
             #!/bin/bash
             printf '%s\n' "$@" >> /tmp/.vr-test-nix-argv
             exit 0
             X
-            echo "fake" > "$FAKE_TMPL"
-            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY= bash "$LAUNCHER" gen-backend-config \
-                "$FAKE_TMPL" 'arg with spaces' 2>/dev/null || true
-            for arg in 'gen-backend-config' '/tmp/.vr-test-fake-template.yaml' 'arg with spaces'; do
+            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY= bash "$LAUNCHER" run-task \
+                'task-id' 'arg with spaces' 2>/dev/null || true
+            for arg in 'run-task' 'task-id' 'arg with spaces'; do
                 if ! grep -qFx "$arg" "$NIX_LOG"; then
                     echo "FAIL: '$arg' not in nix argv log" >&2
                     cat "$NIX_LOG" >&2
-                    rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"; exit 1
+                    rm -rf "$NIX_LOG" "$STUB_DIR"; exit 1
                 fi
             done
-            rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"
+            rm -rf "$NIX_LOG" "$STUB_DIR"
             """;
         var (exitCode, _, stderr) =
             await RunLauncherTestAsync("nix-reentry-args", testBody);
@@ -111,9 +109,9 @@ public sealed partial class Installer5LauncherTests
     }
 
     // The bootstrap defines only the published APP path (the brew `launch` fast
-    // path it must own before dotnet exists); the published init/gen-backend-config
-    // fast paths moved into the CLI (CliInitCommandTests covers init's). The
-    // per-command published-init preference is covered by CliInitCommandTests.
+    // path it must own before dotnet exists); the other published fast paths
+    // moved into the CLI. The per-command published-init preference is covered
+    // by CliInitCommandTests.
     [Fact]
     public void Launcher_DefinesPublishedAppPath()
     {
@@ -197,7 +195,7 @@ public sealed partial class Installer5LauncherTests
                 VISUAL_RELAY_NIX_REENTRY= \
                 TMPDIR=/tmp \
                 PATH="$STUB_DIR:/usr/bin:/bin" \
-                bash "$LAUNCHER" gen-backend-config /dev/null 2>/dev/null || true
+                bash "$LAUNCHER" run-task task-id 2>/dev/null || true
 
             # Assert snapshot file exists and is nonempty.
             if [[ ! -f "$KNOWN_SNAP" ]]; then

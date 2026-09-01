@@ -210,7 +210,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     {
         var body = """
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b3-dn-*' EXIT
-            rm -f /tmp/.vr-b3-dn-*; mkdir -p "$S" "$T/.relay" "$T/tools/backend"
+            rm -f /tmp/.vr-b3-dn-*; mkdir -p "$S" "$T/.relay"
             cat>"$S/nono"<<'X'&&chmod +x "$S/nono"
             #!/bin/bash
             exit 0
@@ -223,10 +223,6 @@ public sealed class Installer5Bootstrap3LauncherTests
             cat>"$S/vr-nix-installer"<<'X'&&chmod +x "$S/vr-nix-installer"
             #!/bin/bash
             echo ran>/tmp/.vr-b3-dn-installer-ran
-            exit 0
-            X
-            cat>"$T/tools/backend/backend.sh"<<'X'&&chmod +x "$T/tools/backend/backend.sh"
-            #!/bin/bash
             exit 0
             X
             echo '{"testCmd":"true"}'>"$T/.relay/config.json"

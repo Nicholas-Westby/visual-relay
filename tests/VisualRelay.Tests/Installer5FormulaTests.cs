@@ -57,9 +57,9 @@ public sealed class Installer5FormulaTests
     {
         var content = ReadFormula();
 
-        // nono is the sandbox and stays. uv existed only to build the Python
-        // venv for the LiteLLM proxy, which is gone, so depending on it would
-        // make every install pull a toolchain nothing uses.
+        // nono is the sandbox and stays. uv existed only to build a Python venv
+        // the app no longer provisions, so depending on it would make every
+        // install pull a toolchain nothing uses.
         Assert.Contains("depends_on", content, StringComparison.Ordinal);
         Assert.Contains("nolabs-ai/nono/nono", content, StringComparison.Ordinal);
         Assert.DoesNotContain("depends_on \"uv\"", content, StringComparison.Ordinal);

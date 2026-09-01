@@ -5,22 +5,24 @@ namespace VisualRelay.Tests;
 public sealed class ErrorHintClassifierTests
 {
     [Fact]
-    public void HintFor_ConnectionError_SuggestsBackendIsUnreachable()
+    public void HintFor_ConnectionError_SuggestsProviderIsUnreachable()
     {
-        // A failed model call surfaces the provider's own message verbatim.
+        // Reaches the classifier from whatever client the target project used.
         const string raw = "Connection error.";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
         Assert.NotNull(hint);
         Assert.Contains("provider", hint, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("4000", hint);
+        // Nothing local to start any more, so the hint must never say so.
+        Assert.DoesNotContain("backend", hint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void HintFor_ConnectionRefused_SuggestsBackendIsUnreachable()
+    public void HintFor_ConnectionRefused_SuggestsProviderIsUnreachable()
     {
-        const string raw = "the connection to balanced failed: Connection refused (api.z.ai:443)";
+        // What the runner writes when a route's socket dies.
+        const string raw = "the connection to frontier failed: Connection refused (api.z.ai:443)";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -31,7 +33,7 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_Timeout_SuggestsRaisingTimeoutOrCheckingLatency()
     {
-        const string raw = "command timed out after 240s, the timeout that was actually applied.";
+        const string raw = "command timed out after 240s";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -42,7 +44,21 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_AuthFailure_SuggestsProviderKey()
     {
+        // ProviderErrorReader's own wording when a 401 carries no message.
         const string raw = "provider returned HTTP 401 with an empty body";
+
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        Assert.Contains("key", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HintFor_ProviderAuthMessageWithoutAStatusCode_SuggestsProviderKey()
+    {
+        // A message-carrying body is surfaced verbatim with no status code, so
+        // the classifier cannot rely on a 401. DeepSeek's measured auth body.
+        const string raw = "Authentication Fails, Your api key: ****tall is invalid";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
@@ -64,17 +80,31 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_AuthFailureWrappedInRetries_PrefersAuthOverConnection()
     {
-        // An auth error surfaced after the SDK exhausts retries carries both an
-        // auth code and "Max retries exceeded"; the actionable fix is the key.
+        // The hint is appended to a stage's test, guard and bootstrap output, so
+        // the wording here is the target project's client, not ours. One retrying
+        // an auth failure prints an auth code and a retry-exhaustion phrase on the
+        // same line; the key is still the fix, so auth wins. Keeps the auth
+        // branch's needles live: authenticationerror, 401 and api_key.
         const string raw =
-            "litellm.AuthenticationError: Error code: 401 - invalid api_key " +
+            "AuthenticationError: Error code: 401 - invalid api_key " +
             "(Max retries exceeded with url: /chat/completions)";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
         Assert.NotNull(hint);
         Assert.Contains("key", hint, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("4000", hint);
+        Assert.DoesNotContain("backend", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The loop's own failure wordings name no key, connection or
+    /// timeout, so the classifier stays silent rather than misdirect.</summary>
+    [Theory]
+    [InlineData("provider call failed")]
+    [InlineData("provider ended the stream without its terminator")]
+    [InlineData("model produced only reasoning within its output budget")]
+    public void HintFor_LoopFailureWordings_ReturnNoHint(string raw)
+    {
+        Assert.Null(ErrorHintClassifier.HintFor(raw));
     }
 
     [Fact]
@@ -92,8 +122,7 @@ public sealed class ErrorHintClassifierTests
     public void HintFor_MissingBinary_SuggestsInstallingTheTool()
     {
         // nono set up the sandbox fine, then could not exec the program the stage
-        // asked for because it isn't on PATH. The actionable fix is installing
-        // that tool, not bypassing a sandbox-permission rule.
+        // asked for. The fix is installing that tool, not a sandbox rule.
         const string raw = "nono: Command execution failed: dotnet: cannot find binary path";
 
         var hint = ErrorHintClassifier.HintFor(raw);

@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Goldens the exact request body sent per model, per stage shape.
 /// <para>
-/// The proxy this replaced ran with <c>drop_params: true</c>, silently stripping
+/// The layer this replaced ran with <c>drop_params: true</c>, silently stripping
 /// parameters providers reject. A body could therefore look correct in config
 /// and never reach the wire that way. Goldening the serialized bytes puts any
 /// change to them in a diff, and the live suite in

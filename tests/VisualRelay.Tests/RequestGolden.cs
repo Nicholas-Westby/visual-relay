@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// <c>tests/VisualRelay.Tests/Goldens/request/&lt;model&gt;/&lt;stage&gt;.json</c>.
 /// <para>
 /// A golden here is the exact bytes a provider will be sent. That matters
-/// because the proxy this replaced ran with <c>drop_params: true</c>, silently
+/// because the layer this replaced ran with <c>drop_params: true</c>, silently
 /// stripping parameters providers reject — so a body could look right in the
 /// config and never reach the wire in that shape. Goldening the serialized body
 /// makes a change to it visible in review instead of at runtime.

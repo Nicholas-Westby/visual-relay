@@ -6,7 +6,7 @@ namespace VisualRelay.Tests;
 /// Covers the watchdog rebuilt on direct signals. The load-bearing assertion is
 /// the last one in the first section: an event that is not model output must not
 /// reset the output-silence clock, while a content delta must. Losing that
-/// distinction is exactly what the CPU-sampling proxy did, and it is how a
+/// distinction is exactly what the CPU sampler did, and it is how a
 /// request that burned CPU while producing nothing survived to the ceiling.
 /// </summary>
 public sealed class AgentWatchdogTests
@@ -80,7 +80,7 @@ public sealed class AgentWatchdogTests
         watchdog.Publish(Event(AgentEventKind.TokenDelta, clock.GetUtcNow(), "start"));
 
         // Then a long run of activity that is not model output. Under the old CPU
-        // proxy every one of these looked identical to progress.
+        // sampler every one of these looked identical to progress.
         for (var i = 0; i < 10; i++)
         {
             clock.Advance(TimeSpan.FromSeconds(40));

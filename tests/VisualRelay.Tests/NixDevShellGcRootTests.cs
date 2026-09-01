@@ -139,7 +139,7 @@ public sealed partial class NixDevShellGcRootTests
             XDG_DATA_HOME=/tmp/.vr-test-xdg-data \
                 VISUAL_RELAY_NIX_REENTRY= \
                 PATH="$STUB_DIR:/usr/bin:/bin" \
-                bash "$LAUNCHER" gen-backend-config /dev/null 2>/dev/null || true
+                bash "$LAUNCHER" run-task task-id 2>/dev/null || true
 
             # Assert --profile appears in the nix argv log.
             if ! grep -qFx -- '--profile' "$NIX_ARGV_LOG"; then
@@ -196,7 +196,7 @@ public sealed partial class NixDevShellGcRootTests
             XDG_DATA_HOME=/tmp/.vr-test-xdg-data-wf \
                 VISUAL_RELAY_NIX_REENTRY= \
                 PATH="$STUB_DIR:/usr/bin:/bin" \
-                bash "$LAUNCHER" gen-backend-config /dev/null 2>/dev/null || true
+                bash "$LAUNCHER" run-task task-id 2>/dev/null || true
 
             # The launcher must NOT have exited early — the develop call must
             # be in the log.

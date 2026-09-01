@@ -20,7 +20,7 @@ public sealed class FileRelayEventSinkTests
             "run-1",
             "/root",
             "task-a",
-            Data: new Dictionary<string, string> { ["base_url"] = "http://127.0.0.1:4000" }));
+            Data: new Dictionary<string, string> { ["tiers"] = "cheap,balanced,frontier" }));
         await sink.PublishAsync(new RelayEvent(
             new DateTimeOffset(2026, 6, 4, 12, 0, 1, TimeSpan.Zero),
             "info",
@@ -47,7 +47,7 @@ public sealed class FileRelayEventSinkTests
         Assert.Contains("2026-06-04T12:00:00.0000000+00:00", lines[0]);
         Assert.Contains("run=run-1", lines[0]);
         Assert.Contains("run_start", lines[0]);
-        Assert.Contains("base_url=http://127.0.0.1:4000", lines[0]);
+        Assert.Contains("tiers=cheap,balanced,frontier", lines[0]);
         // No stage scope -> placeholder dash.
         Assert.Contains(" - ", lines[0]);
 

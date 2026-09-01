@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// The live half of the request goldens: every goldened body is POSTed to the
 /// provider that will actually serve it, and must not be rejected.
 /// <para>
-/// This is the assertion the goldens cannot make on their own. The proxy this
+/// This is the assertion the goldens cannot make on their own. The layer this
 /// replaced ran with <c>drop_params: true</c>, silently stripping parameters
 /// providers reject — so a body can be goldened, reviewed and committed while
 /// being one no provider will take. A golden without a passing live run is a

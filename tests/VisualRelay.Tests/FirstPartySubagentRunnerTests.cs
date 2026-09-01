@@ -106,8 +106,8 @@ public sealed class FirstPartySubagentRunnerTests
     }
 
     /// <summary>
-    /// A failure on the first model falls through to the next in the chain,
-    /// which is the provider diversification the proxy used to perform.
+    /// A failure on the first model falls through to the next in the chain, which
+    /// is the provider diversification the runner now performs itself.
     /// </summary>
     [Fact]
     public async Task AFailedModel_FallsThroughToTheNextInTheChain()

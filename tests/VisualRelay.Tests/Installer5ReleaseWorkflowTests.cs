@@ -182,8 +182,9 @@ public sealed class Installer5ReleaseWorkflowTests
     {
         var content = ReadWorkflow();
 
-        // tools/backend held the LiteLLM template. The catalog lives in C# now,
-        // so copying that directory would ship a path that does not exist.
+        // tools/backend held the generated model-config template. The catalog
+        // lives in C# now, so copying that directory would ship a dead path.
+        // The literal names stay here: naming the artifact IS the guard.
         Assert.DoesNotContain("tools/backend", content, StringComparison.Ordinal);
         Assert.DoesNotContain("litellm-config", content, StringComparison.Ordinal);
     }

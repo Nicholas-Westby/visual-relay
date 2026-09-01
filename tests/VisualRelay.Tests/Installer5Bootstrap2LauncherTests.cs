@@ -54,30 +54,21 @@ public sealed class Installer5Bootstrap2LauncherTests
     /// <summary>Builds a hermetic sandbox, copies the launcher in, sets up
     /// stubs on a crafted PATH, then runs <c>launch</c>.  Assertions run after
     /// the launcher exits.  The generated stub for <c>nix</c> always logs argv
-    /// to /tmp/.vr-b2-nix-argv; the backend stub writes a flag to
-    /// /tmp/.vr-b2-backend-ran.</summary>
+    /// to /tmp/.vr-b2-nix-argv.</summary>
     private static string SetupB2Test(
-        bool stubNono, bool stubNix, bool stubUv,
-        string? marker, string assertions)
+        bool stubNono, bool stubNix, string? marker, string assertions)
     {
         var no = stubNono ? Stub("nono") : "# nono absent";
         var nx = stubNix ? Stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b2-nix-argv") : "# nix absent";
-        var uv = stubUv ? Stub("uv") : "# uv absent";
         var mk = marker is not null ? $"VISUAL_RELAY_NIX_REENTRY={marker}" : "VISUAL_RELAY_NIX_REENTRY=";
         var fn = !stubNix ? "_VISUAL_RELAY_FAKE_NO_NIX=1" : "";
         return $$"""
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b2-*' EXIT
-            rm -f /tmp/.vr-b2-nix-argv /tmp/.vr-b2-backend-ran
-            mkdir -p "$S" "$T/.relay" "$T/tools/backend"
+            rm -f /tmp/.vr-b2-nix-argv
+            mkdir -p "$S" "$T/.relay"
             {{Stub("dotnet")}}
             {{no}}
             {{nx}}
-            {{uv}}
-            cat>"$T/tools/backend/backend.sh"<<'X'&&chmod +x "$T/tools/backend/backend.sh"
-            #!/bin/bash
-            echo ran>>/tmp/.vr-b2-backend-ran
-            exit 0
-            X
             echo '{"testCmd":"true"}'>"$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"; RC=0
@@ -110,7 +101,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_NonoMissing_NixAvailable_ReexecsViaNixDevelop()
     {
-        var body = SetupB2Test(stubNono: false, stubNix: true, stubUv: true,
+        var body = SetupB2Test(stubNono: false, stubNix: true,
             marker: null, """
             if [[ ! -f /tmp/.vr-b2-nix-argv ]]; then
               echo "FAIL: nix not invoked for missing nono" >&2; exit 1
@@ -118,9 +109,6 @@ public sealed class Installer5Bootstrap2LauncherTests
             for a in develop '--command' bash launch 'arg with spaces'; do
               grep -qFx -- "$a" /tmp/.vr-b2-nix-argv || { echo "FAIL: '$a' missing" >&2; exit 1; }
             done
-            if [[ -f /tmp/.vr-b2-backend-ran ]]; then
-              echo "FAIL: backend ran before gate" >&2; exit 1
-            fi
             """);
         body = body.Replace(
             "bash \"$T/visual-relay\" launch \\",
@@ -136,19 +124,15 @@ public sealed class Installer5Bootstrap2LauncherTests
     /// <summary>
     /// With no reentry marker and a real nix on PATH, the bootstrap enters
     /// <c>nix develop</c> (the canonical toolchain env) before doing any work,
-    /// regardless of which tools are otherwise present. Backend work must not run
-    /// before that re-entry.
+    /// regardless of which tools are otherwise present.
     /// </summary>
     [Fact]
     public async Task Launch_NoReentryMarker_NixPresent_ReexecsViaNixDevelop()
     {
-        var body = SetupB2Test(stubNono: false, stubNix: true, stubUv: false,
+        var body = SetupB2Test(stubNono: false, stubNix: true,
             marker: null, """
             [[ -f /tmp/.vr-b2-nix-argv ]] || { echo "FAIL: nix not invoked" >&2; exit 1; }
             grep -qFx develop /tmp/.vr-b2-nix-argv || { echo "FAIL: nix argv missing develop" >&2; exit 1; }
-            if [[ -f /tmp/.vr-b2-backend-ran ]]; then
-              echo "FAIL: backend ran before re-entry" >&2; exit 1
-            fi
             """);
         var (ec, _, err) = await RunBashTestAsync("b-noreentry-nix", body);
         if (!string.IsNullOrEmpty(err))
@@ -168,7 +152,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_ReentryMarkerSet_DoesNotReenterNix_ExecsCli()
     {
-        var body = SetupB2Test(stubNono: false, stubNix: true, stubUv: true,
+        var body = SetupB2Test(stubNono: false, stubNix: true,
             marker: "1", """
             if [[ -f /tmp/.vr-b2-nix-argv ]]; then
               echo "FAIL: nix called again (loop) despite reentry marker" >&2; exit 1
@@ -180,19 +164,16 @@ public sealed class Installer5Bootstrap2LauncherTests
         Assert.Equal(0, ec);
     }
 
-    // ── 4. no nix + no nono → prints install hint, falls through, backend never runs ─
+    // ── 4. no nix + no nono → prints the install hint and falls through ──
 
     [Fact]
-    public async Task Launch_NonoMissing_NoNix_ExitsBeforeBackendRuns()
+    public async Task Launch_NonoMissing_NoNix_PrintsInstallHint()
     {
-        var body = SetupB2Test(stubNono: false, stubNix: false, stubUv: true,
+        var body = SetupB2Test(stubNono: false, stubNix: false,
             marker: null, """
             RC=$(cat /tmp/.vr-b2-rc); O=$(cat /tmp/.vr-b2-out /tmp/.vr-b2-err)
             (( RC == 0 )) || { echo "FAIL: expected 0 got $RC" >&2; echo "$O" >&2; exit 1; }
             echo "$O" | grep -q 'install.determinate.systems' || { echo "FAIL: missing install hint" >&2; echo "$O" >&2; exit 1; }
-            if [[ -f /tmp/.vr-b2-backend-ran ]]; then
-              echo "FAIL: backend ran before nono gate" >&2; exit 1
-            fi
             """);
         var (ec, _, err) = await RunBashTestAsync("d-ordering", body);
         if (!string.IsNullOrEmpty(err))
@@ -237,13 +218,13 @@ public sealed class Installer5Bootstrap2LauncherTests
     /// <summary>
     /// When nix is available and the devshell hasn't been entered yet, the
     /// launcher must unconditionally re-exec into <c>nix develop</c> even when
-    /// every tool (dotnet, nono, uv) is already on PATH.  The devshell is the
+    /// every tool (dotnet, nono) is already on PATH.  The devshell is the
     /// canonical environment — not just a fallback for missing tools.
     /// </summary>
     [Fact]
     public async Task Launch_AllToolsPresent_StillReexecsViaNixDevelop()
     {
-        var body = SetupB2Test(stubNono: true, stubNix: true, stubUv: true,
+        var body = SetupB2Test(stubNono: true, stubNix: true,
             marker: null, """
             if [[ ! -f /tmp/.vr-b2-nix-argv ]]; then
               echo "FAIL: nix not invoked when all tools present" >&2; exit 1
@@ -251,9 +232,6 @@ public sealed class Installer5Bootstrap2LauncherTests
             for a in develop '--command' bash launch; do
               grep -qFx -- "$a" /tmp/.vr-b2-nix-argv || { echo "FAIL: '$a' missing" >&2; exit 1; }
             done
-            if [[ -f /tmp/.vr-b2-backend-ran ]]; then
-              echo "FAIL: backend ran before gate" >&2; exit 1
-            fi
             """);
         var (ec, _, err) = await RunBashTestAsync("f-all-tools-present", body);
         if (!string.IsNullOrEmpty(err))
