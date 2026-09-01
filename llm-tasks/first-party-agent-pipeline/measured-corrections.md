@@ -407,3 +407,54 @@ count on top, so cache hits are charged twice. This is pre-existing and applies
 to BOTH arms equally, so it does not distort the comparison. Step 29 says to keep
 the estimate authoritative until Phase 6 completes and then switch; changing it
 now would silently rewrite what every historical dollar figure means.
+
+## The cutover, and four behaviours that would have gone quiet
+
+Steps 19, 20, 30 and 40 read as deletions. They are not. Six static helpers on
+`SwivalSubagentRunner` were used by code that SURVIVES it, including
+`BuildPrompt`, which the first-party loop itself calls. They moved to a new
+`SandboxedStage` type first; only then could the runner go.
+
+Four things would have disappeared silently with it. None is mentioned in the
+spec, and each was found by looking rather than by a failing test.
+
+**Manifest validation.** Stages 4 and 10 name the files they intend to change,
+and the old runner rejected a manifest naming a gitignored or absent path,
+returning a corrective message. The first-party loop had no such check. It does
+now, at the same point in the contract path.
+
+**The stage-input artifact.** The runner wrote `stage{n}-attempt{m}.input.json`
+beside each report and announced it, which is the only way the GUI's stage-input
+pane can show the prompt a stage was given. The loop wrote neither. Deleting the
+runner would have left that pane permanently empty.
+
+**Six timeout knobs, and the watchdog they drive.** `firstOutputTimeoutMs`,
+`inactivityTimeoutMs` and `outputSilenceTimeoutMs`, each with a per-tier map, had
+exactly one consumer: the subprocess watchdog. Deleting it made all six dead
+config — a repo that set them would have been silently ignored. Worse,
+`AgentWatchdog` had been built earlier in this work and never wired in: it was
+referenced only by its own tests, so the loop had no stall detection at all
+beyond a total budget. Both halves are now connected: the config drives the
+watchdog, and a timer evaluates it, because a stall is the ABSENCE of events and
+an event sink alone can never notice one.
+
+**A preflight for a binary that no longer exists.** `MissingRequiredTools` still
+required `swival` on PATH. Left alone it would have reported a missing tool on
+every machine, forever, for a process nothing spawns.
+
+### What the cutover was verified against
+
+A sample repo generated fresh, opened through the Control API, and driven to
+completion with no proxy running and no `swival` binary involved:
+
+| check | result |
+| --- | --- |
+| Task outcome | committed |
+| The repo's own tests | 9 passed |
+| Stages completed | 9 of 9 |
+| Stage-input artifacts written | 9 |
+| Served model in every report | yes, and in the run log per call |
+| Timeline sum vs measured prompt tokens | equal on every stage |
+
+The run log now carries a line per model call naming the concrete model and its
+real token counts. Before this work no surface named anything but the tier alias.
