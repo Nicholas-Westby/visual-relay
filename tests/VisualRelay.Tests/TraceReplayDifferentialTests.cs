@@ -183,4 +183,58 @@ public sealed class TraceReplayDifferentialTests
 
         Assert.True(withTurns > 0, "no sampled trace yielded a single assistant turn");
     }
+
+    /// <summary>
+    /// The loop's own counters agree with what it did on every replayed trace.
+    /// <para>
+    /// The differential compared tool calls only. A loop that reproduces a
+    /// recording exactly can still miscount it, and those counters are what the
+    /// cost estimator and the run history read.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ReplayedTraces_CountWhatTheyActuallyDid()
+    {
+        SkipWithoutCorpus();
+
+        var disagreements = new List<string>();
+        foreach (var trace in Traces().TakeLast(60))
+        {
+            var replay = await TraceReplayHarness.ReplayAsync(trace);
+            if (!replay.StatsAgree)
+                disagreements.Add(
+                    $"{Path.GetFileName(trace)}: {replay.Actual.Count} calls observed but "
+                    + $"stats say {replay.Stats.ToolCallsTotal} "
+                    + $"({replay.Stats.ToolCallsSucceeded} ok, {replay.Stats.ToolCallsFailed} failed), "
+                    + $"turns {replay.Stats.Turns}, llmCalls {replay.Stats.LlmCalls}");
+        }
+
+        Assert.True(disagreements.Count == 0,
+            "replayed traces whose counters disagree with their own behaviour:\n"
+            + string.Join("\n", disagreements));
+    }
+
+    /// <summary>
+    /// A replayed trace finishes the way the recording did. Comparing only tool
+    /// calls would let a loop reproduce every call and still end wrongly.
+    /// </summary>
+    [Fact]
+    public async Task ReplayedTraces_FinishTheWayTheRecordingDid()
+    {
+        SkipWithoutCorpus();
+
+        var wrong = new List<string>();
+        foreach (var trace in Traces().TakeLast(60))
+        {
+            var replay = await TraceReplayHarness.ReplayAsync(trace);
+
+            // Every recorded trace in the corpus is a completed stage: the
+            // recording exists because the stage ran to an answer.
+            if (replay.Outcome != AgentLoopOutcome.Success)
+                wrong.Add($"{Path.GetFileName(trace)}: finished {replay.Outcome}");
+        }
+
+        Assert.True(wrong.Count == 0,
+            "replayed traces that did not finish as the recording did:\n" + string.Join("\n", wrong));
+    }
 }

@@ -22,8 +22,23 @@ public sealed record TraceReplayResult(
     IReadOnlyList<RecordedToolCall> Expected,
     IReadOnlyList<RecordedToolCall> Actual,
     AgentLoopOutcome Outcome,
-    IReadOnlyList<RecordedToolCall> UnportedCalls)
+    IReadOnlyList<RecordedToolCall> UnportedCalls,
+    AgentStats Stats)
 {
+    /// <summary>
+    /// True when the loop's own counters agree with what it actually did.
+    /// <para>
+    /// The differential compared tool calls only, which left the counters that
+    /// every cost and history surface reads unchecked: a loop can reproduce a
+    /// recording exactly and still miscount it.
+    /// </para>
+    /// </summary>
+    public bool StatsAgree =>
+        Stats.ToolCallsTotal == Actual.Count
+        && Stats.ToolCallsSucceeded + Stats.ToolCallsFailed == Stats.ToolCallsTotal
+        && Stats.Turns >= 1
+        && Stats.LlmCalls >= Stats.Turns;
+
     /// <summary>True when the loop reproduced the recorded calls exactly, in order.</summary>
     public bool Matches =>
         Expected.Count == Actual.Count
@@ -136,7 +151,8 @@ public static partial class TraceReplayHarness
             new ToolContext(Path.GetTempPath(), TimeSpan.FromMinutes(5)),
             cancellationToken).ConfigureAwait(false);
 
-        return new TraceReplayResult(expected, observed.Calls, result.Outcome, unported);
+        return new TraceReplayResult(
+            expected, observed.Calls, result.Outcome, unported, result.Stats);
     }
 
     /// <summary>
