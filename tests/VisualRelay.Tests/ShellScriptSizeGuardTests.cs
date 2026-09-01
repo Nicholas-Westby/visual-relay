@@ -118,11 +118,6 @@ public sealed class ShellScriptSizeGuardTests
     }
 
     /// <summary>
-    /// Walks the filesystem at <paramref name="repoRoot"/>, skipping .git
-    /// directories, and returns (relativePath, lines) for every file classified
-    /// as a shell script by <see cref="ShellScriptClassifier"/>.
-    /// </summary>
-    /// <summary>
     /// A nested repository under the root is not this checkout's to judge.
     /// Regression: a linked worktree at <c>.claude/worktrees/&lt;name&gt;</c> carried its
     /// own copy of the launcher, and since the bootstrap carve-out matches only the
@@ -166,6 +161,14 @@ public sealed class ShellScriptSizeGuardTests
         }
     }
 
+    /// <summary>
+    /// Walks the filesystem at <paramref name="repoRoot"/> and returns
+    /// (relativePath, lines) for every file classified as a shell script by
+    /// <see cref="ShellScriptClassifier"/>. Directories are pruned by
+    /// <see cref="IsOursToCheck"/>.
+    /// </summary>
+    /// <param name="repoRoot">The checkout to walk, and the base for relative paths.</param>
+    /// <returns>Every shell script belonging to that checkout.</returns>
     private static List<(string Path, string[] Lines)> EnumerateProjectScripts(string repoRoot)
     {
         var results = new List<(string Path, string[] Lines)>();
