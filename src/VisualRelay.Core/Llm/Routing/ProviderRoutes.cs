@@ -95,6 +95,42 @@ public static class ProviderRoutes
     public static ProviderRoute? For(string alias) => ByAlias.GetValueOrDefault(alias);
 
     /// <summary>
+    /// The catalog alias for a model id a provider echoed back in its response.
+    /// </summary>
+    /// <param name="servedModel">The id the provider named.</param>
+    /// <returns>The alias, or <c>null</c> when no route claims that id.</returns>
+    /// <remarks>
+    /// Pricing is keyed on the alias, but a response names the UPSTREAM id, and
+    /// the two differ on five routes — <c>kimi-k2</c> answers to
+    /// <c>kimi-k2.7-code</c>. Without this the estimator looked the upstream id
+    /// up in the price table, missed, and reported the stage as costing nothing.
+    /// Hugging Face lower-cases the id on the way out and may drop the provider
+    /// pin, so the match ignores case and tolerates a missing suffix.
+    /// </remarks>
+    public static string? AliasForServedModel(string? servedModel)
+    {
+        if (string.IsNullOrWhiteSpace(servedModel)) return null;
+
+        foreach (var (alias, route) in ByAlias)
+            if (string.Equals(route.UpstreamModel, servedModel, StringComparison.Ordinal))
+                return alias;
+
+        var served = Unpinned(servedModel);
+        foreach (var (alias, route) in ByAlias)
+            if (string.Equals(Unpinned(route.UpstreamModel), served, StringComparison.OrdinalIgnoreCase))
+                return alias;
+
+        return null;
+    }
+
+    /// <summary>An upstream id with any <c>:provider</c> pin removed.</summary>
+    private static string Unpinned(string model)
+    {
+        var pin = model.LastIndexOf(':');
+        return pin > 0 ? model[..pin] : model;
+    }
+
+    /// <summary>
     /// The capabilities of whichever provider serves a model alias.
     /// </summary>
     /// <param name="alias">The catalog alias.</param>

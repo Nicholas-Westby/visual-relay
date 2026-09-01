@@ -1,5 +1,6 @@
 using System.Text.Json;
 using VisualRelay.Core.Costs;
+using VisualRelay.Core.Llm.Routing;
 
 namespace VisualRelay.Tests;
 
@@ -138,7 +139,10 @@ public sealed class RelayCostEstimatorMeasuredTests
 
     /// <summary>
     /// A report naming a served model that is not priced falls back to the tier,
-    /// so an unknown route never silently zeroes a cost.
+    /// so an unknown route never silently zeroes a cost. This test used to say
+    /// that in its name and then assert the opposite; the fallback did not
+    /// exist, and any route whose upstream id differed from its catalog alias
+    /// reported the stage as free.
     /// </summary>
     [Fact]
     public void AnUnpricedServedModel_StillPricesThroughTheTier()
@@ -146,8 +150,46 @@ public sealed class RelayCostEstimatorMeasuredTests
         var estimate = RelayCostEstimator.EstimateReport(Parse(
             WithMeasured.Replace("deepseek-v4-flash", "some-new-model", StringComparison.Ordinal)));
 
-        Assert.False(estimate.Priced);
-        Assert.Equal(0, estimate.CostUsd);
+        Assert.True(estimate.Priced);
+        Assert.True(estimate.CostUsd > 0, $"cost was {estimate.CostUsd}");
+    }
+
+    /// <summary>
+    /// An upstream id is translated back to its catalog alias before pricing.
+    /// Moonshot answers to <c>kimi-k2.7-code</c> while the price table is keyed
+    /// on <c>kimi-k2</c>, and five of the nine routes are like this.
+    /// </summary>
+    /// <param name="upstream">The id a provider echoes back.</param>
+    /// <param name="alias">The catalog alias it belongs to.</param>
+    [Theory]
+    [InlineData("kimi-k2.7-code", "kimi-k2")]
+    [InlineData("zai-org/GLM-5.3-Flash:zai-org", "hf-glm-5.3-flash")]
+    [InlineData("zai-org/glm-5.3-flash", "hf-glm-5.3-flash")]
+    public void AnUpstreamId_ResolvesToItsAlias(string upstream, string alias)
+    {
+        Assert.Equal(alias, ProviderRoutes.AliasForServedModel(upstream));
+    }
+
+    /// <summary>An id no route claims resolves to nothing rather than guessing.</summary>
+    [Fact]
+    public void AnUnknownUpstreamId_ResolvesToNothing()
+    {
+        Assert.Null(ProviderRoutes.AliasForServedModel("some-model-nobody-serves"));
+        Assert.Null(ProviderRoutes.AliasForServedModel(null));
+    }
+
+    /// <summary>
+    /// A stage served by a route whose upstream id differs from its alias is
+    /// priced, not reported as free. This is the defect in its live shape.
+    /// </summary>
+    [Fact]
+    public void AStageServedByAPinnedRoute_IsPriced()
+    {
+        var estimate = RelayCostEstimator.EstimateReport(Parse(
+            WithMeasured.Replace("deepseek-v4-flash", "kimi-k2.7-code", StringComparison.Ordinal)));
+
+        Assert.True(estimate.Priced);
+        Assert.True(estimate.CostUsd > 0, $"cost was {estimate.CostUsd}");
     }
 
     /// <summary>Zeroed measured usage is treated as absent rather than free.</summary>

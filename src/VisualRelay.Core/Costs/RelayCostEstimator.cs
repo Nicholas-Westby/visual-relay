@@ -38,7 +38,7 @@ public sealed record RelayCostEstimate(
     int? MeasuredOutputTokens = null,
     int? MeasuredPromptTokens = null);
 
-public static class RelayCostEstimator
+public static partial class RelayCostEstimator
 {
     private const int OutputTokensPerTurn = 50;
 
@@ -128,11 +128,7 @@ public static class RelayCostEstimator
         // A report written by the first-party loop names the concrete model that
         // served the call. Prefer it: the tier alias hides a fallback hop, and
         // the two can price very differently.
-        var pricingKey = ReadString(report, "served_model") is { Length: > 0 } served ? served : model;
-
-        if (!RelayPricing.Default.TryGetValue(pricingKey, out var pricing) &&
-            !(BackendConfigGenerator.DefaultTierResolution.TryGetValue(pricingKey, out var concrete) &&
-              RelayPricing.Default.TryGetValue(concrete, out pricing)))
+        if (ResolvePricing(ReadString(report, "served_model"), model) is not { } pricing)
         {
             return new RelayCostEstimate(model, 0, false, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
         }
