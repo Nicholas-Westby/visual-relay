@@ -25,14 +25,32 @@ public sealed class TraceReplayDifferentialTests
     private static IReadOnlyList<string> Traces() => RecordedTrace.Discover(RepoSetup.Root);
 
     /// <summary>
-    /// The corpus is present. Without it the differential silently passes by
-    /// examining nothing, which is worse than failing.
+    /// The corpus is present, or the differential says so rather than passing on
+    /// nothing.
     /// </summary>
+    /// <remarks>
+    /// This used to be a hard assertion, which made the suite red on any clean
+    /// checkout: the corpus lives under a gitignored <c>.relay/</c> and is
+    /// machine-local run history, not repository content. Absent means skip;
+    /// present-but-thin still fails, because a differential that examines almost
+    /// nothing while reporting green is the failure this guards against.
+    /// </remarks>
     [Fact]
     public void TheRecordedCorpus_IsPresent()
     {
+        SkipWithoutCorpus();
+
         Assert.True(Traces().Count > 100,
             $"expected a corpus of recorded traces under .relay; found {Traces().Count}");
+    }
+
+    /// <summary>Skips when this machine carries no recorded run history.</summary>
+    private static void SkipWithoutCorpus()
+    {
+        if (Traces().Count == 0)
+            Assert.Skip(
+                "no recorded traces under .relay on this machine; the corpus is "
+                + "gitignored run history, so a clean checkout has none.");
     }
 
     /// <summary>
@@ -42,6 +60,8 @@ public sealed class TraceReplayDifferentialTests
     [Fact]
     public async Task RecentTraces_ReplayWithIdenticalToolCalls()
     {
+        SkipWithoutCorpus();
+
         var mismatches = new List<string>();
         var replayed = 0;
 
@@ -71,6 +91,8 @@ public sealed class TraceReplayDifferentialTests
     [Fact]
     public async Task ReplayedTraces_FinishRatherThanExhaust()
     {
+        SkipWithoutCorpus();
+
         var exhausted = new List<string>();
 
         foreach (var trace in Traces().Take(20))
@@ -91,6 +113,8 @@ public sealed class TraceReplayDifferentialTests
     [Fact]
     public async Task EveryRecordedTrace_ReplaysCleanly()
     {
+        SkipWithoutCorpus();
+
         SlowIntegration.SkipIfNotOptedIn(
             "VR_RUN_SLOW_INTEGRATION=1 required for the full-corpus trace differential.");
 
@@ -121,6 +145,8 @@ public sealed class TraceReplayDifferentialTests
     [Fact]
     public async Task DroppedTools_AreRareEnoughToJustifyDroppingThem()
     {
+        SkipWithoutCorpus();
+
         var unported = 0;
         var compared = 0;
 
@@ -148,6 +174,8 @@ public sealed class TraceReplayDifferentialTests
     [Fact]
     public void TheReader_FindsTurnsInARealTrace()
     {
+        SkipWithoutCorpus();
+
         var withTurns = Traces()
             .Take(40)
             .Select(RecordedTrace.ReadTurns)

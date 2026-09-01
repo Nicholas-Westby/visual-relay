@@ -458,3 +458,96 @@ completion with no proxy running and no `swival` binary involved:
 
 The run log now carries a line per model call naming the concrete model and its
 real token counts. Before this work no surface named anything but the tier alias.
+
+## An independent audit of all forty steps, and what it caught
+
+After the cutover I had the spec audited step by step against the tree by an
+agent that had not done the work. It was right and I was over-claiming: I had
+called the implementation complete when several steps were partial and two were
+untouched. What follows is the corrected record.
+
+### Two regressions the cutover introduced, now fixed
+
+**A killed stage lost its report.** `WriteReportAsync` was handed the stage's own
+cancellation token, so cancelling a stage cancelled the write of the report
+describing it — and the catch did not cover `TaskCanceledException` either. The
+write is now uncancellable and happens in a `finally`, so it survives the
+cancellation that used to throw straight past it. Verified by reverting the fix
+and watching the new test fail.
+
+**A watchdog kill reached the driver stripped of its signature.** `SuperviseAsync`
+did `var (outcome, _) = watchdog.Evaluate()`, discarding the `KillSignature` and
+never setting `HardAbort`. The driver's `result.Kill is not null` branches were
+therefore permanently false, so an absolute-ceiling kill, an output-silence kill
+and a socket wedge all arrived as ordinary escalatable errors — the exact
+classification step 27 says to preserve. Both now flow through, with the
+watchdog's own `IsHardAbort` deciding which escalate.
+
+A third defect on the same ground: a reset connection escaped every catch in the
+client and the loop, taking the stage down with no report at all. It is now an
+ordinary route fault the model chain hops past.
+
+### The autopsy artifact, restored
+
+Step 27 also asks for the autopsy file. The subprocess runner had the child's
+captured stdout to write; a cancelled in-process loop returns nothing, so there
+was no output to write and `AutopsyPath` was always null. A bounded transcript
+buffer now keeps the tail of the model's output off the event stream, and a kill
+writes `stage{n}-attempt{m}.killed-output.txt` with the same name and header the
+old version used, so anything reading the archived corpus still reads these.
+
+### A stream that failed was being read as a success
+
+Z.AI signals a mid-stream failure only through `finish_reason`, whose enum
+carries `sensitive` and `network_error` beyond the usual set. Neither was
+handled, so a filtered or upstream-failed response was classified `Completed` and
+its truncated content handed to the loop as though the model meant it. They are
+now failures, and they differ in retryability: a filtered response will be
+filtered again, so it is a bad request; a mid-stream upstream failure is
+transient and stays retryable.
+
+### Still not done, and why
+
+**Step 16 — request goldens.** Not started, and until this audit not recorded as
+skipped either. There is no `Goldens/` directory, no `VR_UPDATE_GOLDENS`, and no
+live suite. This is the largest genuine hole: the per-provider request shapes are
+asserted only by unit tests over `ChatRequestBuilder`, never against a live
+endpoint's acceptance of them.
+
+**Step 39 — shadow mode.** Foreclosed rather than deferred. It requires both
+runners to exist and the old one was deleted. The cutover rests instead on the
+880-trace offline differential, fifteen paid live runs, and a full end-to-end run
+through the Control API.
+
+**Steps 17 and 18 — the LiteLLM template survives.** `tools/backend/litellm-config.yaml`
+is still tracked, still read by the settings panel's tier summary, and still
+shipped. Ten test files assert against it, including per-model timeout ceilings
+that no longer correspond to anything the code uses. The proxy that consumed it
+is gone; the file remains the model catalog's source of truth, and moving that
+into C# is a separate piece of work.
+
+**Step 15 — one shared handler, not one per provider.** Recorded as a deviation
+rather than a gap: `SocketsHttpHandler` already pools per origin, and
+`PooledConnectionLifetime` bounds each connection's age, so the stated goal —
+forcing new connections and refreshing DNS against these load balancers — is met
+without a handler per provider.
+
+**Step 22 — `FencedJsonExtractor` was not deleted.** Two live callers outside the
+agent path still use it. The agent path no longer does, which is what the step
+was for.
+
+**Steps 31 to 35 — the fault and repository matrices are incomplete.** Missing by
+name: a truncated fenced answer, an empty response, a 429 carrying `Retry-After`,
+the exact attempt count on an exhausted retry budget, and three of four
+cancellation cases. Tier B of the repository matrix does not exist, which follows
+from step 5's cassette directory being empty. Three Tier A rows are absent,
+including the spec's own headline row, the six-minute test suite.
+
+**Step 38 — five secondary metrics were not reported:** failed tool calls, retry
+rate, resilience counters, the stage-7 verdict distribution, and
+manifest-violation counts.
+
+One portability defect found alongside: the differential's corpus check was a
+hard assertion against a gitignored directory, so the suite went red on any clean
+checkout. Absent now skips; present-but-thin still fails, which is the case it
+was actually written to catch.
