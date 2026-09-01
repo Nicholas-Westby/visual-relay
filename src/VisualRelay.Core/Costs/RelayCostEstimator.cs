@@ -4,6 +4,26 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Core.Costs;
 
+/// <param name="Model">The tier or model the report named.</param>
+/// <param name="CostUsd">
+/// The authoritative figure, derived the way it always has been. It stays
+/// authoritative until the measured figure has been compared against it over
+/// real runs: switching quietly would change the meaning of every dollar the
+/// app has ever displayed.
+/// </param>
+/// <param name="Priced">Whether the model was found in the pricing table.</param>
+/// <param name="PromptTokens">Derived uncached input tokens.</param>
+/// <param name="CachedTokens">Input tokens served from cache.</param>
+/// <param name="OutputTokens">Derived output tokens.</param>
+/// <param name="DurationSeconds">Model plus tool seconds.</param>
+/// <param name="CacheWriteTokens">Input tokens written to cache.</param>
+/// <param name="Turns">Model calls in the report.</param>
+/// <param name="MeasuredCostUsd">
+/// The same arithmetic over the provider's OWN token counts, when the report
+/// carries them. Null for an archived report, which has none.
+/// </param>
+/// <param name="MeasuredOutputTokens">Output tokens the provider reported.</param>
+/// <param name="MeasuredPromptTokens">Input tokens the provider reported.</param>
 public sealed record RelayCostEstimate(
     string Model,
     double CostUsd,
@@ -13,7 +33,10 @@ public sealed record RelayCostEstimate(
     int OutputTokens,
     double DurationSeconds,
     int CacheWriteTokens = 0,
-    int Turns = 0);
+    int Turns = 0,
+    double? MeasuredCostUsd = null,
+    int? MeasuredOutputTokens = null,
+    int? MeasuredPromptTokens = null);
 
 public static class RelayCostEstimator
 {
@@ -100,9 +123,15 @@ public static class RelayCostEstimator
         var stats = report.TryGetProperty("stats", out var statsValue) ? statsValue : default;
         var (cachedTokens, cacheWriteTokens) = ReadPromptCache(stats);
         var duration = ReadDouble(stats, "total_llm_time_s") + ReadDouble(stats, "total_tool_time_s");
+        var measured = ReadMeasuredUsage(stats);
 
-        if (!RelayPricing.Default.TryGetValue(model, out var pricing) &&
-            !(BackendConfigGenerator.DefaultTierResolution.TryGetValue(model, out var concrete) &&
+        // A report written by the first-party loop names the concrete model that
+        // served the call. Prefer it: the tier alias hides a fallback hop, and
+        // the two can price very differently.
+        var pricingKey = ReadString(report, "served_model") is { Length: > 0 } served ? served : model;
+
+        if (!RelayPricing.Default.TryGetValue(pricingKey, out var pricing) &&
+            !(BackendConfigGenerator.DefaultTierResolution.TryGetValue(pricingKey, out var concrete) &&
               RelayPricing.Default.TryGetValue(concrete, out pricing)))
         {
             return new RelayCostEstimate(model, 0, false, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
@@ -111,13 +140,51 @@ public static class RelayCostEstimator
         var instant = evaluationInstant ?? ReadTimestamp(report);
         var multiplier = GetScheduleMultiplier(pricing, instant);
 
-        var usd = (
-            uncachedTokens * pricing.Input +
-            cachedTokens * pricing.EffectiveCachedInput +
-            cacheWriteTokens * pricing.EffectiveCacheWrite +
-            outputTokens * pricing.Output
-        ) * multiplier / 1_000_000d;
-        return new RelayCostEstimate(model, usd, true, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
+        var usd = Price(pricing, uncachedTokens, cachedTokens, cacheWriteTokens, outputTokens, multiplier);
+
+        // Measured cost is computed ALONGSIDE the estimate, never instead of it.
+        // The estimate stays authoritative until the two have been compared over
+        // real runs; switching silently would change what every historical
+        // dollar figure means without saying so.
+        double? measuredUsd = measured is null
+            ? null
+            : Price(
+                pricing,
+                Math.Max(0, measured.Value.Prompt - measured.Value.Cached),
+                measured.Value.Cached,
+                measured.Value.CacheWrite,
+                measured.Value.Completion,
+                multiplier);
+
+        return new RelayCostEstimate(
+            model, usd, true, uncachedTokens, cachedTokens, outputTokens, duration,
+            cacheWriteTokens, llmCalls.Length, measuredUsd,
+            measured?.Completion, measured?.Prompt);
+    }
+
+    private static double Price(
+        ModelPricing pricing, int uncached, int cached, int cacheWrite, int output, double multiplier) =>
+        (uncached * pricing.Input
+         + cached * pricing.EffectiveCachedInput
+         + cacheWrite * pricing.EffectiveCacheWrite
+         + output * pricing.Output) * multiplier / 1_000_000d;
+
+    /// <summary>
+    /// Reads the measured usage a first-party report carries, or <c>null</c> for
+    /// an archived report that has none.
+    /// </summary>
+    private static (int Prompt, int Completion, int Cached, int CacheWrite)? ReadMeasuredUsage(JsonElement stats)
+    {
+        if (stats.ValueKind != JsonValueKind.Object
+            || !stats.TryGetProperty("measured_usage", out var usage)
+            || usage.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var prompt = ReadInt(usage, "prompt_tokens");
+        var completion = ReadInt(usage, "completion_tokens");
+        if (prompt == 0 && completion == 0) return null;
+
+        return (prompt, completion, ReadInt(usage, "cached_tokens"), ReadInt(usage, "cache_write_tokens"));
     }
 
     /// <summary>
