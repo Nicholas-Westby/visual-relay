@@ -57,8 +57,13 @@ public static class ErrorHintClassifier
         }
 
         // Timeout: timeouts can read as connection issues but have a distinct,
-        // more specific remedy.
-        if (Contains(rawError, "timed out") || Contains(rawError, "timeout"))
+        // more specific remedy. "the stage stalled" is the in-process watchdog's
+        // prefix for all four of its kills (inactivity, socket wedge, output
+        // silence, absolute ceiling). None of those wordings contains "timed out",
+        // so without this key a killed stage reached the user with no hint at all.
+        if (Contains(rawError, "timed out")
+            || Contains(rawError, "timeout")
+            || Contains(rawError, "the stage stalled"))
         {
             return TimeoutHint;
         }
@@ -95,7 +100,8 @@ public static class ErrorHintClassifier
             Contains(rawError, "command execution failed") ||
             Contains(rawError, "command not found") ||
             Contains(rawError, "not on PATH") ||
-            Contains(rawError, "exit 127"))
+            Contains(rawError, "exit 127") ||
+            Contains(rawError, "code 127"))
         {
             return MissingBinaryHint;
         }

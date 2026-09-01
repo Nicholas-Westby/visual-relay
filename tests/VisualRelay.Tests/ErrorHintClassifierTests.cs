@@ -142,6 +142,51 @@ public sealed class ErrorHintClassifierTests
         Assert.Contains("key", authHint, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Every watchdog kill must still land on the timeout hint. The subprocess agent
+    /// phrased these as "… timed out after …", which the generic timeout branch
+    /// matched. The in-process watchdog phrases all four as "the stage stalled: …",
+    /// which contains neither "timed out" nor "timeout", so the cutover silently left
+    /// a killed stage with no actionable hint at all.
+    /// </summary>
+    [Theory]
+    [InlineData("the stage stalled: nothing happened for the inactivity window")]
+    [InlineData("the stage stalled: a request was in flight but produced no output while work continued")]
+    [InlineData("the stage stalled: the model produced nothing for the silence window")]
+    [InlineData("the stage stalled: the stage hit its absolute ceiling")]
+    public void HintFor_WatchdogKill_ReturnsTimeoutHint(string raw)
+    {
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        Assert.Contains("maxTurns", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A stalled stage is not a hanging test suite, so it must not get the
+    /// test-subset guidance meant for <c>test command timed out</c>.
+    /// </summary>
+    [Fact]
+    public void HintFor_WatchdogKill_IsNotTheTestSubsetHint()
+    {
+        var hint = ErrorHintClassifier.HintFor("the stage stalled: the stage hit its absolute ceiling");
+
+        Assert.DoesNotContain("targeted subset", hint!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The missing-binary branch keys on <c>exit 127</c>, but the command tool now
+    /// reports <c>exit code 127</c>. Both spellings must reach the same hint.
+    /// </summary>
+    [Fact]
+    public void HintFor_ExitCode127_SuggestsInstallingTheTool()
+    {
+        var hint = ErrorHintClassifier.HintFor("the command exited with code 127");
+
+        Assert.NotNull(hint);
+        Assert.Contains("install", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void HintFor_UnrecognizedError_ReturnsNull()
     {
