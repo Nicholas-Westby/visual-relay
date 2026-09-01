@@ -357,3 +357,53 @@ task that failed all passed, in 337s, 316s and 351s.
 
 This is the kind of defect no fixture would have produced, because writing the
 fixture requires already knowing that models put braces inside prose about code.
+
+## Chasing a 2x cost gap in the benchmark, and the three bugs behind it
+
+The benchmark reported the first-party arm costing about twice as much per
+cheap-tier stage while the balanced tier agreed to within 1%. Both arms resolve
+the SAME model for both tiers, so that was not a routing difference. Three real
+defects were behind it, all on step 29's ground.
+
+**The report timeline was fabricated.** `AgentReportWriter.BuildTimeline` split
+the stage's total input evenly across calls and accumulated it, so its last
+entry came out equal to the SUM of every call's input. The cost estimator reads
+that last entry as the final context and bills it as fresh input. A real stage
+recorded `[5011, 10022, ... 35077]` against a measured total of 35,081 — a
+perfectly straight line, which no real conversation produces.
+
+The loop already knew the true numbers and threw them away. It now records each
+call's measured input. On a verification run the same stage went from a
+fabricated `[3441, 6882, 10323, 13764, 17205]` to a measured
+`[2898, 3266, 3533, 3631, 3880]`, whose sum is 17,208 and matches the reported
+usage exactly. The uncached input the estimator bills fell from 17,205 to 3,880.
+End to end on one task, the reported cost went from $0.13 to $0.04.
+
+**Five of the nine routes reported every stage as free.** Pricing is keyed on the
+catalog alias, but a provider's response names the UPSTREAM id, and the two
+differ for `kimi-k2` (answers to `kimi-k2.7-code`), `hf-glm-5.3-flash`,
+`hf-qwen3-coder-next` and both `hf-qwen3-vl-*`. The lookup tried the served id,
+missed, and returned "not priced, $0" without ever falling back to the tier.
+DeepSeek happened to echo its own alias, which is the only reason the benchmark
+showed any cost at all. There is now a reverse lookup, case-insensitive and
+tolerant of a missing provider pin because Hugging Face lower-cases the id on the
+way out.
+
+The test that should have caught this was named
+`AnUnpricedServedModel_StillPricesThroughTheTier`, documented the fallback in
+prose, and then asserted `False(Priced)` and `0`. A test whose name and body
+disagree is worse than no test: it reads as coverage.
+
+**No surface ever named the concrete model.** The loop published a usage event
+carrying the served model and the measured tokens; `RelayEventBridge` mapped six
+event kinds and let that one fall through to null. So the trace, the run log and
+the run history all showed `cheap` and `balanced` and nothing else, and a
+fallback hop to a different model was invisible. The trace now carries a line per
+call: `model deepseek-v4-flash-vision-exp  in 2898  out 146  cached 2816`.
+
+**One related defect is deliberately NOT fixed.** Cached tokens are a subset of
+prompt tokens, and the estimate branch bills the full context AND the cached
+count on top, so cache hits are charged twice. This is pre-existing and applies
+to BOTH arms equally, so it does not distort the comparison. Step 29 says to keep
+the estimate authoritative until Phase 6 completes and then switch; changing it
+now would silently rewrite what every historical dollar figure means.
