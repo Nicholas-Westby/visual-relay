@@ -1,6 +1,5 @@
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
-using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;

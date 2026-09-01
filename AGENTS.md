@@ -45,6 +45,19 @@ exempt from those contextual checks. See `docs/commit-messages.md`.
 See `README.md` for the full project overview and `TROUBLESHOOTING.md` for diagnosing the
 dev loop.
 
+## Which agent runs a stage
+
+Two agents can run a stage, chosen by the `VR_AGENT` environment variable:
+
+- unset (default) — the Swival subprocess behind the local LiteLLM proxy.
+- `firstparty` — the in-process turn loop, calling providers directly with no
+  proxy and no `swival` binary.
+
+Both read the same config and write the same `report.json`. The first-party loop
+streams model output into the Activity column while a stage runs; the subprocess
+runner can only fill it in once the stage has exited. Launch with
+`VR_AGENT=firstparty ./visual-relay launch` to compare them on the same task.
+
 ## Driving the running app (control API — PREFERRED over the CLI)
 
 When the desktop app is running it exposes a **loopback-only HTTP control API** so you

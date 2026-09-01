@@ -36,7 +36,8 @@ public sealed class TestCommandValidator(ITestRunner runner)
     ///   - Exit 0                          → accept
     ///   - Non-zero + test-style output    → accept (runner proven, tests may fail)
     ///   - TimedOut                        → reject
-    ///   - Exit 127 + no output            → reject (command not found)
+    ///   - Exit 127                        → reject (command not found)
+    ///   - Non-zero + other output         → reject (missing script or usage error)
     ///   - Non-zero + no output            → reject (usage error)
     /// </summary>
     public static ValidationResult Classify(TestRunResult runResult)
@@ -57,17 +58,28 @@ public sealed class TestCommandValidator(ITestRunner runner)
             return ValidationResult.Accept(runResult);
         }
 
-        // Non-zero with output — runner is proven (tests may legitimately fail).
-        if (hasOutput)
-        {
-            return ValidationResult.Accept(runResult);
-        }
-
-        // Exit 127 with no output — command not found (ENOENT).
+        // Exit 127 — command not found (ENOENT), whatever it printed.
         if (runResult.ExitCode == 127)
         {
             return ValidationResult.Reject(
                 "command not found — the test runner is not installed or not on PATH",
+                runResult);
+        }
+
+        // Non-zero with TEST-STYLE output — the runner is proven and its tests
+        // merely failed. Any output at all is not enough: a repo with no test
+        // script answers `npm test` with an npm error, and accepting that
+        // persisted a command that can never pass as the repo's test command.
+        if (hasOutput && LooksLikeTestOutput(runResult.Output))
+        {
+            return ValidationResult.Accept(runResult);
+        }
+
+        if (hasOutput)
+        {
+            return ValidationResult.Reject(
+                $"command exited with code {runResult.ExitCode} and its output does not look "
+                + "like a test run — it is probably a missing script or a usage error",
                 runResult);
         }
 
@@ -76,6 +88,37 @@ public sealed class TestCommandValidator(ITestRunner runner)
         return ValidationResult.Reject(
             $"command exited with code {runResult.ExitCode} and produced no test output",
             runResult);
+    }
+
+    /// <summary>
+    /// Whether output plausibly came from a test runner rather than from a shell
+    /// or package manager refusing to run one.
+    /// <para>
+    /// The refusals are the discriminating half: <c>npm</c> answers a missing
+    /// script with "Missing script", a shell answers a missing binary with
+    /// "command not found", and both were previously accepted as proof that a
+    /// runner existed.
+    /// </para>
+    /// </summary>
+    /// <param name="output">The captured output.</param>
+    /// <returns>True when the output looks like a test run.</returns>
+    private static bool LooksLikeTestOutput(string output)
+    {
+        foreach (var refusal in (string[])
+                 ["missing script", "command not found", "no such file or directory",
+                  "is not recognized as an internal or external command",
+                  "could not determine executable to run", "unknown command",
+                  "npm error", "no test specified"])
+            if (output.Contains(refusal, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+        foreach (var marker in (string[])
+                 ["pass", "fail", "test", "spec", "assert", "ok ", "error:",
+                  "expected", "✓", "✗"])
+            if (output.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+        return false;
     }
 }
 

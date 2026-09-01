@@ -22,6 +22,24 @@ VisualRelay.Backend stop     # SIGTERM then SIGKILL, and removes the PID file
 
 `start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under `$XDG_DATA_HOME/visual-relay/scratch/` (`litellm.pid`, `litellm.log`).
 
+### Choosing the agent
+
+Two agents can run a stage, selected by the `VR_AGENT` environment variable:
+
+| Value | Agent |
+| --- | --- |
+| unset (default) | The Swival subprocess behind the local LiteLLM proxy. |
+| `firstparty` | The in-process turn loop, calling providers directly. |
+
+The first-party loop needs no proxy and no `swival` binary. It resolves provider
+keys the same way everything else does (process environment first, then the
+user-level `.env`), routes each tier's chain to the providers itself, and streams
+what the model produces into the Activity column as it arrives rather than when
+the stage ends.
+
+Both read the same configuration and write the same `report.json`, so a run under
+either is directly comparable with the archived corpus.
+
 ### Provider keys
 
 The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap`, `balanced`, `frontier`, `vision`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.3-flash`, `hf-glm-5.3-flash`, `fallback`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`.

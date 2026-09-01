@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class TestCommandValidatorTests
+public sealed partial class TestCommandValidatorTests
 {
     // ── Classify (static pure function) ────────────────────────────────
 

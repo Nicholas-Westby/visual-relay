@@ -40,7 +40,14 @@ Each stage carries its tier, file access scope, command scope, prompt, and JSON 
 - Run log pane: structured events filtered by task, stage, level, and run id; clicking a stage toggles between that stage log and the full task log.
 
 ## Execution Model
-Runs are serialized. A `RelayQueueController` owns the in-memory queue order, selected task, run state, pause request, and boundary decisions. A `RelayDriver` owns one task's staged execution and emits structured events. The app invokes Swival directly through a C# runner, generates a temporary local proxy profile when needed, tails Swival JSONL traces live, and supports reliable simulated runners for tests.
+Runs are serialized. A `RelayQueueController` owns the in-memory queue order, selected task, run state, pause request, and boundary decisions. A `RelayDriver` owns one task's staged execution and emits structured events. Reliable simulated runners back the tests.
+
+Which agent runs a stage is chosen by `SubagentRunnerFactory`, and there are two:
+
+- **The subprocess runner (default).** Invokes Swival through a C# runner and generates a temporary local proxy profile when needed. It reads Swival's JSONL transcript, but that transcript is written *at process exit*: measured across 957 archived stages, 99.96% of agent wall time carries no live model output at all, so the LLM command pane stays empty for the duration of every stage and fills in only once the stage ends.
+- **The first-party loop** (`VR_AGENT=firstparty`). Runs the turn loop in this process and calls the providers directly, with no proxy. It publishes token deltas, tool calls and interventions as they happen, so the LLM command pane populates *while the stage is running*.
+
+The two are selectable so they can be compared on real drains before either is removed.
 
 ## Safety
 - The app never runs two Relay tasks at once.

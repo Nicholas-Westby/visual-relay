@@ -182,3 +182,63 @@ be accepted.
 This is the largest single piece of unfinished business in the tool set. Either
 the checkpoint tool should be implemented under this name and the working-tree
 report renamed, or the name should be retired and the 146 calls accounted for.
+
+## The first-party loop, driven end to end
+
+A full twelve-stage task was run through the new loop against real providers via
+the control API, on a throwaway repo, asking for a `multiply` function beside an
+existing `add`.
+
+| Measure | Value |
+| --- | --- |
+| Wall clock | 4 min 28 s |
+| Stages executed | 9 (visual review and fix correctly skipped) |
+| Outcomes | 9 success, 0 error, 0 exhausted, 0 retries |
+| Turns / tool calls | 38 / 51 |
+| LLM time / tool time | 256 s / 8.4 s |
+| Models actually served | deepseek-v4-flash-vision-exp, deepseek-v4-pro, glm-5.3-flash |
+| Compactions, storms, guardrail firings | 0, 0, 0 |
+| turn_drops, scavenged_calls | 0, 0 |
+
+The agent added `multiply`, registered both prescribed cases, took the suite from
+one passing test to three, and committed.
+
+### The headline: output is visible while a stage runs
+
+Captured mid-run, with stage 2 still executing, the Commands tab held **130
+entries, every one stamped `s02`** — the running stage — showing live
+`run_command` calls and streaming reasoning. The same capture under the previous
+runner showed 22 entries, all stamped `s01`, from the stage that had already
+finished, while the running stage showed nothing at all.
+
+### Measured cost against the old estimate, same run
+
+The previous estimator computed output as `ceil(answer.Length / 4) + calls * 50`.
+Against the provider's own numbers on this run:
+
+| Stage | Measured output | Old estimate | Under-count |
+| --- | --- | --- | --- |
+| 1 | 2364 | 1014 | 2.3x |
+| 2 | 5558 | 1949 | 2.9x |
+| 3 | 2431 | 565 | 4.3x |
+| 4 | 1253 | 443 | 2.8x |
+| 5 | 2198 | 356 | 6.2x |
+| **Total** | **13804** | **4327** | **3.2x** |
+
+Reasoning was 10,065 of 17,942 output tokens across the whole run — 56% — which
+is why a length-derived estimate cannot work on these models. Every figure is
+attributed to the concrete model that served the call, so a fallback hop is no
+longer invisible.
+
+### Two bugs this run found that no fixture could
+
+**Provider keys were resolved from the process environment only.** They live in
+the user-level `.env` the key panel writes, so every tier resolved to "no model
+is available" on a machine with all four keys set. Fixed by resolving through
+both, in the documented precedence.
+
+**The contract reader accepted balanced prose.** It took the last brace-balanced
+span without checking it parsed, so a sentence containing `{file, line}` written
+after the contract block won, and the stage was flagged with a parse error
+against prose while the real contract sat just above it. The extractor it
+replaced checked that candidates parse; this one now does too.

@@ -14,7 +14,7 @@ public partial class MainWindowViewModel
     /// The environment seam every runner-construction site reads, falling back
     /// to the real process environment when nothing was injected.
     /// </summary>
-    internal IEnvironmentAccessor Env => EnvironmentAccessor ?? new SystemEnvironmentAccessor();
+    private IEnvironmentAccessor Env => EnvironmentAccessor ?? new SystemEnvironmentAccessor();
 
     /// <summary>Builds the agent for a stage, honouring the agent selector.</summary>
     /// <param name="config">The repository's relay configuration.</param>
