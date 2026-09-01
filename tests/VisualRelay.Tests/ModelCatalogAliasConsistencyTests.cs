@@ -3,32 +3,32 @@ using VisualRelay.Core.Costs;
 
 namespace VisualRelay.Tests;
 
-public sealed class BackendConfigGeneratorAliasConsistencyTests
+public sealed class ModelCatalogAliasConsistencyTests
 {
     // ── Cross-file tier-name consistency ────────────────────────────────
 
     /// <summary>
-    /// (1) Every tier alias in <see cref="BackendConfigGenerator.Chains"/> has a
-    ///     <see cref="BackendConfigGenerator.DefaultTierResolution"/> entry.
-    /// (2) Every <see cref="BackendConfigGenerator.DefaultTierResolution"/> value has a
+    /// (1) Every tier alias in <see cref="ModelCatalog.Chains"/> has a
+    ///     <see cref="ModelCatalog.DefaultTierResolution"/> entry.
+    /// (2) Every <see cref="ModelCatalog.DefaultTierResolution"/> value has a
     ///     <see cref="RelayPricing.Default"/> entry.
     /// (3) No tier alias appears as a pricing key (concrete models only).
     /// </summary>
     [Fact]
     public void TierAliasNames_AreConsistentAcrossBackendConfigAndPricing()
     {
-        var tierAliases = BackendConfigGenerator.Chains.Keys.ToHashSet(StringComparer.Ordinal);
+        var tierAliases = ModelCatalog.Chains.Keys.ToHashSet(StringComparer.Ordinal);
 
         // 1. Every tier alias must have a DefaultTierResolution entry.
         foreach (var tier in tierAliases)
         {
             Assert.True(
-                BackendConfigGenerator.DefaultTierResolution.ContainsKey(tier),
+                ModelCatalog.DefaultTierResolution.ContainsKey(tier),
                 $"tier '{tier}' missing from DefaultTierResolution");
         }
 
         // 2. Every DefaultTierResolution value must have a RelayPricing.Default entry.
-        foreach (var (tier, concrete) in BackendConfigGenerator.DefaultTierResolution)
+        foreach (var (tier, concrete) in ModelCatalog.DefaultTierResolution)
         {
             Assert.True(
                 RelayPricing.Default.ContainsKey(concrete),

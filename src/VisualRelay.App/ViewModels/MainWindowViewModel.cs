@@ -192,12 +192,8 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 
-    // Backend reachability surfaced to the UI. Defaults to false so a test
-    // can observe the effect of RefreshBackendStatusAsync (StartBackground-
-    // Inspections fires the probe before the window first paints, so no
-    // banner flash is visible). The later top-bar status task reuses this
-    // state + RefreshBackendStatusAsync rather than running a second probe.
-    // Injectable so tests can supply a fake completer; defaults to the frontier proxy.
+    // Injectable so tests can supply a fake completer; the default asks the
+    // frontier tier's provider directly.
     public LlmTestCommandFinder TestCommandFinder { get; init; } =
         new(new ProviderTestCommandCompleter(
             LiveProviderTransport.CreateDefault(), new SystemEnvironmentAccessor()).CompleteAsync);

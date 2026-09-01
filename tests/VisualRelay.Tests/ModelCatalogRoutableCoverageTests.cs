@@ -5,20 +5,20 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Every model the catalog chains or offers must actually be routable.
 /// <para>
-/// This compared against the proxy's YAML <c>model_list</c>. The routes are the
-/// list now, so a chain or a selectable entry naming a model nothing routes is
-/// caught here rather than at the first request that needs it.
+/// The route table is the list of what exists, so a chain or a selectable entry
+/// naming a model nothing routes is caught here rather than at the first request
+/// that needs it.
 /// </para>
 /// </summary>
-public sealed class BackendConfigGeneratorTemplateCoverageTests
+public sealed class ModelCatalogRoutableCoverageTests
 {
     /// <summary>Every chained model is routable.</summary>
     [Fact]
     public void Chains_EveryModelIsRoutable()
     {
-        var problems = BackendConfigGeneratorTestHelpers.FindCatalogProblems(
-            BackendConfigGeneratorTestHelpers.RoutableModels(),
-            chains: BackendConfigGenerator.Chains);
+        var problems = ModelCatalogTestHelpers.FindCatalogProblems(
+            ModelCatalogTestHelpers.RoutableModels(),
+            chains: ModelCatalog.Chains);
 
         Assert.Empty(problems);
     }
@@ -27,9 +27,9 @@ public sealed class BackendConfigGeneratorTemplateCoverageTests
     [Fact]
     public void SelectableModelsByTier_EveryModelIsRoutable()
     {
-        var problems = BackendConfigGeneratorTestHelpers.FindCatalogProblems(
-            BackendConfigGeneratorTestHelpers.RoutableModels(),
-            selectable: BackendConfigGenerator.SelectableModelsByTier);
+        var problems = ModelCatalogTestHelpers.FindCatalogProblems(
+            ModelCatalogTestHelpers.RoutableModels(),
+            selectable: ModelCatalog.SelectableModelsByTier);
 
         Assert.Empty(problems);
     }
@@ -41,9 +41,9 @@ public sealed class BackendConfigGeneratorTemplateCoverageTests
     [Fact]
     public void TheGuard_ReportsAModelNothingRoutes()
     {
-        var problems = BackendConfigGeneratorTestHelpers.FindCatalogProblems(
+        var problems = ModelCatalogTestHelpers.FindCatalogProblems(
             routable: [],
-            selectable: BackendConfigGenerator.SelectableModelsByTier);
+            selectable: ModelCatalog.SelectableModelsByTier);
 
         Assert.NotEmpty(problems);
         Assert.All(problems, p => Assert.Contains("selectable but not routable", p, StringComparison.Ordinal));

@@ -9,31 +9,30 @@ namespace VisualRelay.Tests;
 /// "exp" model is experimental and DeepSeek can withdraw it without notice, so
 /// the text-only Flash is demoted rather than dropped: it sits directly behind
 /// as the first fallback, where a withdrawal costs one failed round trip instead
-/// of the whole tier. Image input does not survive litellm's DeepSeek route, so
-/// this is a text tier in practice — see the model_list entry in
-/// <c>litellm-config.yaml</c>.
+/// of the whole tier. Images DO reach the model on the direct path, but the
+/// vision tier is still the one sized and priced for image work.
 /// </summary>
-public sealed class BackendConfigGeneratorDeepSeekCheapTierTests
+public sealed class ModelCatalogDeepSeekCheapTierTests
 {
     [Fact]
     public void Cheap_ResolvesToFlashVisionExp_WhenDeepSeekKeyPresent()
     {
         var present = new HashSet<string> { "DEEPSEEK_API_KEY", "HF_TOKEN" };
 
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
         Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
 
         // Demoted, not removed: the text-only Flash is the first fallback.
         Assert.Equal("deepseek-v4-flash", fallbacks["cheap"][0]);
-        Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback("cheap", fallbacks));
+        Assert.True(ModelCatalogTestHelpers.ChainTerminatesInFallback("cheap", fallbacks));
     }
 
     [Fact]
     public void Cheap_TierRow_ReportsDeepSeekAsTheProvider()
     {
-        var rows = BackendConfigGenerator.GetTierRows(
+        var rows = ModelCatalog.GetTierRows(
             new HashSet<string> { "DEEPSEEK_API_KEY", "HF_TOKEN" });
 
         var cheap = rows.Single(r => r.Tier == "cheap");
@@ -41,7 +40,7 @@ public sealed class BackendConfigGeneratorDeepSeekCheapTierTests
         Assert.Equal("DeepSeek", cheap.ProviderName);
         Assert.True(cheap.KeyPresent);
 
-        Assert.Equal("DeepSeek", BackendConfigGenerator.ProviderFor("deepseek-v4-flash-vision-exp"));
+        Assert.Equal("DeepSeek", ModelCatalog.ProviderFor("deepseek-v4-flash-vision-exp"));
     }
 
     /// <summary>
@@ -53,7 +52,7 @@ public sealed class BackendConfigGeneratorDeepSeekCheapTierTests
     [Fact]
     public void BothFlashRoutes_AreSelectableForTheCheapTier()
     {
-        var cheap = BackendConfigGenerator.SelectableModelsByTier["cheap"];
+        var cheap = ModelCatalog.SelectableModelsByTier["cheap"];
 
         Assert.Equal("deepseek-v4-flash-vision-exp", cheap[0]);
         Assert.Contains("deepseek-v4-flash", cheap);
@@ -107,9 +106,9 @@ public sealed class BackendConfigGeneratorDeepSeekCheapTierTests
     {
         Assert.Equal(
             "deepseek-v4-flash-vision-exp",
-            BackendConfigGeneratorTestHelpers.UpstreamModel("deepseek-v4-flash-vision-exp"));
+            ModelCatalogTestHelpers.UpstreamModel("deepseek-v4-flash-vision-exp"));
 
-        var timeouts = BackendConfigGeneratorTestHelpers.ModelTimeouts();
+        var timeouts = ModelCatalogTestHelpers.ModelTimeouts();
         Assert.Equal(timeouts["deepseek-v4-flash"], timeouts["deepseek-v4-flash-vision-exp"]);
     }
 }

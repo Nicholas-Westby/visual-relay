@@ -21,12 +21,12 @@ public sealed partial class SettingsPanelUiTests
         var dialog = await OpenScopedSettingsAsync(repo);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
-        Assert.NotNull(litTierItems);
+        var liveTierItems = SettingsTestHelpers.FindLiveTierItems(panel);
+        Assert.NotNull(liveTierItems);
 
         Dispatcher.UIThread.RunJobs();
 
-        var rows = litTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
+        var rows = liveTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
 
@@ -55,10 +55,10 @@ public sealed partial class SettingsPanelUiTests
         Dispatcher.UIThread.RunJobs();
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
-        Assert.NotNull(litTierItems);
+        var liveTierItems = SettingsTestHelpers.FindLiveTierItems(panel);
+        Assert.NotNull(liveTierItems);
 
-        var rows = litTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
+        var rows = liveTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
         Assert.NotNull(rows);
 
         var fallback = rows!.FirstOrDefault(r => r.Tier == "fallback");
@@ -81,10 +81,10 @@ public sealed partial class SettingsPanelUiTests
         Dispatcher.UIThread.RunJobs();
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var litTierItems = SettingsTestHelpers.FindLitTierItems(panel);
-        Assert.NotNull(litTierItems);
+        var liveTierItems = SettingsTestHelpers.FindLiveTierItems(panel);
+        Assert.NotNull(liveTierItems);
 
-        var rows = litTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
+        var rows = liveTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
         Assert.NotNull(rows);
 
         var cheap = rows!.FirstOrDefault(r => r.Tier == "cheap");

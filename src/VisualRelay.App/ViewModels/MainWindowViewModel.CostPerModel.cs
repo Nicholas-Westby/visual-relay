@@ -17,7 +17,7 @@ public partial class MainWindowViewModel
     /// <summary>
     /// Populate the cost-panel cards from pricing data and tier assignments.
     /// When <paramref name="tierAssignments"/> is <c>null</c>, the default
-    /// tier→concrete-model resolution (<see cref="BackendConfigGenerator.DefaultTierResolution"/>)
+    /// tier→concrete-model resolution (<see cref="ModelCatalog.DefaultTierResolution"/>)
     /// is used so the panel reflects the auto-resolution before keys are loaded.
     /// The card list is the union of <see cref="RelayPricing.Default"/> keys and
     /// the assignment values, so an override pointing at a model with no pricing
@@ -25,7 +25,7 @@ public partial class MainWindowViewModel
     /// </summary>
     public void PopulateModelCostRows(IReadOnlyDictionary<string, string>? tierAssignments = null)
     {
-        tierAssignments ??= BackendConfigGenerator.DefaultTierResolution;
+        tierAssignments ??= ModelCatalog.DefaultTierResolution;
 
         ModelCostRows.Clear();
 

@@ -4,10 +4,11 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Per-model timeout ceilings, now expressed as the four budgets each route
-/// carries rather than the proxy's single <c>timeout:</c> number.
+/// carries rather than one number per model.
 /// <para>
-/// The proxy had one hard ceiling per model — 75s for DeepSeek, 120s for the HF
-/// routes, 480s for the frontier ones — because one number was all it had. The
+/// There used to be a single hard ceiling per model — 75s for DeepSeek, 120s for
+/// the HF routes, 480s for the frontier ones — because one number was all the
+/// layer underneath could express. The
 /// in-process client separates connect, time-to-first-byte, inter-chunk idle and
 /// total, so a stall is caught by the idle budget in seconds while a legitimately
 /// slow reasoning model still gets the wall clock it needs. The guard the old
@@ -15,7 +16,7 @@ namespace VisualRelay.Tests;
 /// reasoning model is given longer to start talking than a fast one.
 /// </para>
 /// </summary>
-public sealed class BackendConfigGeneratorPerModelTimeoutTests
+public sealed class ModelCatalogPerModelTimeoutTests
 {
     private static readonly string[] Reasoning = ["glm-5.3-flash", "hf-glm-5.3-flash", "kimi-k2"];
 

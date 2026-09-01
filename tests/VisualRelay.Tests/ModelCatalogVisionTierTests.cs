@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 /// strings in the template and asserts the all-vision-capable invariant
 /// for the chain and selectable lists.
 /// </summary>
-public sealed class BackendConfigGeneratorVisionTierTests
+public sealed class ModelCatalogVisionTierTests
 {
     /// <summary>Models known to be vision-capable in the current config.</summary>
     private static readonly HashSet<string> VisionCapableModels =
@@ -23,7 +23,7 @@ public sealed class BackendConfigGeneratorVisionTierTests
     [Fact]
     public void VisionRoute_Vl235bModelString_IsAutoRouted()
     {
-        var upstream = BackendConfigGeneratorTestHelpers.UpstreamModel("hf-qwen3-vl-235b");
+        var upstream = ModelCatalogTestHelpers.UpstreamModel("hf-qwen3-vl-235b");
 
         Assert.Equal("Qwen/Qwen3-VL-235B-A22B-Instruct", upstream);
         Assert.DoesNotContain(":", upstream!, StringComparison.Ordinal);
@@ -33,7 +33,7 @@ public sealed class BackendConfigGeneratorVisionTierTests
     [Fact]
     public void VisionRoute_Vl30bModelString_IsAutoRouted()
     {
-        var upstream = BackendConfigGeneratorTestHelpers.UpstreamModel("hf-qwen3-vl-30b");
+        var upstream = ModelCatalogTestHelpers.UpstreamModel("hf-qwen3-vl-30b");
 
         Assert.Equal("Qwen/Qwen3-VL-30B-A3B-Instruct", upstream);
         Assert.DoesNotContain(":", upstream!, StringComparison.Ordinal);
@@ -44,7 +44,7 @@ public sealed class BackendConfigGeneratorVisionTierTests
     [Fact]
     public void VisionChain_HasExactMembership()
     {
-        Assert.True(BackendConfigGenerator.Chains.TryGetValue("vision", out var chain));
+        Assert.True(ModelCatalog.Chains.TryGetValue("vision", out var chain));
         var models = chain.Select(c => c.Model).ToHashSet();
 
         Assert.Equal(VisionCapableModels, models);
@@ -60,7 +60,7 @@ public sealed class BackendConfigGeneratorVisionTierTests
     public void VisionSelectable_HasExactMembership()
     {
         Assert.True(
-            BackendConfigGenerator.SelectableModelsByTier.TryGetValue("vision", out var selectable));
+            ModelCatalog.SelectableModelsByTier.TryGetValue("vision", out var selectable));
 
         Assert.Equal(VisionCapableModels, selectable.ToHashSet());
 
@@ -74,8 +74,8 @@ public sealed class BackendConfigGeneratorVisionTierTests
     public void VisionFallbackChain_OnlyVisionModels_WithHfToken()
     {
         var present = new HashSet<string> { "HF_TOKEN" };
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
         Assert.True(aliases.ContainsKey("vision"));
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
@@ -93,8 +93,8 @@ public sealed class BackendConfigGeneratorVisionTierTests
         Assert.DoesNotContain("deepseek-v4-pro", chain);
         Assert.DoesNotContain("deepseek-v4-flash", chain);
         // Named "vision" and image-capable upstream, but it is the cheap-tier
-        // primary and litellm's DeepSeek route drops image parts — the vision
-        // chain stays the two VL models the tier is sized and priced around.
+        // primary — the vision chain stays the two VL models the tier is sized
+        // and priced around.
         Assert.DoesNotContain("deepseek-v4-flash-vision-exp", chain);
         // Vision-capable or not, the frontier primary is not a vision route: GLM
         // 5.3 Flash does take images, but the vision chain stays the two VL
@@ -109,13 +109,13 @@ public sealed class BackendConfigGeneratorVisionTierTests
     public void VisionAlias_IsHfQwen3Vl235b_WhenHfTokenPresent()
     {
         var present = new HashSet<string> { "HF_TOKEN" };
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
 
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
 
         // Also true with additional keys present.
         var trio = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY" };
-        var trioAliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(trio);
+        var trioAliases = ModelCatalogTestHelpers.GeneratedAliases(trio);
         Assert.Equal("hf-qwen3-vl-235b", trioAliases["vision"]);
     }
 
@@ -127,18 +127,18 @@ public sealed class BackendConfigGeneratorVisionTierTests
         // No HF_TOKEN → both VL models unavailable → vision tier skipped
         // entirely, so a vision request produces a "model not found" error
         // instead of a silent text-model answer.
-        // With no key at all, no tier resolves to anything. The stage then
-        // fails naming the key that would fix it, rather than the proxy's old
-        // behaviour of falling back to a static config it could not authenticate.
+        // With no key at all, no tier resolves to anything. The stage then fails
+        // naming the key that would fix it, rather than the old behaviour of
+        // resolving to a model it had no key to authenticate with.
         var noKeys = new HashSet<string>();
-        Assert.Empty(BackendConfigGeneratorTestHelpers.GeneratedAliases(noKeys));
+        Assert.Empty(ModelCatalogTestHelpers.GeneratedAliases(noKeys));
 
         var dsOnly = new HashSet<string> { "DEEPSEEK_API_KEY" };
-        var dsAliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(dsOnly);
+        var dsAliases = ModelCatalogTestHelpers.GeneratedAliases(dsOnly);
         Assert.False(dsAliases.ContainsKey("vision"));
 
         var moonshotOnly = new HashSet<string> { "MOONSHOT_API_KEY" };
-        var msAliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(moonshotOnly);
+        var msAliases = ModelCatalogTestHelpers.GeneratedAliases(moonshotOnly);
         Assert.False(msAliases.ContainsKey("vision"));
     }
 }

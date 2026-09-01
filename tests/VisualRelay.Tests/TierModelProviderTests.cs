@@ -18,7 +18,7 @@ public sealed class TierModelProviderTests
         var vm = new MainWindowViewModel(env) { RootPath = repo.Root };
         await vm.OpenSettingsAsync();
 
-        var frontier = vm.LitTierRows.First(r => r.Tier == "frontier");
+        var frontier = vm.LiveTierRows.First(r => r.Tier == "frontier");
         Assert.Equal("kimi-k2", frontier.SelectedModel);
         Assert.Equal("Moonshot", frontier.ProviderName);
     }

@@ -5,7 +5,7 @@ namespace VisualRelay.Tests;
 // The 'K2_7' segment encodes the Kimi K2.7 model id under test; the underscore
 // is a deliberate, meaningful part of the name, not a naming-convention slip.
 // ReSharper disable once InconsistentNaming
-public sealed class BackendConfigGeneratorKimiK2_7UpstreamTests
+public sealed class ModelCatalogKimiK2_7UpstreamTests
 {
     // ── Kimi K2.7 Code upstream model id ─────────────────────────────────
 
@@ -13,14 +13,14 @@ public sealed class BackendConfigGeneratorKimiK2_7UpstreamTests
     /// The kimi-k2 alias points at the Kimi K2.7 Code upstream model
     /// (kimi-k2.7-code, released 2026-06-12), not the older K2.6.
     /// <para>
-    /// This used to read the proxy's YAML template. The catalog is the source
+    /// This used to read a generated config template. The catalog is the source
     /// of truth now, so it reads the route.
     /// </para>
     /// </summary>
     [Fact]
     public void KimiK2_UpstreamModel_IsKimiK2_7Code()
     {
-        var upstream = BackendConfigGeneratorTestHelpers.UpstreamModel("kimi-k2");
+        var upstream = ModelCatalogTestHelpers.UpstreamModel("kimi-k2");
 
         Assert.NotNull(upstream);
         Assert.Contains("kimi-k2.7-code", upstream, StringComparison.Ordinal);
@@ -35,9 +35,9 @@ public sealed class BackendConfigGeneratorKimiK2_7UpstreamTests
     public void KimiK2_WhenChained_ReachesTheK2_7Upstream()
     {
         var present = new HashSet<string> { "HF_TOKEN", "MOONSHOT_API_KEY" };
-        var chains = BackendConfigGeneratorTestHelpers.GeneratedAliases(present)
+        var chains = ModelCatalogTestHelpers.GeneratedAliases(present)
             .Values.Concat(
-                BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present).Values.SelectMany(v => v))
+                ModelCatalogTestHelpers.GeneratedFallbacks(present).Values.SelectMany(v => v))
             .Distinct(StringComparer.Ordinal)
             .ToList();
 

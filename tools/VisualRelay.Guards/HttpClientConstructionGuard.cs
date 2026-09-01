@@ -49,8 +49,8 @@ public static class HttpClientConstructionGuard
 
     /// <summary>
     /// The allowlist, keyed by bare filename, each entry carrying the reason it is
-    /// allowed. Two entries are permanent composition roots; three are dated,
-    /// explicitly temporary carry-overs that pre-date the transport seam. Widening
+    /// allowed. Two entries are permanent composition roots; one is a dated,
+    /// explicitly temporary carry-over that pre-dates the transport seam. Widening
     /// this map without a reason string is the thing the guard exists to prevent.
     /// </summary>
     private static readonly Dictionary<string, string> AllowedFileNames = new(StringComparer.Ordinal)
@@ -61,10 +61,7 @@ public static class HttpClientConstructionGuard
         ["HermeticHttpHandler.cs"] =
             "the test assembly's one HTTP composition root; every handler it builds refuses a non-loopback connect",
 
-        // ── Dated temporary carry-overs (pre-date the IProviderTransport seam) ──
-        // 2026-08-31: probes the LOCAL model backend (127.0.0.1 LiteLLM proxy) for
-        // readiness, not a provider. Migrating it needs a non-provider transport
-        // seam that does not exist yet; out of scope for this step.
+        // ── Dated temporary carry-over (pre-dates the IProviderTransport seam) ──
         // 2026-08-31: one-off installer download of the mxc archive. Not an LLM
         // call, already gated behind an injectable download delegate in tests.
         ["MxcInstaller.cs"] = "TEMPORARY 2026-08-31 — one-off installer download, injectable delegate in tests",

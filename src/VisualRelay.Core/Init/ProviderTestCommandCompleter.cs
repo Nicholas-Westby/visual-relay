@@ -10,11 +10,11 @@ namespace VisualRelay.Core.Init;
 /// Asks a provider directly for a one-line completion, for the init-time test
 /// command guess.
 /// <para>
-/// This replaces a raw <c>HttpClient</c> POST to the local proxy — the last
+/// This replaces a raw <c>HttpClient</c> POST to a local endpoint — the last
 /// place in the project that called a model over HTTP by itself, and the only
 /// one with no test coverage at all. It now goes through the same transport
 /// seam, the same route catalog and the same key resolution as the agent loop,
-/// so it can be exercised offline and needs no proxy.
+/// so it can be exercised offline.
 /// </para>
 /// </summary>
 /// <param name="transport">The transport to send through.</param>
@@ -63,7 +63,7 @@ public sealed class ProviderTestCommandCompleter(
         var present = _keys.PresentKeys();
         if (present.Count == 0) return null;
 
-        return BackendConfigGenerator.ResolveChains(present).TryGetValue(tier, out var models)
+        return ModelCatalog.ResolveChains(present).TryGetValue(tier, out var models)
             ? models.Select(ProviderRoutes.For).OfType<ProviderRoute>()
                 .FirstOrDefault(route => present.Contains(route.ApiKeyEnvVar))
             : null;

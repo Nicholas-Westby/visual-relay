@@ -71,7 +71,7 @@ public sealed partial class SplitGuardVerificationTests
     /// FromAutoInclude_WhenCreatedMidRun in GitCommitterAutoIncludeTests.TasksDir.cs).
     /// +3 on 2026-06-14 (Kimi K2.7 Code upgrade: KimiK2_UpstreamModel_IsKimiK2_7Code,
     /// KimiK2_GeneratedConfig_ContainsKimiK2_7Code, KimiK2_Template_DoesNotContainK2_6
-    /// in BackendConfigGeneratorTests.KimiK2_7Upstream.cs).
+    /// in ModelCatalogTests.KimiK2_7Upstream.cs).
     ///
     /// Baseline composition:
     ///   SandboxedStageWatchdogTests.cs (+ .CpuPulse.cs,
@@ -80,7 +80,7 @@ public sealed partial class SplitGuardVerificationTests
     ///   GitCommitterTests.cs + .CommitMsgHooks.cs                 10
     ///   RelayDriverResumeTests.cs (+ .CommitGate.cs, .ReAdd.cs,
     ///     .ReAdd2.cs)                                               9
-    ///   BackendConfigGeneratorTests.cs                            17
+    ///   ModelCatalogTests.cs                            17
     ///   GitCommitterAutoIncludeTests.cs + .Snapshot.cs            14
     ///   RelayDriverGitCommitTests.cs (+ .ResumeCommit.cs,
     ///     .GitignoredBackstop.cs)                                 10
@@ -96,8 +96,8 @@ public sealed partial class SplitGuardVerificationTests
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
         // Bumped 149→150 on 2026-06-18: the GLM 5.2 frontier upgrade added
-        // PerModelTimeout_FrontierGlm52Has480s to the BackendConfigGeneratorTests
-        // family (BackendConfigGeneratorTests.PerModelTimeout.cs).
+        // PerModelTimeout_FrontierGlm52Has480s to the ModelCatalogTests
+        // family (ModelCatalogTests.PerModelTimeout.cs).
         // Bumped 150→156 on 2026-06-21: the in-run agent self-commit squash added
         // 5 facts to the GitCommitterTests family (GitCommitterTests.RunBaseSquash.cs)
         // and 1 to the RelayDriverGitCommitTests family
@@ -125,8 +125,8 @@ public sealed partial class SplitGuardVerificationTests
         // stage's nonzero exit added RunAsync_ModelAuthFailureSurfacesProxyAuthCause-
         // NotPromptEcho to the SandboxedStageTests family.
         // Bumped 150→152 on 2026-06-22: the improve-live-tiers-ui task added two
-        // TierRows_* [Fact]s to the BackendConfigGeneratorTests family
-        // (BackendConfigGeneratorTests.cs: TierRows_HfOnlyAndDeepSeek,
+        // TierRows_* [Fact]s to the ModelCatalogTests family
+        // (ModelCatalogTests.cs: TierRows_HfOnlyAndDeepSeek,
         // TierRows_ClaudePresentAndEmptyKeys).
         // Bumped 152→154 on 2026-06-27: the no-real-sleeps rewrite converted the
         // SandboxedStageWatchdogTests family's real-sleep integration tests to
@@ -135,8 +135,8 @@ public sealed partial class SplitGuardVerificationTests
         // [Fact] count, which had drifted +5 across intervening commits (the
         // verify build-warm + flailing-watchdog work) without a matching baseline bump.
         // Bumped 159→163 on 2026-06-29: per-tier LLM model selection dropdowns
-        // added 4 [Fact]s to the BackendConfigGeneratorTests family
-        // (BackendConfigGeneratorTests.Selectable.cs: Override_WinsWhenKeyPresent,
+        // added 4 [Fact]s to the ModelCatalogTests family
+        // (ModelCatalogTests.Selectable.cs: Override_WinsWhenKeyPresent,
         // Override_IgnoredWhenKeyAbsent, SelectableModels_PerTierShapeAndCapped,
         // GetTierRows_ExposesIsEditableAndSelectableModels).
         // Bumped 163→164 on 2026-06-29: fix-verify baseline catchup for
@@ -152,8 +152,8 @@ public sealed partial class SplitGuardVerificationTests
         // RelayDriverResumeTests.FlaggedWork3.cs (2 [Fact]s) to the
         // RelayDriverResumeTests oversized family.
         // Bumped 182→189 on 2026-07-07: fix-vision-tier-backend-routing added
-        // BackendConfigGeneratorTests.VisionTier.cs (7 [Fact]s) to the
-        // BackendConfigGeneratorTests oversized family.
+        // ModelCatalogTests.VisionTier.cs (7 [Fact]s) to the
+        // ModelCatalogTests oversized family.
         // Dropped 185→171 on 2026-07-07: Part B review fix —
         // decision-seam and virtualized WaitAsync tests moved from
         // SandboxedStageWatchdogTests to ActivityWatchdogDecisionTests
@@ -164,7 +164,7 @@ public sealed partial class SplitGuardVerificationTests
         // The companion files (GitCommitterTests.CommitMsgHooks.cs etc.) are
         // replaced by standalone classes (GitCommitterCommitMsgHooksTests.cs
         // etc.) that are tracked here with their own prefixes. The old companion
-        // files are deleted. Three BackendConfigGenerator* companion files
+        // files are deleted. Three ModelCatalog* companion files
         // (AliasConsistency, VisionTier, PerModelTimeout) migrated verbatim with
         // the same [Fact] counts as their predecessors — net zero from the split.
         // Net zero on 2026-07-08: the in-memory-git-simulator pilot migrated the
@@ -197,21 +197,21 @@ public sealed partial class SplitGuardVerificationTests
         // PlanPhaseRunnerTests family.
         // Bumped 177→178 on 2026-08-19: default-to-glm-5-3-via-zai added
         // PerModelTimeout_FrontierGlm53Has480s (+1) to the
-        // BackendConfigGeneratorPerModelTimeoutTests family. The new
-        // BackendConfigGeneratorZaiFrontierTests.cs is a standalone class
+        // ModelCatalogPerModelTimeoutTests family. The new
+        // ModelCatalogZaiFrontierTests.cs is a standalone class
         // outside the tracked prefixes, so its facts are not counted here.
         // Bumped 178→175 on 2026-08-31: first-party-agent-pipeline retired the
         // premium providers, deleting PerModelTimeout_ClaudeAndOpenAiHave300s,
         // HfPlusAnthropic_ClaudeLit_OtherTiersFallback and
         // GetTierRows_MissingKeyTierIsNotEditable (-3) across the
-        // BackendConfigGenerator families. This is the first downward bump.
+        // ModelCatalog families. This is the first downward bump.
         //
         // 2026-09-01: 175 -> 140. The subprocess runner was deleted, and
         // its three tracked test families (Watchdog, Tests, CommandFilter) went
         // with it. Their prefixes are gone from the list below.
         //
         // 2026-09-01: 140 -> 138. The proxy's YAML template went too, and the
-        // BackendConfigGenerator families that asserted against its shape were
+        // ModelCatalog families that asserted against its shape were
         // rewritten against the C# catalog, which needs fewer facts to say the
         // same thing.
         const int baseline = 138;
@@ -224,7 +224,7 @@ public sealed partial class SplitGuardVerificationTests
             "GitCommitterTests",
             "GitCommitterAutoIncludeTests",
             "RelayDriverResumeTests",
-            "BackendConfigGeneratorTests",
+            "ModelCatalogTests",
             "RelayDriverGitCommitTests",
             "RelayDriverTests",
             "RelayDriverRerunTests",
@@ -248,11 +248,11 @@ public sealed partial class SplitGuardVerificationTests
             "RelayDriverResumeFlaggedWorkTests",
             "RelayDriverResumeFlaggedWork2Tests",
             "RelayDriverResumeFlaggedWork3Tests",
-            "BackendConfigGeneratorVisionTierTests",
-            "BackendConfigGeneratorPerModelTimeoutTests",
-            "BackendConfigGeneratorKimiK2_7UpstreamTests",
-            "BackendConfigGeneratorSelectableTests",
-            "BackendConfigGeneratorAliasConsistencyTests",
+            "ModelCatalogVisionTierTests",
+            "ModelCatalogPerModelTimeoutTests",
+            "ModelCatalogKimiK2_7UpstreamTests",
+            "ModelCatalogSelectableTests",
+            "ModelCatalogAliasConsistencyTests",
             "RelayDriverBaselineVerifyTests",
             "SandboxedStageCommandFilterIntegrationTests",
             // ── commit-family facts relocated by the GitSim pilot migration ──

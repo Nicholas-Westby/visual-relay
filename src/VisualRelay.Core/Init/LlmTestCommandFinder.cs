@@ -5,8 +5,8 @@ namespace VisualRelay.Core.Init;
 // parsing are unit-testable without a network call.
 //
 // It no longer holds an HttpClient of its own: the default completer goes
-// through the provider transport seam, so this needs no proxy and can be
-// exercised offline like everything else.
+// through the provider transport seam, so this can be exercised offline like
+// everything else.
 public sealed class LlmTestCommandFinder(Func<string, CancellationToken, Task<string>>? complete = null)
 {
     private readonly Func<string, CancellationToken, Task<string>> _complete = complete ?? NoCompleter;

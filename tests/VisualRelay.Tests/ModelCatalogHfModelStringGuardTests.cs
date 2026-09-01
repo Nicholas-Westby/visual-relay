@@ -9,10 +9,11 @@ namespace VisualRelay.Tests;
 /// modern form is <c>&lt;org&gt;/&lt;repo&gt;:&lt;provider&gt;</c>
 /// (suffix-pinned) or <c>&lt;org&gt;/&lt;repo&gt;</c> (unpinned auto-route).
 /// <para>
-/// This used to scan the proxy's YAML. The routes carry the model strings now.
+/// This used to scan a generated config document. The routes carry the model
+/// strings now.
 /// </para>
 /// </summary>
-public sealed class BackendConfigGeneratorHfModelStringGuardTests
+public sealed class ModelCatalogHfModelStringGuardTests
 {
     /// <summary>
     /// No Hugging Face route uses the legacy three-or-more-segment

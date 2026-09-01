@@ -38,7 +38,7 @@ internal static class RelayPricing
     ];
 
     /// <summary>Concrete-model-only pricing. Tier-alias lookups resolve via
-    /// <see cref="Configuration.BackendConfigGenerator.DefaultTierResolution"/>.</summary>
+    /// <see cref="Configuration.ModelCatalog.DefaultTierResolution"/>.</summary>
     public static IReadOnlyDictionary<string, ModelPricing> Default { get; } =
         new Dictionary<string, ModelPricing>(StringComparer.Ordinal)
         {
@@ -51,9 +51,12 @@ internal static class RelayPricing
             ["deepseek-v4-pro"] = new(0.66, 1.98, 0.022, 0.66) { Windows = DeepseekPeakWindows },
             // deepseek-v4-flash-vision-exp → DeepSeek-V4-Flash-Vision-Exp
             // (api-docs.deepseek.com, 2026-08-31); billed at the text-only -flash rates
-            // on the same peak schedule. No image rate is recorded: DeepSeek bills
-            // images as input tokens, and litellm's DeepSeek route strips them before
-            // they reach the provider anyway (see the model_list entry's note).
+            // on the same peak schedule. No separate image rate is recorded because
+            // DeepSeek bills images AS input tokens, at the Input rate above. This
+            // used to rest on a second, now-false claim — that images never reached
+            // DeepSeek at all. They do: image parts are sent verbatim on the direct
+            // path. The rate still holds, because the estimator prices the provider's
+            // own prompt_tokens, which already include the image tokens.
             ["deepseek-v4-flash-vision-exp"] = new(0.22, 0.66, 0.007, 0.22) { Windows = DeepseekPeakWindows },
             // GLM 5.3 Flash first-party on Z.AI (docs.z.ai/guides/overview/pricing,
             // 2026-08-26). These are the sticker rates: Z.AI is running a 50%-off

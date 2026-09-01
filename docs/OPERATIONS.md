@@ -4,7 +4,7 @@ Operational reference for Visual Relay's model routing and sandbox. For a first
 encounter start with the [README](../README.md); for architecture see
 [docs/DESIGN.md](DESIGN.md).
 
-## Model Backend
+## Model Routing
 
 Visual Relay calls the providers directly, in process, over their
 OpenAI-compatible `/chat/completions` endpoints. There is nothing to start and
@@ -17,15 +17,15 @@ what the model produces into the Activity column as it arrives rather than when
 the stage ends.
 
 Until 2026-09-01 this worked differently: each stage was a third-party CLI
-subprocess talking to a LiteLLM proxy that Visual Relay started on `127.0.0.1:4000` and
-provisioned into a `uv`-built Python venv. The proxy, the venv, the subprocess
+subprocess talking to a local model gateway that Visual Relay started and
+provisioned into a `uv`-built Python venv. The gateway, the venv, the subprocess
 and the `uv` dependency have all been removed. If you have an old
 `~/.local/share/visual-relay/backend-venv` or a stray `litellm.pid`, nothing
 reads them any more and they are safe to delete.
 
 ### Provider keys
 
-`BackendConfigGenerator` defines the model aliases each tier resolves to (`cheap`, `balanced`, `frontier`, `vision`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.3-flash`, `hf-glm-5.3-flash`, `fallback`), and `ProviderRoutes` maps each alias to its endpoint, upstream model id and timeouts. No secrets are committed: every key is read from the environment.
+`ModelCatalog` defines the model aliases each tier resolves to (`cheap`, `balanced`, `frontier`, `vision`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.3-flash`, `hf-glm-5.3-flash`, `fallback`), and `ProviderRoutes` maps each alias to its endpoint, upstream model id and timeouts. No secrets are committed: every key is read from the environment.
 
 The **`fallback`** tier is the always-available floor: it resolves to `hf-qwen3-coder-next` (Hugging Face Novita Qwen3-Coder-480B, ~$0.38/$1.55 per 1M tokens in/out) and requires only `HF_TOKEN`. Every other tier can fall through to it when its provider keys are absent. Override the default model via `tierProfiles.fallback` in `.relay/config.json`.
 

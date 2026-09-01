@@ -6,7 +6,7 @@ public static partial class RelayConfigLoader
 {
     /// <summary>
     /// Parses the <c>tierModelOverrides</c> JSON object, validating each
-    /// entry's model name against <c>BackendConfigGenerator.SelectableModelsByTier</c>.
+    /// entry's model name against <c>ModelCatalog.SelectableModelsByTier</c>.
     /// Invalid entries are silently dropped. Returns null when the element is
     /// missing, empty, or all entries are invalid.
     /// </summary>
@@ -25,7 +25,7 @@ public static partial class RelayConfigLoader
                 continue;
 
             // Validate against the tier's selectable models.
-            if (!BackendConfigGenerator.SelectableModelsByTier.TryGetValue(tier, out var selectable))
+            if (!ModelCatalog.SelectableModelsByTier.TryGetValue(tier, out var selectable))
                 continue;
             if (!selectable.Contains(model, StringComparer.Ordinal))
                 continue;

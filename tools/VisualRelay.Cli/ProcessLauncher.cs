@@ -67,8 +67,8 @@ public static class ProcessLauncher
     }
 
     /// <summary>True when <paramref name="name"/> resolves on the current PATH.
-    /// Delegates to the shared PATHEXT-aware resolver so the CLI gates, the backend
-    /// venv probe, and the git invoker all agree on one resolution.</summary>
+    /// Delegates to the shared PATHEXT-aware resolver so the CLI gates and the git
+    /// invoker agree on one resolution.</summary>
     public static bool OnPath(string name) => PathExecutables.OnPath(name);
 
     /// <summary>

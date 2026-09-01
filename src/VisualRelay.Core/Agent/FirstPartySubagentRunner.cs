@@ -18,9 +18,9 @@ namespace VisualRelay.Core.Agent;
 /// meaningful: any behavioural difference is the loop's, not the prompt's.
 /// </para>
 /// <para>
-/// Where the previous runner spawned a process, spoke to a proxy over HTTP and
-/// inferred what had happened from stdout, this walks the tier's resolved model
-/// chain itself and returns a typed result.
+/// Where the previous runner spawned a process and inferred what had happened
+/// from stdout, this walks the tier's resolved model chain itself and returns a
+/// typed result.
 /// </para>
 /// </summary>
 public sealed partial class FirstPartySubagentRunner : ISubagentRunner
@@ -146,7 +146,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     {
         var present = _keys.PresentKeys();
 
-        var chains = BackendConfigGenerator.ResolveChains(present, _config.TierModelOverrides);
+        var chains = ModelCatalog.ResolveChains(present, _config.TierModelOverrides);
         if (!chains.TryGetValue(tier, out var models)) return [];
 
         return [.. models

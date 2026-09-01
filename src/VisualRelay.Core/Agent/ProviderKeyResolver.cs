@@ -52,5 +52,5 @@ public sealed class ProviderKeyResolver(IEnvironmentAccessor environment)
     /// <summary>Every provider key that is set, from either source.</summary>
     /// <returns>The names of the keys that resolve.</returns>
     public HashSet<string> PresentKeys() =>
-        [.. BackendConfigGenerator.ProviderKeyNames.Where(name => Resolve(name) is not null)];
+        [.. ModelCatalog.ProviderKeyNames.Where(name => Resolve(name) is not null)];
 }

@@ -54,7 +54,7 @@ public static partial class RelayCostEstimator
     ///
     /// When the recorded model name is a tier alias (e.g. "cheap", "balanced"),
     /// it is resolved to a concrete model via
-    /// <see cref="BackendConfigGenerator.DefaultTierResolution"/> before pricing.
+    /// <see cref="ModelCatalog.DefaultTierResolution"/> before pricing.
     /// Per-run tier overrides are not recorded in reports, so the *default*
     /// resolution is used — this is an accepted approximation that is strictly
     /// better than the previous hand-copied snapshot, which had the same

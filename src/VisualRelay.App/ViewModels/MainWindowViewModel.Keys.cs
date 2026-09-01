@@ -44,18 +44,18 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Human-readable summary of tier→model resolutions given present keys,
-    /// produced by <see cref="BackendConfigGenerator.Summarize"/>.
+    /// produced by <see cref="ModelCatalog.Summarize"/>.
     /// Retained for logging/diagnostics; the Live Tiers UI binds to
-    /// <see cref="LitTierRows"/> instead.
+    /// <see cref="LiveTierRows"/> instead.
     /// </summary>
     [ObservableProperty]
-    private string? _litTiersSummary;
+    private string? _liveTiersSummary;
 
     /// <summary>
     /// Structured per-tier rows for the Live Tiers UI, populated by
-    /// <see cref="RefreshLitTiersAsync"/> from <see cref="BackendConfigGenerator.GetTierRows"/>.
+    /// <see cref="RefreshLiveTiersAsync"/> from <see cref="ModelCatalog.GetTierRows"/>.
     /// </summary>
-    public ObservableCollection<TierModelRow> LitTierRows { get; } = [];
+    public ObservableCollection<TierModelRow> LiveTierRows { get; } = [];
 
     /// <summary>Remediation message shown when HF_TOKEN is missing.</summary>
     public string HfGateMessage => IsHuggingFaceConfigured
@@ -107,7 +107,7 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Reads <see cref="KeyEnvFile"/> + process env, rebuilds <see cref="KeyStates"/>,
-    /// flips <see cref="IsHuggingFaceConfigured"/>, and refreshes <see cref="LitTiersSummary"/>.
+    /// flips <see cref="IsHuggingFaceConfigured"/>, and refreshes <see cref="LiveTiersSummary"/>.
     /// </summary>
     public async Task RefreshKeyStatesAsync()
     {
@@ -131,12 +131,12 @@ public partial class MainWindowViewModel
             OnPropertyChanged(nameof(ShowHfGate));
         }
 
-        await RefreshLitTiersAsync();
+        await RefreshLiveTiersAsync();
     }
 
-    private bool _suppressLitTierPersist;
+    private bool _suppressLiveTierPersist;
 
-    private async Task RefreshLitTiersAsync()
+    private async Task RefreshLiveTiersAsync()
     {
         try
         {
@@ -156,13 +156,13 @@ public partial class MainWindowViewModel
                     overrides = configResult.Config.TierModelOverrides;
             }
 
-            LitTiersSummary = presentKeys.Count == 0
+            LiveTiersSummary = presentKeys.Count == 0
                 ? "no provider key set — no tier can run"
-                : BackendConfigGenerator.Summarize(presentKeys, overrides);
+                : ModelCatalog.Summarize(presentKeys, overrides);
 
-            _suppressLitTierPersist = true;
-            LitTierRows.Clear();
-            foreach (var row in BackendConfigGenerator.GetTierRows(presentKeys, overrides))
+            _suppressLiveTierPersist = true;
+            LiveTierRows.Clear();
+            foreach (var row in ModelCatalog.GetTierRows(presentKeys, overrides))
             {
                 // SelectedModel = the override from config (if present and valid)
                 // else the auto-resolved model.
@@ -172,43 +172,43 @@ public partial class MainWindowViewModel
                         ? ov
                         : row.Model;
 
-                LitTierRows.Add(new TierModelRow
+                LiveTierRows.Add(new TierModelRow
                 {
                     Tier = row.Tier,
                     SelectedModel = selected,
-                    ProviderName = BackendConfigGenerator.ProviderFor(selected) ?? row.ProviderName,
+                    ProviderName = ModelCatalog.ProviderFor(selected) ?? row.ProviderName,
                     KeyPresent = row.KeyPresent,
                     IsEditable = row.IsEditable,
                     SelectableModels = row.SelectableModels,
                     OnSelectedModelPersist = PersistTierOverrideAsync,
                 });
             }
-            _suppressLitTierPersist = false;
+            _suppressLiveTierPersist = false;
 
-            var assignments = LitTierRows
+            var assignments = LiveTierRows
                 .Where(r => !string.IsNullOrWhiteSpace(r.SelectedModel))
                 .ToDictionary(
                     r => r.Tier,
                     r => r.SelectedModel == "fallback"
-                        ? BackendConfigGenerator.DefaultTierResolution["fallback"]
+                        ? ModelCatalog.DefaultTierResolution["fallback"]
                         : r.SelectedModel,
                     StringComparer.Ordinal);
             PopulateModelCostRows(assignments);
         }
         catch
         {
-            LitTiersSummary = "(unavailable)";
-            LitTierRows.Clear();
+            LiveTiersSummary = "(unavailable)";
+            LiveTierRows.Clear();
         }
     }
 
     private Task PersistTierOverrideAsync(string _)
     {
-        if (_suppressLitTierPersist || !Directory.Exists(RootPath))
+        if (_suppressLiveTierPersist || !Directory.Exists(RootPath))
             return Task.CompletedTask;
 
         var overrides = new Dictionary<string, string>();
-        foreach (var row in LitTierRows)
+        foreach (var row in LiveTierRows)
         {
             if (!row.IsEditable)
                 continue;

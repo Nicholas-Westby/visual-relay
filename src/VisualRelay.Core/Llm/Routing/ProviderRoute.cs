@@ -5,7 +5,7 @@ namespace VisualRelay.Core.Llm.Routing;
 /// provider calls it, which key opens it, how big its context is and how long to
 /// wait for it.
 /// <para>
-/// This replaces the generated proxy YAML. The catalog alias (for example
+/// This replaces the generated config document. The catalog alias (for example
 /// <c>hf-qwen3-coder-next</c>) is what the rest of Visual Relay names; the
 /// upstream id is what the provider actually answers to, and the two differ on
 /// every Hugging Face route.

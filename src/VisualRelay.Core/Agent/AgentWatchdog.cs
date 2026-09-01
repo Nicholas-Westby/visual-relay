@@ -31,7 +31,7 @@ public enum AgentWatchdogOutcome
 /// Decides whether a stage has wedged, from the loop's own event stream.
 /// <para>
 /// It replaces sampling the process tree's CPU and scraping the OS TCP table —
-/// two proxies for "is something happening" that were needed only because the
+/// two stand-ins for "is something happening" that were needed only because the
 /// agent ran behind a process boundary. In process, the signals are direct: when
 /// the last token arrived, when the last tool call started and returned, and
 /// whether a request is outstanding.
@@ -39,7 +39,7 @@ public enum AgentWatchdogOutcome
 /// <para>
 /// Two clocks, deliberately separate. Any event advances the activity clock;
 /// only model output advances the output clock. Collapsing them is what the CPU
-/// proxy did, and it is why a request that burned CPU while producing nothing
+/// sampler did, and it is why a request that burned CPU while producing nothing
 /// survived to the absolute ceiling instead of being cut in seconds.
 /// </para>
 /// </summary>

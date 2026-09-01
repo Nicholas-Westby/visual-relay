@@ -37,8 +37,8 @@ public static class KeyEnvFile
 
     /// <summary>
     /// Public accessor for the user-level dotenv path, resolved against the real
-    /// process environment. The backend lifecycle reads this to source provider
-    /// keys at proxy start (the user-level tier of the precedence chain).
+    /// process environment. This is the user-level tier of the key precedence
+    /// chain, below the process environment.
     /// </summary>
     public static string ResolvePathForCurrentUser() => ResolvePathForCurrentUser(null);
 

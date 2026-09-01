@@ -6,16 +6,14 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Shared helpers for the catalog guards.
 /// <para>
-/// These used to generate a LiteLLM YAML document and parse the answers back out
-/// of it, because the proxy's config was the source of truth for tier
-/// resolution, fallbacks and per-model timeouts. It no longer is: the catalog
-/// lives in <see cref="BackendConfigGenerator"/> and
-/// <see cref="ProviderRoutes"/>, and the YAML is gone. The method names and
-/// shapes are kept so the guards that call them read unchanged — only where the
-/// answers come from moved.
+/// These used to render a config document and parse the answers back out of it,
+/// because that document was the source of truth for tier resolution, fallbacks
+/// and per-model timeouts. It no longer exists: the answers come from
+/// <see cref="ModelCatalog"/> and <see cref="ProviderRoutes"/> directly. The
+/// method names and shapes are kept so the guards that call them read unchanged.
 /// </para>
 /// </summary>
-internal static class BackendConfigGeneratorTestHelpers
+internal static class ModelCatalogTestHelpers
 {
     /// <summary>Tier to its resolved primary model, for a set of present keys.</summary>
     /// <param name="keys">Which provider keys are set.</param>
@@ -29,7 +27,7 @@ internal static class BackendConfigGeneratorTestHelpers
     /// <returns>Tier to primary model.</returns>
     public static Dictionary<string, string> GeneratedAliases(
         ISet<string> keys, IReadOnlyDictionary<string, string>? overrides) =>
-        BackendConfigGenerator.ResolveChains(keys, overrides)
+        ModelCatalog.ResolveChains(keys, overrides)
             .Where(pair => pair.Value.Count > 0)
             .ToDictionary(pair => pair.Key, pair => pair.Value[0], StringComparer.Ordinal);
 
@@ -45,7 +43,7 @@ internal static class BackendConfigGeneratorTestHelpers
     /// <returns>Tier to its fallback chain.</returns>
     public static Dictionary<string, List<string>> GeneratedFallbacks(
         ISet<string> keys, IReadOnlyDictionary<string, string>? overrides) =>
-        BackendConfigGenerator.ResolveChains(keys, overrides)
+        ModelCatalog.ResolveChains(keys, overrides)
             .Where(pair => pair.Value.Count > 1)
             .ToDictionary(
                 pair => pair.Key,
@@ -62,7 +60,7 @@ internal static class BackendConfigGeneratorTestHelpers
     public static bool ChainTerminatesInFallback(string tier, Dictionary<string, List<string>> fb) =>
         fb.TryGetValue(tier, out var chain)
         && chain.Count > 0
-        && string.Equals(chain[^1], BackendConfigGenerator.FallbackFloorModel, StringComparison.Ordinal);
+        && string.Equals(chain[^1], ModelCatalog.FallbackFloorModel, StringComparison.Ordinal);
 
     /// <summary>The concrete id a provider is sent for a catalog alias.</summary>
     /// <param name="modelName">The catalog alias.</param>

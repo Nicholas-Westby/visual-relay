@@ -1,10 +1,10 @@
 namespace VisualRelay.Core.Llm.Routing;
 
 /// <summary>
-/// Where every model in the catalog actually lives. This is the single source of
-/// truth that <c>tools/backend/litellm-config.yaml</c> used to be: the proxy's
-/// <c>model_list</c>, its per-model timeouts and its provider routing, expressed
-/// in the language the rest of the project is written in.
+/// Where every model in the catalog actually lives: its endpoint, the id the
+/// provider answers to, the key that opens it, its context window and its
+/// timeout budgets. <see cref="Configuration.ModelCatalog"/> decides WHICH model
+/// a tier reaches for; this decides where that model is.
 /// <para>
 /// Every remaining provider speaks OpenAI-compatible
 /// <c>/chat/completions</c>, which is why one route shape covers all four and

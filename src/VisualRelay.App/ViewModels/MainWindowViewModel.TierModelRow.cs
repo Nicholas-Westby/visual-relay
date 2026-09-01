@@ -32,7 +32,7 @@ public partial class MainWindowViewModel
 
         partial void OnSelectedModelChanged(string value)
         {
-            if (BackendConfigGenerator.ProviderFor(value) is { } provider)
+            if (ModelCatalog.ProviderFor(value) is { } provider)
                 ProviderName = provider;
             _ = OnSelectedModelPersist?.Invoke(value);
         }

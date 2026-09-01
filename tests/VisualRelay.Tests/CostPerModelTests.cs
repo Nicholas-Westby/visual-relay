@@ -11,7 +11,7 @@ public sealed partial class CostPerModelTests
     public void PopulateModelCostRows_NoModelKeyIsATierAlias()
     {
         var tierAliases = new HashSet<string>(
-            BackendConfigGenerator.DefaultTierResolution.Keys, StringComparer.Ordinal);
+            ModelCatalog.DefaultTierResolution.Keys, StringComparer.Ordinal);
 
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
@@ -149,7 +149,7 @@ public sealed partial class CostPerModelTests
             .Select(r => r.ModelKey)
             .ToHashSet(StringComparer.Ordinal);
 
-        var selectable = BackendConfigGenerator.SelectableModelsByTier
+        var selectable = ModelCatalog.SelectableModelsByTier
             .SelectMany(kv => kv.Value)
             .Distinct(StringComparer.Ordinal);
 

@@ -1,16 +1,14 @@
 namespace VisualRelay.Core.Configuration;
 
 /// <summary>
-/// Tier resolution, exposed as ordered model chains. The proxy used to perform
-/// this from generated YAML; the request is issued in process now, so the
-/// resolution is read directly from the same catalog structures.
+/// Tier resolution, exposed as ordered model chains: the caller walks the chain
+/// itself, hopping to the next model when one fails.
 /// </summary>
-public static partial class BackendConfigGenerator
+public static partial class ModelCatalog
 {
     /// <summary>
     /// The ordered model chain for each tier: the primary first, then each
-    /// fallback in turn. This is the resolution the proxy used to perform, made
-    /// directly available now that the request is issued in process.
+    /// fallback in turn, with every hop already resolved to a concrete model.
     /// </summary>
     /// <param name="presentKeys">Which provider keys are set.</param>
     /// <param name="overrides">Per-tier model overrides from config.</param>

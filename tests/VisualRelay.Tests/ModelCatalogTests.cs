@@ -2,18 +2,18 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
-public sealed class BackendConfigGeneratorTests
+public sealed class ModelCatalogTests
 {
     // ── 1. HF only ───────────────────────────────────────────────────────
     [Fact]
     public void HfOnly_DefaultTiersResolveToFallbackFloor()
     {
         var present = new HashSet<string> { "HF_TOKEN" };
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var summary = BackendConfigGenerator.Summarize(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var summary = ModelCatalog.Summarize(present);
 
-        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["cheap"]);
-        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["balanced"]);
+        Assert.Equal(ModelCatalog.FallbackFloorModel, aliases["cheap"]);
+        Assert.Equal(ModelCatalog.FallbackFloorModel, aliases["balanced"]);
         // The HF route to GLM 5.3 Flash (frontier primary) requires HF_TOKEN,
         // which is present, so frontier resolves to it (not the fallback floor).
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
@@ -34,8 +34,8 @@ public sealed class BackendConfigGeneratorTests
     public void HfPlusDeepSeek_CheapFlashVision_BalancedPro_FrontierPro()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
         Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
@@ -47,7 +47,7 @@ public sealed class BackendConfigGeneratorTests
         Assert.DoesNotContain("kimi-k2", aliases.Values);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
-            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
+            Assert.True(ModelCatalogTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
                 $"fallback chain for {tier} should terminate in fallback");
 
         // Vision must not fall back to a text model.
@@ -61,8 +61,8 @@ public sealed class BackendConfigGeneratorTests
     public void Trio_FrontierKimi_ChainTerminatesInFallback()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY" };
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
         Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
@@ -76,10 +76,10 @@ public sealed class BackendConfigGeneratorTests
         Assert.Contains("kimi-k2", chain);
         Assert.Contains("deepseek-v4-pro", chain);
         Assert.Contains("hf-qwen3-coder-next", chain);
-        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, chain[^1]);
+        Assert.Equal(ModelCatalog.FallbackFloorModel, chain[^1]);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
-            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks));
+            Assert.True(ModelCatalogTestHelpers.ChainTerminatesInFallback(tier, fallbacks));
 
         // Vision must not fall back to a text model.
         Assert.True(fallbacks.ContainsKey("vision"));
@@ -92,8 +92,8 @@ public sealed class BackendConfigGeneratorTests
     public void ShapeGuard_ParsesAndEveryTierHasNonEmptyChainEndingInFallback()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier", "fallback" })
         {
@@ -103,13 +103,13 @@ public sealed class BackendConfigGeneratorTests
         }
 
         // Every tier bottoms out at the floor model. The fallback tier IS the
-        // floor, so it has no chain of its own to terminate — the proxy's
+        // floor, so it has no chain of its own to terminate — the old generated
         // config gave it a self-referential entry; the resolved chain does not.
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
-            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
+            Assert.True(ModelCatalogTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
                 $"fallback chain for {tier} should terminate in the floor model");
 
-        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["fallback"]);
+        Assert.Equal(ModelCatalog.FallbackFloorModel, aliases["fallback"]);
         Assert.False(fallbacks.ContainsKey("fallback"),
             "the floor tier has nothing to fall back to");
 
@@ -126,7 +126,7 @@ public sealed class BackendConfigGeneratorTests
     public void Summary_MentionsDetectedKeysAndResolution()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var summary = BackendConfigGenerator.Summarize(present);
+        var summary = ModelCatalog.Summarize(present);
 
         Assert.Contains("HF_TOKEN", summary, StringComparison.Ordinal);
         Assert.Contains("DEEPSEEK_API_KEY", summary, StringComparison.Ordinal);
@@ -143,7 +143,7 @@ public sealed class BackendConfigGeneratorTests
         // table of models they cannot reach.
         var present = new HashSet<string>();
         var ex = Assert.Throws<InvalidOperationException>(
-            () => BackendConfigGenerator.Summarize(present));
+            () => ModelCatalog.Summarize(present));
         Assert.Contains("zero", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("provider keys", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -153,7 +153,7 @@ public sealed class BackendConfigGeneratorTests
     public void TierRows_HfOnlyAndDeepSeek()
     {
         var hf = new HashSet<string> { "HF_TOKEN" };
-        var hfRows = BackendConfigGenerator.GetTierRows(hf);
+        var hfRows = ModelCatalog.GetTierRows(hf);
         Assert.Equal(5, hfRows.Count);
         var cheap = hfRows.First(r => r.Tier == "cheap");
         Assert.Equal("fallback", cheap.Model);
@@ -161,7 +161,7 @@ public sealed class BackendConfigGeneratorTests
         Assert.True(cheap.KeyPresent);
 
         var ds = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var dsRows = BackendConfigGenerator.GetTierRows(ds);
+        var dsRows = ModelCatalog.GetTierRows(ds);
         var cheapDs = dsRows.First(r => r.Tier == "cheap");
         Assert.Equal("deepseek-v4-flash-vision-exp", cheapDs.Model);
         Assert.Equal("DeepSeek", cheapDs.ProviderName);
@@ -183,12 +183,12 @@ public sealed class BackendConfigGeneratorTests
         {
             "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "ZAI_API_KEY",
         };
-        var allRows = BackendConfigGenerator.GetTierRows(all);
+        var allRows = ModelCatalog.GetTierRows(all);
         foreach (var row in allRows.Where(r => r.Tier != "vision"))
             Assert.NotNull(row.FallbackChainText);
 
         var empty = new HashSet<string>();
-        var emptyRows = BackendConfigGenerator.GetTierRows(empty);
+        var emptyRows = ModelCatalog.GetTierRows(empty);
         Assert.NotEmpty(emptyRows);
         Assert.DoesNotContain(emptyRows, r => r.Tier == "vision");
         foreach (var row in emptyRows)

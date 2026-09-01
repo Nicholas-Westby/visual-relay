@@ -10,22 +10,22 @@ namespace VisualRelay.Tests;
 /// holding only an HF token still gets the same upstream model, just via another
 /// host.
 /// </summary>
-public sealed class BackendConfigGeneratorZaiFrontierTests
+public sealed class ModelCatalogZaiFrontierTests
 {
     [Fact]
     public void Frontier_ResolvesToGlm53Flash_WhenZaiKeyPresent()
     {
         var present = new HashSet<string> { "ZAI_API_KEY", "HF_TOKEN" };
 
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
         Assert.Equal("glm-5.3-flash", aliases["frontier"]);
 
         // The HF route does not disappear — it demotes to the first fallback, so
         // a Z.AI outage still lands on the same model through another host.
         Assert.Equal("hf-glm-5.3-flash", fallbacks["frontier"][0]);
-        Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback("frontier", fallbacks));
+        Assert.True(ModelCatalogTestHelpers.ChainTerminatesInFallback("frontier", fallbacks));
     }
 
     [Fact]
@@ -33,13 +33,13 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
     {
         var present = new HashSet<string> { "HF_TOKEN" };
 
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
 
         // A model whose key is absent must never appear anywhere in the chain,
-        // or litellm burns an auth-error round trip on every frontier call.
+        // or every frontier call burns an auth-error round trip reaching it.
         Assert.DoesNotContain("glm-5.3-flash", aliases.Values);
         Assert.DoesNotContain("glm-5.3-flash", fallbacks["frontier"]);
     }
@@ -47,7 +47,7 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
     [Fact]
     public void Frontier_TierRow_ReportsZaiAsTheProvider()
     {
-        var rows = BackendConfigGenerator.GetTierRows(
+        var rows = ModelCatalog.GetTierRows(
             new HashSet<string> { "ZAI_API_KEY", "HF_TOKEN" });
 
         var frontier = rows.Single(r => r.Tier == "frontier");
@@ -55,14 +55,14 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
         Assert.Equal("Z.AI", frontier.ProviderName);
         Assert.True(frontier.KeyPresent);
 
-        Assert.Equal("Z.AI", BackendConfigGenerator.ProviderFor("glm-5.3-flash"));
-        Assert.Equal("Hugging Face", BackendConfigGenerator.ProviderFor("hf-glm-5.3-flash"));
+        Assert.Equal("Z.AI", ModelCatalog.ProviderFor("glm-5.3-flash"));
+        Assert.Equal("Hugging Face", ModelCatalog.ProviderFor("hf-glm-5.3-flash"));
     }
 
     [Fact]
     public void Frontier_TierRow_ReportsHuggingFace_WhenZaiKeyAbsent()
     {
-        var rows = BackendConfigGenerator.GetTierRows(new HashSet<string> { "HF_TOKEN" });
+        var rows = ModelCatalog.GetTierRows(new HashSet<string> { "HF_TOKEN" });
 
         var frontier = rows.Single(r => r.Tier == "frontier");
         Assert.Equal("hf-glm-5.3-flash", frontier.Model);
@@ -107,9 +107,8 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
 
     /// <summary>
     /// The retired GLM 5.2 and GLM 5.3 entries must be gone everywhere at once: a
-    /// name left in the pricing table or a selectable list outlives the
-    /// <c>model_list</c> route it needs, and resolves to a model the proxy cannot
-    /// dispatch.
+    /// name left in the pricing table or a selectable list outlives the route it
+    /// needs, and resolves to a model nothing can dispatch to.
     /// </summary>
     [Fact]
     public void RetiredGlmModelNames_AreGoneFromPricingAndSelectableLists()
@@ -119,13 +118,13 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
         foreach (var model in retired)
         {
             Assert.DoesNotContain(model, RelayPricing.Default.Keys);
-            Assert.DoesNotContain(model, BackendConfigGenerator.SelectableModelsByTier.Values.SelectMany(m => m));
-            Assert.DoesNotContain(model, BackendConfigGenerator.Chains.Values.SelectMany(c => c).Select(c => c.Model));
+            Assert.DoesNotContain(model, ModelCatalog.SelectableModelsByTier.Values.SelectMany(m => m));
+            Assert.DoesNotContain(model, ModelCatalog.Chains.Values.SelectMany(c => c).Select(c => c.Model));
         }
     }
 
     /// <summary>
-    /// <see cref="BackendConfigGenerator.ProviderKeyNames"/> is the single list the
+    /// <see cref="ModelCatalog.ProviderKeyNames"/> is the single list the
     /// backend probes for present keys; the settings panel keeps its own rows for
     /// display names and sign-up URLs. A provider added to one and not the other
     /// is either unprobed (never resolves) or unsettable (no UI to paste a key).
@@ -135,7 +134,7 @@ public sealed class BackendConfigGeneratorZaiFrontierTests
     [Fact]
     public void ProviderKeyNames_MatchTheSettingsPanelRows()
     {
-        var probed = BackendConfigGenerator.ProviderKeyNames.ToHashSet(StringComparer.Ordinal);
+        var probed = ModelCatalog.ProviderKeyNames.ToHashSet(StringComparer.Ordinal);
         var displayed = App.ViewModels.MainWindowViewModel.AllProviderKeys
             .Select(r => r.EnvVarName)
             .ToHashSet(StringComparer.Ordinal);

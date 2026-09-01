@@ -26,7 +26,7 @@ public sealed record ToolCall(string Id, string Name, string Arguments);
 /// <summary>
 /// One message in a conversation. Content is either a plain string or a list of
 /// parts; the two are kept separate so a multimodal message is never flattened
-/// to text, which is precisely how the proxy silently dropped images.
+/// to text, which is precisely how images used to be dropped silently.
 /// </summary>
 /// <param name="Role">
 /// <c>system</c>, <c>user</c>, <c>assistant</c> or <c>tool</c>. A

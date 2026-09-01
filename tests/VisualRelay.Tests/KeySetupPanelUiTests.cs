@@ -159,7 +159,7 @@ public sealed class KeySetupPanelUiTests
     }
 
     [AvaloniaFact]
-    public async Task LitTierIndicators_MatchPresentKeySet_HfOnly_Vs_HfPlusDeepSeek()
+    public async Task LiveTierIndicators_MatchPresentKeySet_HfOnly_Vs_HfPlusDeepSeek()
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
@@ -171,7 +171,7 @@ public sealed class KeySetupPanelUiTests
         Assert.True(vm.IsHuggingFaceConfigured);
 
         // Structured row assertions — HF only.
-        var rows = vm.LitTierRows;
+        var rows = vm.LiveTierRows;
         Assert.NotEmpty(rows);
 
         var cheapRow = rows.First(row => row.Tier == "cheap");
@@ -183,7 +183,7 @@ public sealed class KeySetupPanelUiTests
             "DEEPSEEK_API_KEY", "sk-deepseek-xyz");
         await vm.RefreshKeyStatesAsync();
 
-        rows = vm.LitTierRows;
+        rows = vm.LiveTierRows;
         var balancedRow = rows.First(row => row.Tier == "balanced");
         Assert.True(balancedRow.KeyPresent);
         Assert.Equal("DeepSeek", balancedRow.ProviderName);
@@ -203,7 +203,7 @@ public sealed class KeySetupPanelUiTests
         window.Show(); Dispatcher.UIThread.RunJobs();
         var dialog = OpenSettings(window);
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var itemsControl = SettingsTestHelpers.FindLitTierItems(panel);
+        var itemsControl = SettingsTestHelpers.FindLiveTierItems(panel);
         Assert.NotNull(itemsControl);
         // Filter by column count: ComboBox-internal grids don't match the 4-col DataTemplate.
         var grids = itemsControl.GetVisualDescendants().OfType<Grid>().Where(g => g.ColumnDefinitions.Count == 4).ToList();

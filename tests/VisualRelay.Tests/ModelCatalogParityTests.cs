@@ -7,16 +7,15 @@ public sealed class ModelCatalogParityTests
     /// <summary>
     /// Every routable model is priced and every priced model is routable.
     /// <para>
-    /// This compared the proxy's YAML <c>model_list</c> against pricing. The
-    /// routes are the list now. Adding a route without a price, or leaving a
-    /// price behind after removing a route, fails here.
+    /// The route table is the list of models that exist. Adding a route without a
+    /// price, or leaving a price behind after removing a route, fails here.
     /// </para>
     /// </summary>
     [Fact]
     public void RoutableModels_MatchRelayPricingDefaultKeys()
     {
-        var problems = BackendConfigGeneratorTestHelpers.FindCatalogProblems(
-            BackendConfigGeneratorTestHelpers.RoutableModels(),
+        var problems = ModelCatalogTestHelpers.FindCatalogProblems(
+            ModelCatalogTestHelpers.RoutableModels(),
             pricingKeys: RelayPricing.Default.Keys);
 
         Assert.Empty(problems);
@@ -34,7 +33,7 @@ public sealed class ModelCatalogParityTests
             .Select(g => g.Model)
             .ToHashSet(StringComparer.Ordinal);
 
-        var missing = BackendConfigGeneratorTestHelpers.RoutableModels()
+        var missing = ModelCatalogTestHelpers.RoutableModels()
             .Where(model => !goldened.Contains(model))
             .OrderBy(model => model, StringComparer.Ordinal)
             .ToList();
@@ -58,7 +57,7 @@ public sealed class ModelCatalogParityTests
             "pricing-only-model",
         ];
 
-        var problems = BackendConfigGeneratorTestHelpers.FindCatalogProblems(
+        var problems = ModelCatalogTestHelpers.FindCatalogProblems(
             routable,
             pricingKeys: pricingKeys);
 
@@ -81,7 +80,7 @@ public sealed class ModelCatalogParityTests
             ],
         };
 
-        var problems = BackendConfigGeneratorTestHelpers.FindCatalogProblems(
+        var problems = ModelCatalogTestHelpers.FindCatalogProblems(
             routable,
             chains: chains);
 
@@ -99,7 +98,7 @@ public sealed class ModelCatalogParityTests
             ["frontier"] = new List<string> { "a-model", "ghost-model" },
         };
 
-        var problems = BackendConfigGeneratorTestHelpers.FindCatalogProblems(
+        var problems = ModelCatalogTestHelpers.FindCatalogProblems(
             routable,
             selectable: selectable);
 

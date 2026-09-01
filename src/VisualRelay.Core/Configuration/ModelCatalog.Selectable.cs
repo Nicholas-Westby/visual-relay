@@ -1,11 +1,11 @@
 namespace VisualRelay.Core.Configuration;
 
-public static partial class BackendConfigGenerator
+public static partial class ModelCatalog
 {
     /// <summary>
-    /// Curated per-tier lists of selectable models (≤6 each). Only real
-    /// <c>model_list</c> models from the four in-use providers. Defaults
-    /// match today's auto-resolution.
+    /// Curated per-tier lists of selectable models (≤6 each). Only models that
+    /// are actually routable on the four in-use providers. Defaults match
+    /// today's auto-resolution.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> SelectableModelsByTier =
         new Dictionary<string, IReadOnlyList<string>>
@@ -44,7 +44,7 @@ public static partial class BackendConfigGenerator
         };
 
     /// <summary>Selectable model names for the tier and whether it is user-editable.</summary>
-    public partial record TierConfigRow
+    public partial record TierRow
     {
         public IReadOnlyList<string> SelectableModels { get; init; } = [];
         public bool IsEditable { get; init; } = true;

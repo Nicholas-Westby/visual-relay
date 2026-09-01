@@ -30,7 +30,7 @@ public static partial class RelayCostEstimator
         {
             if (key is not { Length: > 0 }) continue;
             if (RelayPricing.Default.TryGetValue(key, out var direct)) return direct;
-            if (BackendConfigGenerator.DefaultTierResolution.TryGetValue(key, out var concrete)
+            if (ModelCatalog.DefaultTierResolution.TryGetValue(key, out var concrete)
                 && RelayPricing.Default.TryGetValue(concrete, out var viaTier)) return viaTier;
         }
 

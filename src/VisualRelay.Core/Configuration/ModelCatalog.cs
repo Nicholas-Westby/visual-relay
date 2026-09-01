@@ -1,14 +1,17 @@
 namespace VisualRelay.Core.Configuration;
 
 /// <summary>
-/// Generates a LiteLLM proxy config YAML by rewriting only the
-/// <c>router_settings.model_group_alias</c> and <c>router_settings.fallbacks</c>
-/// blocks based on which provider keys are present. <c>model_list</c> and
-/// <c>litellm_settings</c> are preserved verbatim from the template.
+/// The single source of model truth: which models each tier may use, in what
+/// order, and which provider key each one needs. Everything that names a model
+/// reads it from here — the agent's chain resolution, the cost estimator, the
+/// settings panel's tier rows and the config loader's override validation.
+/// <para>
+/// This is the tier half of the catalog. <see cref="Llm.Routing.ProviderRoutes"/>
+/// is the other half: where each of these models actually lives.
+/// </para>
 /// </summary>
-public static partial class BackendConfigGenerator
+public static partial class ModelCatalog
 {
-    /// <summary>Fallback-floor model the <c>fallback</c> tier alias resolves to.</summary>
     /// <summary>The always-available model every chain terminates in.</summary>
     public const string FallbackFloorModel = "hf-qwen3-coder-next";
 
@@ -17,19 +20,19 @@ public static partial class BackendConfigGenerator
 
     /// <summary>
     /// Ordered candidate list per tier. Each entry is a
-    /// (<c>model_name</c>, <c>required_env_var</c>) pair. The string
-    /// <c>"fallback"</c> as a model name represents the fallback tier alias
-    /// (which itself resolves to <see cref="FallbackFloorModel"/>).
+    /// (model alias, required env var) pair. The string <c>"fallback"</c> as a
+    /// model name represents the fallback tier alias (which itself resolves to
+    /// <see cref="FallbackFloorModel"/>).
     /// WATCH: if DeepSeek ever starts ENFORCING reasoning_content on tool-call
     /// history, the failure signature is HTTP 400 from turn 2 of tool-calling
     /// stages. RENAMING THESE ALIASES WOULD NOT HELP — that remedy was recorded
     /// in error and is corrected here on 2026-08-31: the two compatibility nets
     /// that used to replay reasoning_content both keyed on the base URL or on an
-    /// explicit thinking/reasoning_effort field, never on the alias, and both went
-    /// with the retired proxy stack. Nothing on the direct path sends the field at
-    /// all. The stack passes empirically (33 calls, zero 4xx) only because DeepSeek
-    /// does not enforce the rule today. The lever that day is to send
-    /// reasoning_effort on the request itself.
+    /// explicit thinking/reasoning_effort field, never on the alias, and both were
+    /// retired with the stack that carried them. Nothing on the direct path sends
+    /// the field at all. The stack passes empirically (33 calls, zero 4xx) only
+    /// because DeepSeek does not enforce the rule today. The lever that day is to
+    /// send reasoning_effort on the request itself.
     /// </summary>
     internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {
@@ -87,7 +90,7 @@ public static partial class BackendConfigGenerator
         .ToDictionary(c => c.Model, c => c.RequiredKey);
 
     /// <summary>Structured per-tier row for UI rendering.</summary>
-    public sealed partial record TierConfigRow(
+    public sealed partial record TierRow(
         string Tier,
         string Model,
         string ProviderName,
@@ -98,12 +101,12 @@ public static partial class BackendConfigGenerator
     /// Returns one row per tier with the resolved model, provider, and
     /// key-present status for UI display.
     /// </summary>
-    public static IReadOnlyList<TierConfigRow> GetTierRows(
+    public static IReadOnlyList<TierRow> GetTierRows(
         ISet<string> presentKeys,
         IReadOnlyDictionary<string, string>? overrides = null)
     {
         var (aliases, fallbacks) = ResolveTiers(presentKeys, overrides);
-        var rows = new List<TierConfigRow>();
+        var rows = new List<TierRow>();
 
         foreach (var tier in Chains.Keys)
         {
@@ -125,7 +128,7 @@ public static partial class BackendConfigGenerator
                 ? string.Join(", ", fb)
                 : null;
 
-            rows.Add(new TierConfigRow(
+            rows.Add(new TierRow(
                 Tier: tier,
                 Model: model,
                 ProviderName: ProviderNames[requiredKey],
@@ -153,8 +156,8 @@ public static partial class BackendConfigGenerator
     /// models it cannot reach.
     /// </exception>
     /// <remarks>
-    /// This replaces a function that rendered a whole LiteLLM YAML document and
-    /// returned this line alongside it. The proxy is gone; the line is what
+    /// This replaces a function that rendered a whole config document and
+    /// returned this line alongside it. The document is gone; the line is what
     /// anything actually wanted.
     /// </remarks>
     public static string Summarize(
@@ -162,7 +165,7 @@ public static partial class BackendConfigGenerator
     {
         if (presentKeys.Count == 0)
             throw new InvalidOperationException(
-                "BackendConfigGenerator.Summarize called with zero provider keys. "
+                "ModelCatalog.Summarize called with zero provider keys. "
                 + "Callers must detect this condition and say so instead.");
 
         var (aliases, _) = ResolveTiers(presentKeys, overrides);
@@ -203,11 +206,11 @@ public static partial class BackendConfigGenerator
             // No key backs any model in this tier, so the tier is omitted.
             //
             // Every tier except vision used to resolve anyway, to a model whose
-            // key was absent, for one stated reason: so the proxy would boot with
-            // the model definitions present and no api_key value. The proxy is
-            // gone and the claim was never true of the request — a stage routed
-            // there failed at the provider. Omitting it means the caller learns
-            // which key is missing instead.
+            // key was absent, so that a generated config document would still
+            // list the model with no key beside it. That document is gone, and
+            // the claim was never true of the request — a stage routed there
+            // failed at the provider. Omitting it means the caller learns which
+            // key is missing instead.
             if (chain.Count == 0) continue;
 
             // When the first surviving model for a non-fallback tier is the

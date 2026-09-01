@@ -1,9 +1,9 @@
 namespace VisualRelay.Core.Configuration;
 
-public static partial class BackendConfigGenerator
+public static partial class ModelCatalog
 {
     /// <summary>
-    /// Every provider the backend recognises, as (env-var, display-name) pairs.
+    /// Every provider the catalog recognises, as (env-var, display-name) pairs.
     /// Order is presentational only — nothing resolves by position here, and the
     /// settings panel keeps its own ordering in
     /// <c>MainWindowViewModel.AllProviderKeys</c>.
@@ -21,10 +21,9 @@ public static partial class BackendConfigGenerator
         Providers.ToDictionary(p => p.Key, p => p.Name, StringComparer.Ordinal);
 
     /// <summary>
-    /// Every provider env-var name. Single source of truth for
-    /// the "which keys are set?" probes in <c>BackendConfigStep</c> and
-    /// <c>VisualRelay.GenBackendConfig</c>, which each used to carry their own
-    /// hand-maintained copy and could drift apart silently.
+    /// Every provider env-var name. Single source of truth for the "which keys
+    /// are set?" probes, which each used to carry their own hand-maintained copy
+    /// and could drift apart silently.
     /// </summary>
     public static readonly IReadOnlyList<string> ProviderKeyNames =
         [.. Providers.Select(p => p.Key)];

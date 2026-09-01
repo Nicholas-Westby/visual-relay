@@ -1,6 +1,6 @@
 namespace VisualRelay.Core.Configuration;
 
-public static partial class BackendConfigGenerator
+public static partial class ModelCatalog
 {
     private static IReadOnlyDictionary<string, string>? _defaultTierResolution;
 

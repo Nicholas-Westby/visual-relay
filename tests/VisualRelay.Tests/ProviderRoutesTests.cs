@@ -4,9 +4,9 @@ using VisualRelay.Core.Llm.Routing;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Covers the routing that replaces the generated proxy config: every model the
-/// catalog can name must be reachable, every route must carry a real endpoint
-/// and key, and the key-gated tier semantics must survive the move.
+/// Covers the routing that replaced the generated config document: every model
+/// the catalog can name must be reachable, every route must carry a real
+/// endpoint and key, and the key-gated tier semantics must survive the move.
 /// </summary>
 public sealed class ProviderRoutesTests
 {
@@ -17,7 +17,7 @@ public sealed class ProviderRoutesTests
     [Fact]
     public void EveryChainedModel_HasARoute()
     {
-        var missing = BackendConfigGenerator.Chains.Values
+        var missing = ModelCatalog.Chains.Values
             .SelectMany(chain => chain)
             .Select(candidate => candidate.Model)
             .Where(model => model != "fallback")
@@ -33,7 +33,7 @@ public sealed class ProviderRoutesTests
     [Fact]
     public void EverySelectableModel_HasARoute()
     {
-        var missing = BackendConfigGenerator.SelectableModelsByTier.Values
+        var missing = ModelCatalog.SelectableModelsByTier.Values
             .SelectMany(models => models)
             .Where(model => model != "fallback")
             .Distinct(StringComparer.Ordinal)
@@ -68,7 +68,7 @@ public sealed class ProviderRoutesTests
     [Fact]
     public void EveryRouteKey_IsOneTheProjectProbes()
     {
-        var probed = BackendConfigGenerator.ProviderKeyNames.ToHashSet(StringComparer.Ordinal);
+        var probed = ModelCatalog.ProviderKeyNames.ToHashSet(StringComparer.Ordinal);
 
         foreach (var alias in ProviderRoutes.Aliases)
             Assert.Contains(ProviderRoutes.For(alias)!.ApiKeyEnvVar, probed);
@@ -155,7 +155,7 @@ public sealed class ProviderRoutesTests
     [Fact]
     public void WithOnlyHuggingFace_TextTiersStillResolve()
     {
-        var chains = BackendConfigGenerator.ResolveChains(new HashSet<string> { "HF_TOKEN" });
+        var chains = ModelCatalog.ResolveChains(new HashSet<string> { "HF_TOKEN" });
 
         foreach (var tier in (string[])["cheap", "balanced", "frontier"])
         {
@@ -174,16 +174,16 @@ public sealed class ProviderRoutesTests
     [Fact]
     public void Vision_IsOmittedRatherThanDegraded()
     {
-        var withHf = BackendConfigGenerator.ResolveChains(new HashSet<string> { "HF_TOKEN" });
-        var without = BackendConfigGenerator.ResolveChains(new HashSet<string> { "DEEPSEEK_API_KEY" });
+        var withHf = ModelCatalog.ResolveChains(new HashSet<string> { "HF_TOKEN" });
+        var without = ModelCatalog.ResolveChains(new HashSet<string> { "DEEPSEEK_API_KEY" });
 
         Assert.True(withHf.ContainsKey("vision"));
         Assert.False(without.ContainsKey("vision"));
     }
 
     /// <summary>
-    /// A chain never names a tier alias: every hop is a concrete model the
-    /// caller can send to directly, now that there is no proxy to resolve one.
+    /// A chain never names a tier alias: every hop is a concrete model the caller
+    /// can send to directly, because nothing downstream resolves aliases now.
     /// </summary>
     [Fact]
     public void EveryChainHop_IsAConcreteModel()
@@ -193,7 +193,7 @@ public sealed class ProviderRoutesTests
             "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "ZAI_API_KEY",
         };
 
-        foreach (var (tier, chain) in BackendConfigGenerator.ResolveChains(keys))
+        foreach (var (tier, chain) in ModelCatalog.ResolveChains(keys))
             foreach (var model in chain)
                 Assert.True(ProviderRoutes.For(model) is not null,
                     $"tier '{tier}' resolved to '{model}', which is not a routable model");
@@ -211,7 +211,7 @@ public sealed class ProviderRoutesTests
             "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "ZAI_API_KEY",
         };
 
-        var providers = BackendConfigGenerator.ResolveChains(keys)["frontier"]
+        var providers = ModelCatalog.ResolveChains(keys)["frontier"]
             .Select(model => ProviderRoutes.For(model)!.ProviderName)
             .Distinct(StringComparer.Ordinal)
             .ToList();

@@ -2,7 +2,7 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
-public sealed class BackendConfigGeneratorSelectableTests
+public sealed class ModelCatalogSelectableTests
 {
     // ── Override-aware resolution ────────────────────────────────────────
 
@@ -20,14 +20,14 @@ public sealed class BackendConfigGeneratorSelectableTests
         var present = new HashSet<string> { "HF_TOKEN", "MOONSHOT_API_KEY" };
         var overrides = new Dictionary<string, string> { ["cheap"] = "kimi-k2" };
 
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present, overrides);
-        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present, overrides);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present, overrides);
+        var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present, overrides);
 
         // cheap should use the override model kimi-k2, not its auto-resolved model.
         Assert.Equal("kimi-k2", aliases["cheap"]);
 
         // The fallback chain for cheap must still terminate in fallback.
-        Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback("cheap", fallbacks));
+        Assert.True(ModelCatalogTestHelpers.ChainTerminatesInFallback("cheap", fallbacks));
 
         // Other tiers unaffected by the override resolve normally.
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
@@ -47,10 +47,10 @@ public sealed class BackendConfigGeneratorSelectableTests
         var present = new HashSet<string> { "HF_TOKEN" };
         var overrides = new Dictionary<string, string> { ["cheap"] = "kimi-k2" };
 
-        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present, overrides);
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(present, overrides);
 
         // cheap should fall through to the HF floor ("fallback"), not kimi-k2.
-        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["cheap"]);
+        Assert.Equal(ModelCatalog.FallbackFloorModel, aliases["cheap"]);
         Assert.DoesNotContain("kimi-k2", aliases.Values);
     }
 
@@ -59,10 +59,10 @@ public sealed class BackendConfigGeneratorSelectableTests
     [Fact]
     public void SelectableModels_PerTierShapeAndCapped()
     {
-        var sm = BackendConfigGenerator.SelectableModelsByTier;
+        var sm = ModelCatalog.SelectableModelsByTier;
 
         // Every tier from Chains must be represented.
-        foreach (var tier in BackendConfigGenerator.Chains.Keys)
+        foreach (var tier in ModelCatalog.Chains.Keys)
             Assert.True(sm.ContainsKey(tier), $"SelectableModels missing tier '{tier}'");
 
         // Each list ≤ 6 entries.
@@ -70,7 +70,7 @@ public sealed class BackendConfigGeneratorSelectableTests
             Assert.True(models.Count <= 6, $"Tier '{tier}' has {models.Count} selectable models (max 6)");
 
         // All model names must be models the catalog can actually route to.
-        var realSet = BackendConfigGeneratorTestHelpers.RoutableModels();
+        var realSet = ModelCatalogTestHelpers.RoutableModels();
 
         foreach (var (tier, models) in sm)
             foreach (var model in models)
@@ -90,7 +90,7 @@ public sealed class BackendConfigGeneratorSelectableTests
     public void GetTierRows_ExposesIsEditableAndSelectableModels()
     {
         var present = new HashSet<string> { "HF_TOKEN" };
-        var rows = BackendConfigGenerator.GetTierRows(present);
+        var rows = ModelCatalog.GetTierRows(present);
 
         foreach (var row in rows)
         {

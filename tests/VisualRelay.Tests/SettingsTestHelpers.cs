@@ -87,7 +87,7 @@ internal static class SettingsTestHelpers
     /// returns it, WITHOUT booting the whole <see cref="MainWindow"/> or driving
     /// the async-void cog path. This is the scoped-down construction for
     /// panel-local settings assertions: the caller first
-    /// <c>await vm.OpenSettingsAsync()</c> (populates KeyStates + LitTierRows
+    /// <c>await vm.OpenSettingsAsync()</c> (populates KeyStates + LiveTierRows
     /// exactly as the cog does), so the dialog renders the same panel the cog
     /// opens — but deterministically. No MainWindow, no LoadInitialAsync, and no
     /// spin-loop waiting on an owned window, so it neither races the shared
@@ -117,13 +117,13 @@ internal static class SettingsTestHelpers
             .ToList();
 
     /// <summary>
-    /// Finds the <c>LitTierItems</c> <see cref="ItemsControl"/> by walking the
+    /// Finds the <c>LiveTierItems</c> <see cref="ItemsControl"/> by walking the
     /// visual descendants of <paramref name="root"/>. <see cref="ControlExtensions.FindControl{T}"/>
     /// cannot cross into the <c>LiveTiersSettings</c> user control's name scope,
     /// so the Live Tiers lookups use this walker instead.
     /// </summary>
-    public static ItemsControl FindLitTierItems(Visual root) =>
-        root.GetVisualDescendants().OfType<ItemsControl>().First(c => c.Name == "LitTierItems");
+    public static ItemsControl FindLiveTierItems(Visual root) =>
+        root.GetVisualDescendants().OfType<ItemsControl>().First(c => c.Name == "LiveTierItems");
 
     /// <summary>Clears XDG_CONFIG_HOME from the fake accessor.</summary>
     public static void EnsureNoUserEnv(DictionaryEnvironmentAccessor env) =>

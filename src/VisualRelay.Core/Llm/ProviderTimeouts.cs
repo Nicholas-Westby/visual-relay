@@ -1,8 +1,8 @@
 namespace VisualRelay.Core.Llm;
 
 /// <summary>
-/// Four separate budgets, replacing the proxy's single timeout knob. The old
-/// per-model ceilings rested on a false premise: the "up to ~410 s to first
+/// Four separate budgets, replacing the single timeout knob this had before. The
+/// old per-model ceilings rested on a false premise: the "up to ~410 s to first
 /// token" that justified a 600 s stream timeout was a NON-streaming observation.
 /// Streaming time-to-first-byte was measured at 0.43 s, 1.12 s and 0.87 s across
 /// the three reasoning models, with a maximum inter-chunk gap of 1.12 s across
