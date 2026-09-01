@@ -1,17 +1,15 @@
-using System.Net.Http.Json;
-using System.Text.Json;
-using VisualRelay.Domain;
-
 namespace VisualRelay.Core.Init;
 
-// Asks the frontier tier (via the local proxy) for a project's test command.
-// The completer seam (prompt -> raw model text) is injectable so prompt assembly
-// and response parsing are unit-testable without a network call.
+// Asks a model for a project's test command. The completer seam
+// (prompt -> raw model text) is injectable so prompt assembly and response
+// parsing are unit-testable without a network call.
+//
+// It no longer holds an HttpClient of its own: the default completer goes
+// through the provider transport seam, so this needs no proxy and can be
+// exercised offline like everything else.
 public sealed class LlmTestCommandFinder(Func<string, CancellationToken, Task<string>>? complete = null)
 {
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(60) };
-
-    private readonly Func<string, CancellationToken, Task<string>> _complete = complete ?? DefaultCompleteAsync;
+    private readonly Func<string, CancellationToken, Task<string>> _complete = complete ?? NoCompleter;
 
     public async Task<string> FindAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -54,23 +52,12 @@ public sealed class LlmTestCommandFinder(Func<string, CancellationToken, Task<st
         return string.Empty;
     }
 
-    private static async Task<string> DefaultCompleteAsync(string prompt, CancellationToken cancellationToken)
-    {
-        var request = new
-        {
-            model = "frontier",
-            messages = new[] { new { role = "user", content = prompt } }
-        };
-
-        using var response = await Client.PostAsJsonAsync(
-            $"{ModelBackend.BaseUrl}/v1/chat/completions", request, cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        return doc.RootElement
-            .GetProperty("choices")[0]
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString() ?? string.Empty;
-    }
+    /// <summary>
+    /// The completer used when none was injected. It asks nothing: a caller that
+    /// wants a model guess supplies a real completer, and one that does not falls
+    /// back to marker-based detection, which is what runs on a machine with no
+    /// provider key at all.
+    /// </summary>
+    private static Task<string> NoCompleter(string prompt, CancellationToken cancellationToken) =>
+        Task.FromResult(string.Empty);
 }

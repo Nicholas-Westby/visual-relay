@@ -69,10 +69,6 @@ public static class HttpClientConstructionGuard
         // 2026-08-31: one-off installer download of the mxc archive. Not an LLM
         // call, already gated behind an injectable download delegate in tests.
         ["MxcInstaller.cs"] = "TEMPORARY 2026-08-31 — one-off installer download, injectable delegate in tests",
-        // 2026-08-31: this one IS a provider call and belongs on IProviderTransport.
-        // Its completer seam is already injectable so no test touches the socket;
-        // the migration is Phase-2 work, tracked by the pipeline spec.
-        ["LlmTestCommandFinder.cs"] = "TEMPORARY 2026-08-31 — provider call awaiting migration onto IProviderTransport",
     };
 
     private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);

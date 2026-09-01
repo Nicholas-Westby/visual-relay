@@ -7,6 +7,7 @@ using VisualRelay.App.ViewModels.RunLogRows;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
+using VisualRelay.Core.Llm;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -202,7 +203,9 @@ public partial class MainWindowViewModel : ViewModelBase
     // banner flash is visible). The later top-bar status task reuses this
     // state + RefreshBackendStatusAsync rather than running a second probe.
     // Injectable so tests can supply a fake completer; defaults to the frontier proxy.
-    public LlmTestCommandFinder TestCommandFinder { get; init; } = new();
+    public LlmTestCommandFinder TestCommandFinder { get; init; } =
+        new(new ProviderTestCommandCompleter(
+            LiveProviderTransport.CreateDefault(), new SystemEnvironmentAccessor()).CompleteAsync);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BackendStatusBrush))]
