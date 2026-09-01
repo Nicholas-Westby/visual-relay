@@ -111,6 +111,49 @@ public sealed class StageContractReaderTests
         Assert.Contains("evidence", result.Json!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The regression the benchmark caught. A plan describing code contains
+    /// braces INSIDE a string value; searching backwards from the last brace
+    /// starts mid-string, has no idea it is inside one, and can lift a fragment
+    /// that parses but is not the contract. The stage was then flagged for a
+    /// missing key against text that plainly had it.
+    /// </summary>
+    [Fact]
+    public void BracesInsideAStringValue_DoNotBecomeTheContract()
+    {
+        const string answer = """
+            {"plan": "Add apply_all(a, b) returning {\"add\": add(a,b)} and register a case.",
+             "manifest": ["src/Calc.py", "src/cases.py"]}
+            """;
+
+        var result = StageContractReader.Read(
+            answer, """matching: { "plan": string, "manifest": string[] }""");
+
+        Assert.True(result.Succeeded, result.Error);
+        Assert.Contains("manifest", result.Json!, StringComparison.Ordinal);
+        Assert.Contains("apply_all", result.Json!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// When several objects parse, the one that satisfies the contract wins,
+    /// even if a different object came later. An example the model wrote after
+    /// its contract must not displace it.
+    /// </summary>
+    [Fact]
+    public void TheObjectThatFitsTheContract_WinsOverALaterOne()
+    {
+        const string answer = """
+            {"summary": "the real contract", "options": ["a"]}
+
+            For reference the helper returns {"ok": true} on success.
+            """;
+
+        var result = StageContractReader.Read(answer, SummaryContract);
+
+        Assert.True(result.Succeeded, result.Error);
+        Assert.Contains("the real contract", result.Json!, StringComparison.Ordinal);
+    }
+
     /// <summary>A missing required key is reported by name.</summary>
     [Fact]
     public void AMissingRequiredKey_IsReportedByName()

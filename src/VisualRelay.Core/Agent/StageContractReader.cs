@@ -14,13 +14,21 @@ public sealed record StageContractResult(string? Json, string? Error)
 /// <summary>
 /// Reads a stage's contract object out of the model's final answer.
 /// <para>
-/// This is much smaller than what it replaces, and deliberately so. The previous
-/// extractor had to fish a fenced block out of a subprocess's STDOUT, which
-/// carried sandbox banners, deny advisories and echoes of the prompt itself, and
-/// needed a distiller, a prompt-echo heuristic and a last-to-first fence walk to
-/// cope. In process there is no stdout: this reads the model's own answer, and
-/// the only real ambiguity left is a fence marker appearing inside a string
-/// value, which the last-block-first walk still handles.
+/// This is much smaller than what it replaces. The previous extractor had to
+/// fish a fenced block out of a subprocess's STDOUT, which carried sandbox
+/// banners, deny advisories and echoes of the prompt itself. In process there is
+/// no stdout: this reads the model's own answer.
+/// </para>
+/// <para>
+/// The scan runs FORWARD from the start of the answer, tracking string state, so
+/// it only ever considers braces that are genuinely at the top level. Searching
+/// backwards from the last brace is what an earlier version did, and it is
+/// wrong: the last brace is frequently INSIDE a string value — a plan describing
+/// code says things like <c>returns {"a": 1}</c> — and a scan starting there has
+/// no idea it is inside a string, so it can lift a fragment out of the middle of
+/// the contract and hand back an object that parses but is not the contract. A
+/// benchmark run failed exactly that way, reporting a missing key against text
+/// that had the key.
 /// </para>
 /// </summary>
 public static class StageContractReader
@@ -37,39 +45,64 @@ public static class StageContractReader
         if (string.IsNullOrWhiteSpace(answer))
             return new StageContractResult(null, "the model returned an empty answer");
 
-        var json = ExtractObject(answer);
-        if (json is null)
+        var required = RequiredKeys(contract).ToList();
+        var candidates = TopLevelObjects(answer);
+        if (candidates.Count == 0)
             return new StageContractResult(
                 null, "no JSON object found in the answer; the contract block is required");
 
-        JsonDocument document;
+        // Prefer the LAST candidate that satisfies the contract: the contract is
+        // the last thing the model writes, and preferring one that fits means an
+        // example object earlier in the prose can never win.
+        string? lastParseable = null;
+        for (var i = candidates.Count - 1; i >= 0; i--)
+        {
+            if (!TryReadObject(candidates[i], out var element)) continue;
+
+            lastParseable ??= candidates[i];
+            if (required.All(key => element.TryGetProperty(key, out _)))
+                return new StageContractResult(candidates[i], null);
+        }
+
+        if (lastParseable is null)
+            return new StageContractResult(
+                null, "the contract block is not valid JSON");
+
+        // Something parsed but did not fit; name the first key it lacks so the
+        // model has something specific to correct.
+        TryReadObject(lastParseable, out var best);
+        var missing = required.FirstOrDefault(key => !best.TryGetProperty(key, out _));
+        return new StageContractResult(
+            null,
+            missing is null
+                ? "the contract object did not match the required shape"
+                : $"the contract is missing the required key \"{missing}\"");
+    }
+
+    private static bool TryReadObject(string json, out JsonElement element)
+    {
         try
         {
-            document = JsonDocument.Parse(json);
-        }
-        catch (JsonException ex)
-        {
-            return new StageContractResult(null, $"the contract block is not valid JSON: {ex.Message}");
-        }
-
-        using (document)
-        {
+            using var document = JsonDocument.Parse(json);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
-                return new StageContractResult(
-                    null, $"the contract must be a JSON object, but got {document.RootElement.ValueKind}");
+            {
+                element = default;
+                return false;
+            }
 
-            foreach (var key in RequiredKeys(contract))
-                if (!document.RootElement.TryGetProperty(key, out _))
-                    return new StageContractResult(
-                        null, $"the contract is missing the required key \"{key}\"");
+            element = document.RootElement.Clone();
+            return true;
         }
-
-        return new StageContractResult(json, null);
+        catch (JsonException)
+        {
+            element = default;
+            return false;
+        }
     }
 
     /// <summary>
     /// The keys a contract line requires. A key written <c>"name"?:</c> is
-    /// optional, which is how the stage-11 contract marks its amend list.
+    /// optional, which is how the fix-verify contract marks its amend list.
     /// </summary>
     private static IEnumerable<string> RequiredKeys(string contract)
     {
@@ -93,51 +126,21 @@ public static class StageContractReader
     }
 
     /// <summary>
-    /// The last JSON object in the answer that actually parses.
-    /// <para>
-    /// Both halves matter. Walking from the END finds the contract, which is the
-    /// last thing the model writes. Requiring the candidate to PARSE is what
-    /// stops a brace in prose from winning: a sentence like "returns {file, line}"
-    /// balances perfectly and is not JSON, and accepting it reported a parse
-    /// error against prose instead of finding the contract sitting just above it.
-    /// </para>
+    /// Every top-level brace-balanced span in the answer, in order. One forward,
+    /// string-aware pass, so a brace inside a string value is never mistaken for
+    /// the start or end of an object.
     /// </summary>
-    private static string? ExtractObject(string answer)
+    private static List<string> TopLevelObjects(string answer)
     {
-        for (var start = answer.LastIndexOf('{'); start >= 0; start = answer.LastIndexOf('{', start - 1))
-        {
-            var candidate = MatchObject(answer, start);
-            if (candidate is not null && ParsesAsObject(candidate)) return candidate;
-            if (start == 0) break;
-        }
-
-        return null;
-    }
-
-    /// <summary>Whether a candidate is a JSON object, not merely balanced text.</summary>
-    private static bool ParsesAsObject(string candidate)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(candidate);
-            return document.RootElement.ValueKind == JsonValueKind.Object;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>Scans a balanced object from an opening brace, string-aware.</summary>
-    private static string? MatchObject(string text, int start)
-    {
+        var found = new List<string>();
         var depth = 0;
+        var start = -1;
         var inString = false;
         var escaped = false;
 
-        for (var i = start; i < text.Length; i++)
+        for (var i = 0; i < answer.Length; i++)
         {
-            var c = text[i];
+            var c = answer[i];
 
             if (inString)
             {
@@ -147,11 +150,27 @@ public static class StageContractReader
                 continue;
             }
 
-            if (c == '"') inString = true;
-            else if (c == '{') depth++;
-            else if (c == '}' && --depth == 0) return text[start..(i + 1)];
+            switch (c)
+            {
+                case '"':
+                    inString = true;
+                    break;
+                case '{':
+                    if (depth == 0) start = i;
+                    depth++;
+                    break;
+                case '}' when depth > 0:
+                    depth--;
+                    if (depth == 0 && start >= 0)
+                    {
+                        found.Add(answer[start..(i + 1)]);
+                        start = -1;
+                    }
+
+                    break;
+            }
         }
 
-        return null;
+        return found;
     }
 }
