@@ -5,19 +5,27 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// The enforcing shell-script size guard-as-test (the house idiom mirrored from
 /// <see cref="SplitGuardVerificationTests.AllTestCsFiles_AreAtMost300Lines"/>).
-/// It walks the filesystem from <see cref="RepoSetup.Root"/> (skipping .git),
-/// classifies files with the same <see cref="ShellScriptClassifier"/> heuristic the
-/// <c>shell-size</c> runner uses, runs <see cref="ShellSizeGuard.FindViolations"/>
-/// at the shared limit, and asserts no shell script exceeds 24 logic lines.
+/// It walks the filesystem from <see cref="RepoSetup.Root"/>, classifies files with
+/// the same <see cref="ShellScriptClassifier"/> heuristic the <c>shell-size</c>
+/// runner uses, runs <see cref="ShellSizeGuard.FindViolations"/> at the shared
+/// limit, and asserts no shell script exceeds 24 logic lines.
+///
+/// <para>The walk skips build output and anything under a NESTED repository: a
+/// linked worktree or a second clone checked out below the repo root carries its
+/// own copy of this project's scripts, and the bootstrap carve-out matches only the
+/// exact path <c>visual-relay</c>, so a nested copy of the launcher would be judged
+/// against the 24-line general ceiling and fail a gate it already passes at the
+/// root. The CLI's own <c>shell-size</c> step never saw this because it enumerates
+/// git-tracked paths.</para>
 /// </summary>
 public sealed class ShellScriptSizeGuardTests
 {
 
     /// <summary>
-    /// Every git-tracked shell script in the live tree is at most 24 logic lines
+    /// Every shell script belonging to this checkout is at most 24 logic lines
     /// (or 100 for the <c>visual-relay</c> bootstrap). This is the build-failing
-    /// gate: it fails the moment any tracked shell script (by extension or hashbang)
-    /// grows past its ceiling.
+    /// gate: it fails the moment any script of ours (by extension or hashbang) grows
+    /// past its ceiling, committed or not.
     /// </summary>
     [Fact]
     public void AllTrackedShellScripts_AreWithinTheLimit()
@@ -114,18 +122,67 @@ public sealed class ShellScriptSizeGuardTests
     /// directories, and returns (relativePath, lines) for every file classified
     /// as a shell script by <see cref="ShellScriptClassifier"/>.
     /// </summary>
+    /// <summary>
+    /// A nested repository under the root is not this checkout's to judge.
+    /// Regression: a linked worktree at <c>.claude/worktrees/&lt;name&gt;</c> carried its
+    /// own copy of the launcher, and since the bootstrap carve-out matches only the
+    /// exact path <c>visual-relay</c>, that copy was measured against the 24-line
+    /// general ceiling and failed a gate the real launcher passes. Build output is
+    /// pruned for the same reason: neither is a script anyone authored here.
+    /// </summary>
+    [Fact]
+    public void EnumerateProjectScripts_SkipsNestedRepositoriesAndBuildOutput()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vr-shell-walk-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var fat = ShellScript(80);
+
+            // Ours: found.
+            Directory.CreateDirectory(root);
+            File.WriteAllLines(Path.Combine(root, "ours.sh"), fat);
+
+            // A linked worktree marks itself with a .git FILE, a clone with a dir.
+            var worktree = Path.Combine(root, ".claude", "worktrees", "agent-1");
+            Directory.CreateDirectory(worktree);
+            File.WriteAllText(Path.Combine(worktree, ".git"), "gitdir: /elsewhere\n");
+            File.WriteAllLines(Path.Combine(worktree, "visual-relay"), fat);
+
+            var clone = Path.Combine(root, "vendor", "other-repo");
+            Directory.CreateDirectory(Path.Combine(clone, ".git"));
+            File.WriteAllLines(Path.Combine(clone, "theirs.sh"), fat);
+
+            // Build output.
+            Directory.CreateDirectory(Path.Combine(root, "obj"));
+            File.WriteAllLines(Path.Combine(root, "obj", "staged.sh"), fat);
+
+            var found = EnumerateProjectScripts(root).Select(f => f.Path).ToList();
+
+            Assert.Equal(["ours.sh"], found);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (Exception) { /* best-effort */ }
+        }
+    }
+
     private static List<(string Path, string[] Lines)> EnumerateProjectScripts(string repoRoot)
     {
         var results = new List<(string Path, string[] Lines)>();
-        foreach (var full in Directory.EnumerateFiles(repoRoot, "*", SearchOption.AllDirectories))
+        Walk(repoRoot, repoRoot, results);
+        return results;
+    }
+
+    // Depth-first walk that can PRUNE a directory, which Directory.EnumerateFiles
+    // with AllDirectories cannot. Pruning is the point: see the class summary.
+    private static void Walk(string dir, string repoRoot, List<(string, string[])> results)
+    {
+        foreach (var full in SafeEnumerateFiles(dir))
         {
             var rel = Path.GetRelativePath(repoRoot, full);
-            if (IsInsideGitDir(rel))
-                continue;
             try
             {
-                var firstLine = ReadFirstLine(full);
-                if (ShellScriptClassifier.IsShellScript(rel, firstLine))
+                if (ShellScriptClassifier.IsShellScript(rel, ReadFirstLine(full)))
                     results.Add((rel, File.ReadAllLines(full)));
             }
             catch
@@ -133,13 +190,41 @@ public sealed class ShellScriptSizeGuardTests
                 // skip unreadable files
             }
         }
-        return results;
+
+        foreach (var sub in SafeEnumerateDirectories(dir))
+        {
+            if (!IsOursToCheck(sub))
+                continue;
+            Walk(sub, repoRoot, results);
+        }
     }
 
-    private static bool IsInsideGitDir(string rel) =>
-        rel == ".git"
-        || rel.StartsWith(".git/", StringComparison.Ordinal)
-        || rel.StartsWith(".git" + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    /// <summary>
+    /// Whether to descend into <paramref name="dir"/>. Excludes build output and any
+    /// directory that is itself a repository: a <c>.git</c> entry means a nested clone
+    /// (directory) or a linked worktree (file), whose scripts are not this checkout's
+    /// to judge. The repo root is never passed here, so its own <c>.git</c> is safe.
+    /// </summary>
+    private static bool IsOursToCheck(string dir)
+    {
+        var name = Path.GetFileName(dir);
+        if (name is ".git" or "bin" or "obj")
+            return false;
+        var git = Path.Combine(dir, ".git");
+        return !Directory.Exists(git) && !File.Exists(git);
+    }
+
+    private static IEnumerable<string> SafeEnumerateFiles(string dir)
+    {
+        try { return Directory.EnumerateFiles(dir); }
+        catch { return []; }
+    }
+
+    private static IEnumerable<string> SafeEnumerateDirectories(string dir)
+    {
+        try { return Directory.EnumerateDirectories(dir); }
+        catch { return []; }
+    }
 
     private static string? ReadFirstLine(string path)
     {
