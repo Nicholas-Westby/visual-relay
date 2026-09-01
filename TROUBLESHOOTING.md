@@ -89,12 +89,11 @@ PATH for that session only (no global machine change). Re-run through `.\visual-
 `%LOCALAPPDATA%\visual-relay\dotnet` to your PATH for a standalone `dotnet`.
 
 **Task execution is blocked.** Windows confines writes with Microsoft Execution Containers
-(MXC); when `wxc-exec` is not provisioned and no opt-in is set, execution is blocked rather
-than run uncontained. Run `visual-relay provision-mxc` to download and install the pinned,
+(MXC); when `wxc-exec` is not provisioned, execution is blocked rather than run uncontained —
+there is no opt-out. Run `visual-relay provision-mxc` to download and install the pinned,
 Microsoft-signed `wxc-exec` runtime into `%LOCALAPPDATA%\visual-relay\mxc\` (a no-op if it is
-already present); set `VR_WINDOWS_SANDBOX=builtin` for the degraded built-in sandbox; or run
-execution inside WSL2 with `nono`. Inspection (queue, logs, traces, settings) works without any
-sandbox.
+already present), or run execution inside WSL2 with `nono`. Inspection (queue, logs, traces,
+settings) works without any sandbox.
 
 Write-confinement is empirically verified against the real `wxc-exec` (a command writing
 outside the workspace is denied, inside is allowed). Where the BaseContainer/processcontainer

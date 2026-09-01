@@ -5,9 +5,9 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Tests for the Windows sandbox seam (Phase 3): the VR-authored MXC policy
-/// (confined writes, broad reads, network open), the OS/opt-in mode selection
-/// (MXC default, builtin opt-in, blocked when nothing is available), and the
-/// wrapper-building for each mode. All pure logic, asserted on any OS.
+/// (confined writes, broad reads, network open), the mode selection (MXC when
+/// available, blocked when it is not — there is no unsandboxed opt-out), and the
+/// MXC wrapper-building. All pure logic, asserted on any OS.
 /// </summary>
 public sealed class WindowsSandboxTests
 {
@@ -63,21 +63,17 @@ public sealed class WindowsSandboxTests
     // ── Mode selection ───────────────────────────────────────────────────
 
     [Fact]
-    public void Select_MxcAvailable_DefaultsToMxc()
+    public void Select_MxcAvailable_IsMxc()
     {
-        Assert.Equal(WindowsSandboxMode.Mxc, WindowsSandbox.Select(optIn: null, mxcAvailable: true));
+        Assert.Equal(WindowsSandboxMode.Mxc, WindowsSandbox.Select(mxcAvailable: true));
     }
 
     [Fact]
-    public void Select_MxcAbsent_NoOptIn_IsBlocked()
+    public void Select_MxcAbsent_IsBlocked()
     {
-        Assert.Equal(WindowsSandboxMode.Blocked, WindowsSandbox.Select(optIn: null, mxcAvailable: false));
-    }
-
-    [Fact]
-    public void Select_BuiltinOptIn_OverridesEvenWhenMxcAbsent()
-    {
-        Assert.Equal(WindowsSandboxMode.Builtin, WindowsSandbox.Select(optIn: "builtin", mxcAvailable: false));
+        // There is no opt-in that trades the container away for an unconfined run:
+        // MXC-or-blocked, the same all-or-nothing rule the nono arm follows.
+        Assert.Equal(WindowsSandboxMode.Blocked, WindowsSandbox.Select(mxcAvailable: false));
     }
 
     // ── Wrapper building ─────────────────────────────────────────────────
@@ -86,36 +82,28 @@ public sealed class WindowsSandboxTests
     public void BuildMxcLaunch_SeparatesCommandWithDoubleDash()
     {
         var (fileName, args) = WindowsSandbox.BuildMxcLaunch(
-            @"C:\mxc\wxc-exec.exe", @"C:\cfg\policy.json", "swival", ["-q", "--report", "r.json"]);
+            @"C:\mxc\wxc-exec.exe", @"C:\cfg\policy.json", "dotnet", ["test", "--nologo"]);
 
         Assert.Equal(@"C:\mxc\wxc-exec.exe", fileName);
         // wxc-exec needs `<config> -- <command>`: the `--` separator is REQUIRED, else
         // it parses the program as its own flags (verified against wxc-exec v0.7.0-rc1).
-        Assert.Equal(new[] { @"C:\cfg\policy.json", "--", "swival", "-q", "--report", "r.json" }, args);
-    }
-
-    [Fact]
-    public void BuildBuiltinSwivalLaunch_AppendsSandboxFlag_NoWrapper()
-    {
-        var (fileName, args) = WindowsSandbox.BuildBuiltinSwivalLaunch("swival", ["-q", "--report", "r.json"]);
-
-        Assert.Equal("swival", fileName); // swival self-sandboxes; no external wrapper
-        Assert.Equal(new[] { "-q", "--report", "r.json", "--sandbox", "builtin" }, args);
+        Assert.Equal(new[] { @"C:\cfg\policy.json", "--", "dotnet", "test", "--nologo" }, args);
     }
 
     // ── Surfacing the active mode + the blocked guidance ─────────────────
 
     [Fact]
-    public void BlockedMessage_GivesActionableInstall_AndOptIn()
+    public void BlockedMessage_GivesActionableInstall_AndNoUnsandboxedEscape()
     {
         Assert.Contains("wxc-exec", WindowsSandbox.BlockedMessage, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("builtin", WindowsSandbox.BlockedMessage, StringComparison.OrdinalIgnoreCase);
+        // The message must never advertise a way to run without confinement.
+        Assert.DoesNotContain("opt", WindowsSandbox.BlockedMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void DescribeMode_FlagsBuiltinAsDegraded()
+    public void DescribeMode_NamesTheContainer_AndTheBlockedState()
     {
-        Assert.Contains("degraded", WindowsSandbox.DescribeMode(WindowsSandboxMode.Builtin), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MXC", WindowsSandbox.DescribeMode(WindowsSandboxMode.Mxc), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("blocked", WindowsSandbox.DescribeMode(WindowsSandboxMode.Blocked), StringComparison.OrdinalIgnoreCase);
     }
 }

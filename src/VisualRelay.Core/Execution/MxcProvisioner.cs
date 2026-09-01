@@ -60,14 +60,13 @@ public static class MxcProvisioner
 
     /// <summary>
     /// The full Windows execution plan: the selected mode plus the wxc-exec and
-    /// policy paths (non-null only in MXC mode). Reads the opt-in env and the real
-    /// wxc-exec availability; writes the policy only when MXC is selected.
+    /// policy paths (non-null only in MXC mode). Reads the real wxc-exec
+    /// availability; writes the policy only when MXC is selected.
     /// </summary>
     public static (WindowsSandboxMode Mode, string? WxcExec, string? PolicyPath) ResolvePlan(string? workspaceRoot)
     {
-        var optIn = Environment.GetEnvironmentVariable(WindowsSandbox.OptInEnvVar);
         var wxc = ResolveWxcExec();
-        var mode = WindowsSandbox.Select(optIn, wxc is not null);
+        var mode = WindowsSandbox.Select(wxc is not null);
         var policy = mode == WindowsSandboxMode.Mxc && workspaceRoot is not null
             ? EnsurePolicy(workspaceRoot)
             : null;

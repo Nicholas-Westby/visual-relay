@@ -32,8 +32,8 @@ public sealed partial class SandboxedCommandExecutor
 
     // Builds the sandboxed launch. Never returns an unsandboxed program: on Windows,
     // where nono does not exist, the command runs under Microsoft Execution
-    // Containers or not at all — swival's degraded `builtin` sandbox does not guard a
-    // raw command tool, so it is refused rather than silently accepted.
+    // Containers or not at all. With no container the launch is refused rather than
+    // silently accepted.
     private (string FileName, IReadOnlyList<string> Arguments, string? Error) BuildLaunch(
         string targetRoot, AgentCommandGuard.Verdict verdict)
     {

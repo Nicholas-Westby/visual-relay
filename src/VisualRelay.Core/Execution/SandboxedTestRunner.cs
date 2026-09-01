@@ -6,9 +6,9 @@ namespace VisualRelay.Core.Execution;
 /// Sandbox-enforcing <see cref="ITestRunner"/> wrapper.  Transforms the command
 /// into a <c>nono run -p vr-guard --allow-cwd --</c> invocation — without
 /// <c>--rollback</c> / <c>--no-rollback-prompt</c> — so verification (test,
-/// guard, bootstrap, new-guard probe) runs inside the same nono sandbox as
-/// Swival with the same allowlist.  The shared <c>BuildNonoPrefix</c> builder
-/// keeps the Swival and verification prefixes in lockstep; they differ only
+/// guard, bootstrap, new-guard probe) runs inside the same nono sandbox as the
+/// agent with the same allowlist.  The shared <c>BuildNonoPrefix</c> builder
+/// keeps the agent and verification prefixes in lockstep; they differ only
 /// in the rollback flag pair.  The sandbox is always on — there is no opt-out.
 /// </summary>
 public sealed partial class SandboxedTestRunner(
@@ -98,8 +98,8 @@ public sealed partial class SandboxedTestRunner(
     }
 
     // Windows verify launch: a shell command runs through cmd.exe /c, a script
-    // through direct exec; the resulting program is then wrapped in MXC (default)
-    // or run as-is under the degraded builtin opt-in, or blocked when no sandbox.
+    // through direct exec; the resulting program is then wrapped in MXC, or
+    // blocked when no sandbox is available. There is no unsandboxed fallback.
     private (string FileName, IReadOnlyList<string> Arguments) ResolveWindowsLaunch(string command, string? rootPath)
     {
         var (innerFile, innerArgs) = inner is ShellTestRunner
@@ -110,8 +110,6 @@ public sealed partial class SandboxedTestRunner(
         return mode switch
         {
             WindowsSandboxMode.Mxc => WindowsSandbox.BuildMxcLaunch(wxc!, policy!, innerFile, innerArgs),
-            // Builtin guards only swival's own file tools, not the verify command.
-            WindowsSandboxMode.Builtin => (innerFile, innerArgs),
             _ => throw new InvalidOperationException(WindowsSandbox.BlockedMessage),
         };
     }

@@ -13,21 +13,19 @@ public static partial class SandboxedStage
     // name are injectable so a test can simulate missing/present without touching
     // the real PATH; callers probe the same PATH the launch uses.
     //
-    // There used to be a second requirement, the `swival` binary. Nothing spawns
-    // it any more, and leaving it here would report it missing on every machine
-    // forever.
+    // There used to be a second requirement, the CLI binary of the retired
+    // subprocess agent. Nothing spawns it any more, and leaving it here would
+    // report it missing on every machine forever.
     public static IReadOnlyList<string> MissingRequiredTools(
         RelayConfig config,
         string? pathValue = null,
         string nonoBinary = NonoBinary)
     {
         var isWindows = OperatingSystem.IsWindows();
-        // On Windows there is no nono; the required sandbox is MXC (or the degraded
-        // builtin opt-in). Resolve its availability the same way the launch does.
+        // On Windows there is no nono; the required sandbox is MXC, with no opt-out.
+        // Resolve its availability the same way the launch does.
         var windowsMode = isWindows
-            ? WindowsSandbox.Select(
-                Environment.GetEnvironmentVariable(WindowsSandbox.OptInEnvVar),
-                MxcProvisioner.ResolveWxcExec() is not null)
+            ? WindowsSandbox.Select(MxcProvisioner.ResolveWxcExec() is not null)
             : WindowsSandboxMode.Mxc; // unused off Windows
 
         return MissingRequiredTools(
@@ -62,7 +60,7 @@ public static partial class SandboxedStage
         if (isWindows)
         {
             if (windowsMode == WindowsSandboxMode.Blocked)
-                missing.Add("a Windows sandbox (set VR_WINDOWS_SANDBOX=builtin or provision wxc-exec)");
+                missing.Add("a Windows sandbox (provision wxc-exec)");
         }
         else if (!OnPath(nonoBinary))
         {

@@ -24,7 +24,7 @@ public static class ProvisionMxcCommand
         {
             Console.Error.WriteLine(
                 "MXC provisioning did not complete; see messages above. Task execution stays "
-                + "blocked until a sandbox is available (or set VR_WINDOWS_SANDBOX=builtin).");
+                + "blocked until a sandbox is available.");
             return 1;
         }
 
