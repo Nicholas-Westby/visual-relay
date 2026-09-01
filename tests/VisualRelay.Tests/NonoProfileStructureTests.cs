@@ -5,9 +5,10 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Structural assertions on <c>packaging/nono/vr-guard.json</c>. These run in
 /// the default <c>dotnet test</c> suite (no nono shell-out) and validate the
-/// profile is valid JSON, extends swival, has the required toolchain-cache
-/// <c>filesystem.allow</c> entries, and uses <c>$HOME</c>/<c>when</c> predicates
-/// (no hardcoded <c>/Users/</c> paths).
+/// profile is valid JSON, is self-contained on top of nono's built-in
+/// <c>default</c>, has the required toolchain-cache <c>filesystem.allow</c>
+/// entries, and uses <c>$HOME</c>/<c>when</c> predicates (no hardcoded
+/// <c>/Users/</c> paths).
 /// </summary>
 public sealed class NonoProfileStructureTests
 {
@@ -23,14 +24,82 @@ public sealed class NonoProfileStructureTests
         Assert.Equal(JsonValueKind.Object, doc.RootElement.ValueKind);
     }
 
+    /// <summary>
+    /// The profile inherits from nono's own built-in base and nothing else.
+    /// It used to extend <c>swival</c> — a third-party pack the launcher had to
+    /// <c>nono pull</c> on every start — for an agent Visual Relay no longer runs.
+    /// Everything that pack contributed is now declared here, so the sandbox does
+    /// not depend on someone else's release cadence.
+    /// </summary>
     [Fact]
-    public void VrGuardProfile_ExtendsSwival()
+    public void VrGuardProfile_ExtendsTheBuiltInDefault_NotAThirdPartyPack()
     {
         var profilePath = ResolveProfilePath();
         using var doc = JsonDocument.Parse(File.ReadAllText(profilePath));
 
         Assert.True(doc.RootElement.TryGetProperty("extends", out var extends));
-        Assert.Equal("swival", extends.GetString());
+        Assert.Equal("default", extends.GetString());
+    }
+
+    /// <summary>
+    /// The seven groups the swival layer used to add on top of <c>default</c>.
+    /// Dropping the inheritance without re-declaring these would silently strip
+    /// unlink protection, git config access and the language-runtime caches.
+    /// </summary>
+    [Theory]
+    [InlineData("python_runtime")]
+    [InlineData("node_runtime")]
+    [InlineData("user_caches_macos")]
+    [InlineData("user_caches_linux")]
+    [InlineData("linux_sysfs_read")]
+    [InlineData("git_config")]
+    [InlineData("unlink_protection")]
+    public void VrGuardProfile_DeclaresEveryGroupItUsedToInherit(string group)
+    {
+        var profilePath = ResolveProfilePath();
+        using var doc = JsonDocument.Parse(File.ReadAllText(profilePath));
+
+        var included = doc.RootElement
+            .GetProperty("groups").GetProperty("include")
+            .EnumerateArray().Select(e => e.GetString()).ToList();
+
+        Assert.Contains(group, included);
+    }
+
+    /// <summary>
+    /// <c>default</c> grants no workspace access at all (<c>workdir.access</c> is
+    /// <c>none</c>) and leaves <c>capability_elevation</c> unset. Both came from
+    /// the swival layer, so the profile has to state them itself — without the
+    /// workdir grant every stage would be denied writes to its own checkout.
+    /// </summary>
+    [Fact]
+    public void VrGuardProfile_StatesTheWorkdirAndSecuritySettingsDefaultOmits()
+    {
+        var profilePath = ResolveProfilePath();
+        using var doc = JsonDocument.Parse(File.ReadAllText(profilePath));
+        var root = doc.RootElement;
+
+        Assert.Equal("readwrite",
+            root.GetProperty("workdir").GetProperty("access").GetString());
+        Assert.False(
+            root.GetProperty("security").GetProperty("capability_elevation").GetBoolean());
+        Assert.Equal("isolated",
+            root.GetProperty("security").GetProperty("signal_mode").GetString());
+        Assert.False(root.GetProperty("network").GetProperty("block").GetBoolean());
+    }
+
+    /// <summary>
+    /// Nothing in the profile may name swival again: no inherited pack, no grant
+    /// for its config dirs, no rollback exclusion for its scratch directory.
+    /// </summary>
+    [Fact]
+    public void VrGuardProfile_NamesSwivalNowhere()
+    {
+        var profilePath = ResolveProfilePath();
+
+        var json = File.ReadAllText(profilePath);
+
+        Assert.DoesNotContain("swival", json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

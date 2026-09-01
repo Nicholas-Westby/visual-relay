@@ -4,7 +4,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Tests for the inherited-profile resolution added by task 11: the inspector must
-/// resolve the whole <c>extends</c> chain (vr-guard → swival → default) via
+/// resolve the whole <c>extends</c> chain (vr-guard → default) via
 /// <c>nono profile show --json</c>, then expand every included group — so the
 /// enforced-but-previously-invisible credential denials (e.g. <c>~/.ssh</c> from
 /// <c>deny_credentials</c>) surface in the Blocked list. Declared as a partial of
@@ -201,7 +201,7 @@ public sealed partial class SandboxPathInspectorTests
         """
         {
           "name": "vr-guard",
-          "extends": "swival",
+          "extends": "default",
           "groups": {
             "include": [
               "deny_credentials",

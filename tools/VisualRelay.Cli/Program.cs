@@ -5,7 +5,7 @@ using VisualRelay.Core.Execution;
 // VisualRelay.Cli — the C# home for every `visual-relay` subcommand. The bash
 // launcher is now only a pre-dotnet bootstrap (enter nix devshell, exec a
 // published app for brew `launch`, else exec this CLI). All command LOGIC lives
-// here; commands may shell out to dotnet/nono/swival/guards/shfmt but hold no big
+// here; commands may shell out to dotnet/nono/guards/shfmt but hold no big
 // bash. Arg dispatch mirrors tools/VisualRelay.RunTask/Program.cs: cmd → handler,
 // usage to stderr, numeric exit codes.
 

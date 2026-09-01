@@ -108,7 +108,7 @@ public sealed partial class SandboxPathInspectorTests
         var root = doc.RootElement;
 
         Assert.True(root.TryGetProperty("extends", out var extends));
-        Assert.Equal("swival", extends.GetString());
+        Assert.Equal("default", extends.GetString());
 
         Assert.True(root.TryGetProperty("filesystem", out _));
         Assert.True(root.TryGetProperty("groups", out _));
@@ -175,7 +175,7 @@ public sealed partial class SandboxPathInspectorTests
     private static string SampleVrGuardJson() =>
         """
         {
-          "extends": "swival",
+          "extends": "default",
           "filesystem": {
             "read": ["/", "$HOME/.gitconfig"],
             "allow": [

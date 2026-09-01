@@ -4,8 +4,9 @@ namespace VisualRelay.Tests;
 /// Behavioral tests for the nono sandbox gate, now owned by VisualRelay.Cli's
 /// <c>launch</c> command (re-pointed from the bash <c>Installer5Sandbox2</c>
 /// suite). The sandbox is always on, so when nono is absent <c>launch</c> must
-/// exit non-zero with an install message and NOT start the backend; and
-/// provisioning still pulls the swival base pack when nono is present.
+/// exit non-zero with an install message and NOT start the backend; and when
+/// nono is present the launch must reach the app without pulling any profile
+/// pack first — vr-guard inherits nono's built-in default and nothing else.
 /// </summary>
 public sealed class CliNonoGateTests
 {
@@ -16,7 +17,6 @@ public sealed class CliNonoGateTests
         try
         {
             CliHarness.WriteStub(stub, "dotnet");
-            CliHarness.WriteStub(stub, "swival");
             // nono intentionally absent.
             var (ec, _, err) = await CliHarness.RunAsync(repo, stub, ["launch"],
                 new Dictionary<string, string> { ["VR_BACKEND_FLAG"] = Path.Combine(repo, "backend-ran") });
@@ -50,7 +50,6 @@ public sealed class CliNonoGateTests
         try
         {
             CliHarness.WriteStub(stub, "dotnet", CliHarness.BackendAwareDotnetStub);
-            CliHarness.WriteStub(stub, "swival");
             // nono intentionally absent — the stale bypass key must NOT skip the gate.
             var (ec, _, err) = await CliHarness.RunAsync(repo, stub, ["launch"],
                 new Dictionary<string, string> { ["VR_BACKEND_FLAG"] = backendRan });
@@ -63,29 +62,34 @@ public sealed class CliNonoGateTests
         finally { TryDelete(repo); }
     }
 
+    /// <summary>
+    /// The launch used to run <c>nono pull jedisct1/swival</c> every time, because
+    /// vr-guard extended that third-party pack. vr-guard is self-contained now, so
+    /// the launch must not shell out to nono at all — the pack's "already at x.y.z"
+    /// line was the only thing still naming an agent Visual Relay had deleted.
+    /// </summary>
     [Fact]
-    public async Task Launch_SandboxEnabled_NonoPresent_PullsSwivalPack()
+    public async Task Launch_SandboxEnabled_NonoPresent_PullsNoProfilePack()
     {
         var (repo, stub) = CliHarness.NewSandboxRepo();
         var nonoArgv = Path.Combine(repo, "nono-argv");
         try
         {
             CliHarness.WriteStub(stub, "dotnet");
-            CliHarness.WriteStub(stub, "swival");
             CliHarness.WriteStub(stub, "nono", $"printf '%s ' \"$@\" >> '{nonoArgv}'; printf '\\n' >> '{nonoArgv}'\nexit 0");
-            await CliHarness.RunAsync(repo, stub, ["launch"], UpgradeSuppressed(repo));
+            await CliHarness.RunAsync(repo, stub, ["launch"], LaunchEnv(repo));
 
-            Assert.True(File.Exists(nonoArgv), "nono should have been invoked");
-            Assert.Contains("pull jedisct1/swival", File.ReadAllText(nonoArgv), StringComparison.Ordinal);
+            Assert.False(File.Exists(nonoArgv),
+                "launch must not invoke nono: " +
+                (File.Exists(nonoArgv) ? File.ReadAllText(nonoArgv) : ""));
         }
         finally { TryDelete(repo); }
     }
 
-    private static Dictionary<string, string> UpgradeSuppressed(string repo) => new()
+    private static Dictionary<string, string> LaunchEnv(string repo) => new()
     {
         ["VR_BACKEND_FLAG"] = Path.Combine(repo, "backend-ran"),
         ["XDG_STATE_HOME"] = Path.Combine(repo, "state"),
-        ["VISUAL_RELAY_SWIVAL_LATEST_CMD"] = "true", // empty stdout ⇒ no upgrade noise
     };
 
     private static void TryDelete(string dir)

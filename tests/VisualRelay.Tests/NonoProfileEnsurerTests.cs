@@ -65,9 +65,9 @@ public sealed class NonoProfileEnsurerTests
         Assert.Equal(tmp.ExpectedProfilePath, written);
         Assert.True(File.Exists(written), "profile must be created");
         Assert.Equal(NonoProfileEnsurer.EmbeddedContent, await File.ReadAllTextAsync(written));
-        // The created profile is valid JSON that extends swival (sanity).
+        // The created profile is valid JSON that extends default (sanity).
         using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(written));
-        Assert.Equal("swival", doc.RootElement.GetProperty("extends").GetString());
+        Assert.Equal("default", doc.RootElement.GetProperty("extends").GetString());
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class NonoProfileEnsurerTests
         using var tmp = new TempXdg();
         Directory.CreateDirectory(Path.GetDirectoryName(tmp.ExpectedProfilePath)!);
         await File.WriteAllTextAsync(tmp.ExpectedProfilePath,
-            "{ \"extends\": \"swival\", \"stale\": true }");
+            "{ \"extends\": \"default\", \"stale\": true }");
 
         var written = await NonoProfileEnsurer.EnsureAsync(tmp.Env);
 

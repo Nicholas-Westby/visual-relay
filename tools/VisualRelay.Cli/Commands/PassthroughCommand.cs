@@ -9,8 +9,8 @@ public static class PassthroughCommand
 {
     public static int RunTask(RepoPaths paths, IReadOnlyList<string> args)
     {
-        // run-task additionally requires the sandbox + swival (it drives a real
-        // pipeline stage), matching the launcher's run-task gates.
+        // run-task additionally requires the sandbox (it drives a real pipeline
+        // stage), matching the launcher's run-task gate.
         var nono = Gates.NonoGate.Require(paths.Root);
         if (nono != 0)
             return nono;

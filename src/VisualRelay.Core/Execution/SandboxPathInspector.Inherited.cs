@@ -5,7 +5,7 @@ namespace VisualRelay.Core.Execution;
 
 /// <summary>
 /// Inherited-profile resolution for <see cref="SandboxPathInspector"/>. The nono
-/// branch must expand the WHOLE <c>extends</c> chain (vr-guard → swival → default),
+/// branch must expand the WHOLE <c>extends</c> chain (vr-guard → default),
 /// not just vr-guard's own two groups. <c>nono profile show &lt;profile&gt; --json</c>
 /// resolves that chain; its <c>groups.include</c> is then expanded group-by-group
 /// through the same <c>nono profile groups &lt;name&gt; --json</c> path the own groups
@@ -134,7 +134,7 @@ public static partial class SandboxPathInspector
     /// Resolves the effective <c>extends</c> chain by running
     /// <c>nono profile show &lt;profile&gt; --json</c> against the embedded vr-guard
     /// profile. The embedded content is written to a throwaway temp file (nono resolves
-    /// swival → default from its own registry), so the resulting group list reflects the
+    /// default from its own registry), so the resulting group list reflects the
     /// EXACT enforced profile with no registered-copy staleness. Returns stdout on exit
     /// 0, else <c>null</c>; never throws (missing nono / IO / non-zero exit → null).
     /// </summary>

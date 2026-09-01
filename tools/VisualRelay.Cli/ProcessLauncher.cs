@@ -7,7 +7,7 @@ namespace VisualRelay.Cli;
 /// Thin foreground process runner: spawns a child with inherited stdio (so the
 /// user sees live output and the child can prompt), waits, and returns the exit
 /// code. This is the CLI's single shell-out point for <c>dotnet</c>, <c>nono</c>,
-/// <c>swival</c>, and the guard scripts — it holds no command logic.
+/// and the guard scripts — it holds no command logic.
 /// </summary>
 public static class ProcessLauncher
 {

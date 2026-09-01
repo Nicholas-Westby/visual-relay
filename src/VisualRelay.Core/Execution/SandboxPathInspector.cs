@@ -66,9 +66,9 @@ public static partial class SandboxPathInspector
         if (string.IsNullOrEmpty(resolvedBinary) || !File.Exists(resolvedBinary))
             return SandboxInspectionResult.Unavailable;
 
-        // Resolve the whole extends chain (vr-guard → swival → default) so EVERY
-        // inherited group expands — incl. the deny_* credential/keychain groups —
-        // not just vr-guard's own two. Own directives still come from the embedded
+        // Resolve the whole extends chain (vr-guard → default) so EVERY inherited
+        // group expands — incl. the deny_* credential/keychain groups — not just
+        // vr-guard's own nine. Own directives still come from the embedded
         // profile (a registered copy `show` reads can be stale); `show` supplies
         // only the fully-resolved group list, expanded via the existing groups path.
         var profileJson = NonoProfileEnsurer.EmbeddedContent;
