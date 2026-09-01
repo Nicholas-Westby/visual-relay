@@ -119,3 +119,66 @@ The run also re-confirmed the blindness this whole change exists to fix: mid-run
 the Commands tab showed 22 entries, every one of them stamped `s01` from the
 stage that had already finished, while the running stage showed nothing. Every
 assistant record in the fresh trace carries `"usage": {}`.
+
+## The offline differential, and what it found
+
+All **880** recorded traces that carry a tool call now replay through the new
+loop with identical tool calls in identical order. That is the spec's stated
+precondition for spending anything on a benchmark.
+
+Getting there turned up three things worth recording.
+
+### The spec's tool inventory is incomplete
+
+The spec names fourteen tools. Counted across all 967 traces, the recorded runs
+used twenty-five names:
+
+| Tool | Calls | Ported |
+| --- | --- | --- |
+| read_file | 14052 | yes |
+| grep | 5071 | yes |
+| edit_file | 2639 | yes |
+| run_shell_command | 2420 | yes |
+| run_command | 2337 | yes |
+| list_files | 1112 | yes |
+| todo | 949 | yes |
+| read_multiple_files | 450 | yes |
+| write_file | 378 | yes |
+| think | 236 | yes |
+| outline | 205 | yes |
+| snapshot | 146 | yes, but see below |
+| python | 89 | no, covered by the command tools |
+| use_skill | 55 | no |
+| delete_file | 61 | yes |
+| view_image | 40 | yes |
+| check_subagents | 25 | no |
+| fetch_url | 24 | no |
+| spawn_subagent | 16 | no |
+| bash, glob, find, tail_command, look_for_files_tests, bash_command | 13 total | no |
+
+### "Skills and subagents are unused" is not accurate
+
+The spec lists skills and subagents among the machinery that "fired 0 times".
+Skills fired **55 times**, always requesting the `nono-sandbox` skill, in 5.7% of
+traces; subagents fired **41 times** across two tool names. They are rare, not
+unused. The differential excludes them explicitly and counts them, and a test
+fails if dropped tools ever exceed 2% of recorded calls.
+
+The claim that IS exact is the python one: the spec says 89 calls bypassed the
+command guard, and the corpus contains exactly 89.
+
+### `snapshot` means something other than what was built — OPEN
+
+The spec names `snapshot` in the tool list without saying what it does. The
+recorded corpus says: 146 calls, every one shaped
+`{action: "save"|"restore", label?, summary?, force?}` — a conversation
+checkpoint the model writes a long summary into and later restores.
+
+The tool that was built instead reports the working tree (branch, porcelain
+status, diffstat) and takes no arguments. The differential does not catch this,
+because it compares which calls are made rather than whether the arguments would
+be accepted.
+
+This is the largest single piece of unfinished business in the tool set. Either
+the checkpoint tool should be implemented under this name and the working-tree
+report renamed, or the name should be retired and the 146 calls accounted for.
