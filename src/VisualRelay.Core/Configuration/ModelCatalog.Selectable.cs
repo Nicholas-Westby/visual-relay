@@ -33,9 +33,12 @@ public static partial class ModelCatalog
                 "deepseek-v4-flash-vision-exp", "deepseek-v4-flash",
                 "deepseek-v4-pro", "hf-qwen3-coder-next",
             },
+            // Mirrors the chain, tail included: a DeepSeek-only install must be
+            // able to see and pick the one vision model its keys can reach.
             ["vision"] = new List<string>
             {
                 "hf-qwen3-vl-235b", "hf-qwen3-vl-30b",
+                "deepseek-v4-flash-vision-exp",
             },
             ["fallback"] = new List<string>
             {

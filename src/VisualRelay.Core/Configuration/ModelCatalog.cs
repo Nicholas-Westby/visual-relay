@@ -63,10 +63,19 @@ public static partial class ModelCatalog
             ("hf-qwen3-coder-next", "HF_TOKEN"),
             ("fallback", "HF_TOKEN"),
         ],
+        // The DeepSeek route is the TAIL, so an install holding HF_TOKEN routes
+        // exactly as before and only reaches it when both VL models are gone.
+        // It earns its place at the other end: without it, a DeepSeek-only
+        // install got no vision tier at all and could not run a visual review,
+        // while a vision-capable DeepSeek model sat on its cheap tier. That
+        // exclusion was made on 2026-08-31 because the proxy then in front of
+        // the agent stripped image parts on the DeepSeek route; the proxy was
+        // deleted the next day and images now reach the provider verbatim.
         ["vision"] =
         [
             ("hf-qwen3-vl-235b", "HF_TOKEN"),
             ("hf-qwen3-vl-30b", "HF_TOKEN"),
+            ("deepseek-v4-flash-vision-exp", "DEEPSEEK_API_KEY"),
         ],
         ["fallback"] =
         [

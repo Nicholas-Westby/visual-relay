@@ -11,7 +11,7 @@ public sealed class ModelCatalogVisionTierTests
 {
     /// <summary>Models known to be vision-capable in the current config.</summary>
     private static readonly HashSet<string> VisionCapableModels =
-        ["hf-qwen3-vl-235b", "hf-qwen3-vl-30b"];
+        ["hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "deepseek-v4-flash-vision-exp"];
 
     // ── 1. Template model strings ────────────────────────────────────────
 
@@ -49,9 +49,16 @@ public sealed class ModelCatalogVisionTierTests
 
         Assert.Equal(VisionCapableModels, models);
 
-        // Every model in the vision chain requires HF_TOKEN (the sole key
-        // gating HF Inference Providers).
-        Assert.All(chain, c => Assert.Equal("HF_TOKEN", c.RequiredKey));
+        // The chain spans two providers now, so each model carries its own key
+        // rather than the tier having one. The order matters: the VL models lead
+        // and the DeepSeek route is the tail, so nobody's routing changes while
+        // a key that backs a leader is present.
+        Assert.Equal(
+            ["hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "deepseek-v4-flash-vision-exp"],
+            chain.Select(c => c.Model));
+        Assert.Equal(
+            ["HF_TOKEN", "HF_TOKEN", "DEEPSEEK_API_KEY"],
+            chain.Select(c => c.RequiredKey));
     }
 
     // ── 4. Selectable exact membership ────────────────────────────────────
@@ -92,9 +99,8 @@ public sealed class ModelCatalogVisionTierTests
         Assert.DoesNotContain("hf-qwen3-coder-next", chain);
         Assert.DoesNotContain("deepseek-v4-pro", chain);
         Assert.DoesNotContain("deepseek-v4-flash", chain);
-        // Named "vision" and image-capable upstream, but it is the cheap-tier
-        // primary — the vision chain stays the two VL models the tier is sized
-        // and priced around.
+        // Absent here only because this case supplies no DEEPSEEK_API_KEY. It
+        // IS in the vision chain, as its tail; with the key present it appears.
         Assert.DoesNotContain("deepseek-v4-flash-vision-exp", chain);
         // Vision-capable or not, the frontier primary is not a vision route: GLM
         // 5.3 Flash does take images, but the vision chain stays the two VL
@@ -122,23 +128,41 @@ public sealed class ModelCatalogVisionTierTests
     // ── 7. Vision tier absent when no HF_TOKEN ────────────────────────────
 
     [Fact]
-    public void VisionTier_AbsentWhenNoHfToken()
+    public void VisionTier_AbsentWhenNoKeyBacksAVisionModel()
     {
-        // No HF_TOKEN → both VL models unavailable → vision tier skipped
-        // entirely, so a vision request produces a "model not found" error
-        // instead of a silent text-model answer.
-        // With no key at all, no tier resolves to anything. The stage then fails
-        // naming the key that would fix it, rather than the old behaviour of
-        // resolving to a model it had no key to authenticate with.
+        // The tier is omitted rather than degraded, so a vision request produces
+        // a "model not found" error instead of a silent text-model answer. With
+        // no key at all, no tier resolves; the stage fails naming the key that
+        // would fix it.
         var noKeys = new HashSet<string>();
         Assert.Empty(ModelCatalogTestHelpers.GeneratedAliases(noKeys));
 
-        var dsOnly = new HashSet<string> { "DEEPSEEK_API_KEY" };
-        var dsAliases = ModelCatalogTestHelpers.GeneratedAliases(dsOnly);
-        Assert.False(dsAliases.ContainsKey("vision"));
-
+        // Moonshot backs no vision model, so the tier is still omitted.
         var moonshotOnly = new HashSet<string> { "MOONSHOT_API_KEY" };
         var msAliases = ModelCatalogTestHelpers.GeneratedAliases(moonshotOnly);
         Assert.False(msAliases.ContainsKey("vision"));
+    }
+
+    /// <summary>
+    /// A DeepSeek-only install gets a working vision tier. It used to get none:
+    /// the tier was HF-only, so with no HF_TOKEN it was omitted entirely and the
+    /// visual-review stage could not run at all, even though a vision-capable
+    /// DeepSeek model was already serving that install's cheap tier.
+    ///
+    /// <para>The exclusion was introduced on 2026-08-31 for one stated reason:
+    /// the proxy in front of the agent stripped image parts on the DeepSeek
+    /// route, so an image sent there was silently lost. That proxy was deleted
+    /// the next day and image parts now reach the provider verbatim, so the
+    /// reason is gone.</para>
+    /// </summary>
+    [Fact]
+    public void VisionTier_ResolvesOnADeepSeekOnlyInstall()
+    {
+        var dsOnly = new HashSet<string> { "DEEPSEEK_API_KEY" };
+
+        var aliases = ModelCatalogTestHelpers.GeneratedAliases(dsOnly);
+
+        Assert.True(aliases.ContainsKey("vision"), "a vision-capable key must yield a vision tier");
+        Assert.Equal("deepseek-v4-flash-vision-exp", aliases["vision"]);
     }
 }

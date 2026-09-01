@@ -214,7 +214,11 @@ public sealed partial class SplitGuardVerificationTests
         // ModelCatalog families that asserted against its shape were
         // rewritten against the C# catalog, which needs fewer facts to say the
         // same thing.
-        const int baseline = 138;
+        //
+        // 2026-09-01: 138 -> 139. The vision chain gained the DeepSeek route as
+        // its tail, so a DeepSeek-only install has a vision tier again, and that
+        // gained a fact of its own.
+        const int baseline = 139;
 
         string[] prefixes =
         [

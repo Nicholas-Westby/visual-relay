@@ -170,14 +170,19 @@ public sealed class ProviderRoutesTests
     /// Vision is omitted entirely when no key backs it, rather than degrading to
     /// a text model. An image sent to a text model is answered confidently and
     /// wrongly, so a hard "model not found" is the safer failure.
+    /// <para>Moonshot is the example of an unbacked install: it backs no vision
+    /// model. DeepSeek is no longer one, because its vision route is the tail of
+    /// the chain.</para>
     /// </summary>
     [Fact]
     public void Vision_IsOmittedRatherThanDegraded()
     {
         var withHf = ModelCatalog.ResolveChains(new HashSet<string> { "HF_TOKEN" });
-        var without = ModelCatalog.ResolveChains(new HashSet<string> { "DEEPSEEK_API_KEY" });
+        var withDeepSeek = ModelCatalog.ResolveChains(new HashSet<string> { "DEEPSEEK_API_KEY" });
+        var without = ModelCatalog.ResolveChains(new HashSet<string> { "MOONSHOT_API_KEY" });
 
         Assert.True(withHf.ContainsKey("vision"));
+        Assert.True(withDeepSeek.ContainsKey("vision"));
         Assert.False(without.ContainsKey("vision"));
     }
 

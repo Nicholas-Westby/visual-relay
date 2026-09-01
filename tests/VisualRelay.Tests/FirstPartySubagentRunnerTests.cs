@@ -89,7 +89,9 @@ public sealed class FirstPartySubagentRunnerTests
 
     /// <summary>
     /// A tier no key can serve fails immediately, as a hard abort: escalating to
-    /// another tier cannot conjure a key that is not set.
+    /// another tier cannot conjure a key that is not set. Moonshot backs no
+    /// vision model; DeepSeek stopped being an example when its vision route
+    /// joined the tail of that chain.
     /// </summary>
     [Fact]
     public async Task ATierWithNoKey_FailsAsAHardAbort()
@@ -97,7 +99,7 @@ public sealed class FirstPartySubagentRunnerTests
         var transport = new ScriptedModelTransport();
         var sink = new Sink();
 
-        var result = await Build(transport, Keys("DEEPSEEK_API_KEY"), sink)
+        var result = await Build(transport, Keys("MOONSHOT_API_KEY"), sink)
             .RunAsync(Invocation(tier: "vision"));
 
         Assert.False(result.IsValid);
