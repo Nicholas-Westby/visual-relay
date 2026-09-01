@@ -77,7 +77,10 @@ public sealed class ChatCompletionClient
 
             if (!parser.SawDone) return Build(CompletionOutcome.Truncated, accumulator);
 
-            return Build(Classify(accumulator), accumulator);
+            var outcome = Classify(accumulator);
+            return outcome == CompletionOutcome.Failed
+                ? Build(outcome, accumulator, FinishReasonError(accumulator.FinishReason!))
+                : Build(outcome, accumulator);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -193,10 +196,43 @@ public sealed class ChatCompletionClient
         }
     }
 
-    private static CompletionOutcome Classify(ChatDeltaAccumulator accumulator) =>
-        accumulator.FinishReason == "length" && accumulator.Content().Length == 0
+    /// <summary>
+    /// Finish reasons that mean the turn did NOT complete. Z.AI signals a
+    /// mid-stream failure only here — its enum carries these two beyond the
+    /// usual set — so without them a filtered or upstream-failed response reads
+    /// as a clean success and the loop treats a truncated answer as intended.
+    /// </summary>
+    private static readonly HashSet<string> FailureFinishReasons =
+        new(StringComparer.OrdinalIgnoreCase) { "sensitive", "network_error" };
+
+    private static CompletionOutcome Classify(ChatDeltaAccumulator accumulator)
+    {
+        if (accumulator.FinishReason is { } reason && FailureFinishReasons.Contains(reason))
+            return CompletionOutcome.Failed;
+
+        return accumulator.FinishReason == "length" && accumulator.Content().Length == 0
             ? CompletionOutcome.LengthWithoutContent
             : CompletionOutcome.Completed;
+    }
+
+    /// <summary>The error a failure finish reason stands for.</summary>
+    /// <param name="reason">The provider's finish reason.</param>
+    /// <returns>An error naming what the provider signalled.</returns>
+    /// <remarks>
+    /// The two differ in retryability. A filtered response will be filtered
+    /// again, so it is a bad request; a mid-stream upstream failure is transient
+    /// and worth another attempt.
+    /// </remarks>
+    private static ProviderError FinishReasonError(string reason) =>
+        reason.Equals("sensitive", StringComparison.OrdinalIgnoreCase)
+            ? new ProviderError(
+                200, reason,
+                "the provider filtered the response (finish_reason: sensitive)",
+                ProviderErrorKind.BadRequest)
+            : new ProviderError(
+                200, reason,
+                $"the provider failed mid-stream (finish_reason: {reason})",
+                ProviderErrorKind.Server);
 
     /// <summary>
     /// Drains an error body under the idle budget rather than the whole-request

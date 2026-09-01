@@ -234,4 +234,38 @@ public sealed partial class ChatCompletionClientTests
         Assert.Equal(CompletionOutcome.Completed, completion.Outcome);
         Assert.Equal("ok", completion.Content);
     }
+
+    /// <summary>
+    /// Z.AI signals a mid-stream failure only through <c>finish_reason</c>, and
+    /// its enum carries <c>sensitive</c> and <c>network_error</c> beyond the
+    /// usual set. Neither is a completed turn: content was filtered or the
+    /// upstream call failed. Treating them as success hands the loop a truncated
+    /// or empty answer as though the model meant it.
+    /// </summary>
+    /// <param name="finishReason">The reason Z.AI reported.</param>
+    [Theory]
+    [InlineData("sensitive")]
+    [InlineData("network_error")]
+    public async Task AZaiFailureFinishReason_IsNotACompletedTurn(string finishReason)
+    {
+        var completion = await RunAsync(
+            [(Zero, """data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}""" + "\n\n"),
+             (Zero, $$"""data: {"choices":[{"delta":{},"finish_reason":"{{finishReason}}"}]}""" + "\n\n"),
+             (Zero, Done)]);
+
+        Assert.Equal(CompletionOutcome.Failed, completion.Outcome);
+        Assert.Equal(finishReason, completion.FinishReason);
+        Assert.NotNull(completion.Error);
+    }
+
+    /// <summary>An ordinary stop is still a completed turn.</summary>
+    [Fact]
+    public async Task AnOrdinaryStop_IsStillCompleted()
+    {
+        var completion = await RunAsync(
+            [(Zero, """data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}""" + "\n\n"),
+             (Zero, Done)]);
+
+        Assert.Equal(CompletionOutcome.Completed, completion.Outcome);
+    }
 }
