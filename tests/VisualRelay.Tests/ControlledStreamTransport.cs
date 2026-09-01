@@ -18,7 +18,8 @@ namespace VisualRelay.Tests;
 /// </para>
 /// </summary>
 /// <param name="statusCode">The status the response reports.</param>
-internal sealed class ControlledStreamTransport(int statusCode) : IProviderTransport
+internal sealed class ControlledStreamTransport(
+    int statusCode, IReadOnlyDictionary<string, string>? headers = null) : IProviderTransport
 {
     // AllowSynchronousContinuations is what makes this deterministic. Without it
     // the reader's continuation is posted to the thread pool, and a test that
@@ -45,7 +46,7 @@ internal sealed class ControlledStreamTransport(int statusCode) : IProviderTrans
     {
         LastRequest = request;
         return Task.FromResult(new ProviderResponse(
-            statusCode, new Dictionary<string, string>(), string.Empty));
+            statusCode, headers ?? new Dictionary<string, string>(), string.Empty));
     }
 
     /// <inheritdoc />
@@ -54,7 +55,7 @@ internal sealed class ControlledStreamTransport(int statusCode) : IProviderTrans
     {
         LastRequest = request;
         return Task.FromResult(new ProviderStreamResponse(
-            statusCode, new Dictionary<string, string>(), ReadAsync));
+            statusCode, headers ?? new Dictionary<string, string>(), ReadAsync));
     }
 
     private async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAsync(

@@ -20,7 +20,7 @@ namespace VisualRelay.Tests;
 /// </summary>
 internal sealed class ScriptedModelTransport : IProviderTransport
 {
-    private readonly Queue<(int Status, string Body)> _script = new();
+    private readonly Queue<(int Status, string Body, IReadOnlyDictionary<string, string>? Headers)> _script = new();
 
     /// <summary>Every request body the loop sent, in order.</summary>
     public List<string> Requests { get; } = [];
@@ -62,6 +62,37 @@ internal sealed class ScriptedModelTransport : IProviderTransport
     /// <returns>This, for chaining.</returns>
     public ScriptedModelTransport Fails(int status, string body) => Raw(status, body);
 
+    /// <summary>Queues an HTTP failure carrying response headers.</summary>
+    /// <param name="status">The status to answer with.</param>
+    /// <param name="body">The error body.</param>
+    /// <param name="headers">The headers to send, such as <c>Retry-After</c>.</param>
+    /// <returns>This, for chaining.</returns>
+    public ScriptedModelTransport FailsWith(
+        int status, string body, IReadOnlyDictionary<string, string> headers) =>
+        Raw(status, body, headers);
+
+    /// <summary>
+    /// Queues a 200 that streams nothing at all — no deltas, no terminator. A
+    /// provider that accepts and then says nothing.
+    /// </summary>
+    /// <returns>This, for chaining.</returns>
+    public ScriptedModelTransport AnswersNothing() => Raw(200, string.Empty);
+
+    /// <summary>
+    /// Queues an answer whose text is sent verbatim, so a test can supply a
+    /// truncated fenced block or any other malformed shape.
+    /// </summary>
+    /// <param name="text">The exact assistant text.</param>
+    /// <returns>This, for chaining.</returns>
+    public ScriptedModelTransport AnswersVerbatim(string text)
+    {
+        var escaped = System.Text.Json.JsonEncodedText.Encode(text).ToString();
+        return Raw(200,
+            Sse($$"""{"model":"fake-1","choices":[{"delta":{"content":"{{escaped}}"},"finish_reason":null}]}""")
+            + Sse("""{"model":"fake-1","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4}}""")
+            + "data: [DONE]\n\n");
+    }
+
     /// <summary>
     /// Queues a turn that spends its whole output budget on reasoning and emits
     /// no content, finishing on length. This is the measured GLM shape.
@@ -72,9 +103,10 @@ internal sealed class ScriptedModelTransport : IProviderTransport
         + Sse("""{"model":"fake-1","choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"completion_tokens_details":{"reasoning_tokens":20}}}""")
         + "data: [DONE]\n\n");
 
-    private ScriptedModelTransport Raw(int status, string body)
+    private ScriptedModelTransport Raw(
+        int status, string body, IReadOnlyDictionary<string, string>? headers = null)
     {
-        _script.Enqueue((status, body));
+        _script.Enqueue((status, body, headers));
         return this;
     }
 
@@ -85,8 +117,9 @@ internal sealed class ScriptedModelTransport : IProviderTransport
         ProviderRequest request, CancellationToken cancellationToken = default)
     {
         Requests.Add(request.Body);
-        var (status, body) = Next();
-        return Task.FromResult(new ProviderResponse(status, new Dictionary<string, string>(), body));
+        var (status, body, headers) = Next();
+        return Task.FromResult(new ProviderResponse(
+            status, headers ?? new Dictionary<string, string>(), body));
     }
 
     /// <inheritdoc />
@@ -94,12 +127,12 @@ internal sealed class ScriptedModelTransport : IProviderTransport
         ProviderRequest request, CancellationToken cancellationToken = default)
     {
         Requests.Add(request.Body);
-        var (status, body) = Next();
+        var (status, body, headers) = Next();
         return Task.FromResult(new ProviderStreamResponse(
-            status, new Dictionary<string, string>(), _ => Emit(body)));
+            status, headers ?? new Dictionary<string, string>(), _ => Emit(body)));
     }
 
-    private (int Status, string Body) Next() =>
+    private (int Status, string Body, IReadOnlyDictionary<string, string>? Headers) Next() =>
         _script.Count > 0
             ? _script.Dequeue()
             // Running off the end of the script is a test bug, not a model

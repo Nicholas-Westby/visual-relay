@@ -254,8 +254,11 @@ public sealed class ChatCompletionClient
             // Whatever arrived before the stall is still the best description.
         }
 
-        return ProviderErrorReader.TryRead(response.StatusCode, body.ToString())
+        var retryAfter = ProviderError.ReadRetryAfter(response.Headers, _timeProvider.GetUtcNow());
+        var error = ProviderErrorReader.TryRead(response.StatusCode, body.ToString())
             ?? new ProviderError(response.StatusCode, null, body.ToString(), ProviderErrorKind.Unknown);
+
+        return retryAfter is null ? error : error with { RetryAfter = retryAfter };
     }
 
     private static ChatCompletion Failed(ProviderError error, ChatDeltaAccumulator? accumulator = null) =>

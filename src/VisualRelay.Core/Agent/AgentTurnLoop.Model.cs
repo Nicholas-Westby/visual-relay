@@ -93,19 +93,37 @@ public sealed partial class AgentTurnLoop
             Publish(AgentEventKind.Retry, state.Turn,
                 text: state.LastError, detail: $"attempt {attempt + 1} of {options.RetryBudget}");
 
-            await BackoffAsync(attempt, options, cancellationToken).ConfigureAwait(false);
+            await BackoffAsync(attempt, options, completion.Error?.RetryAfter, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         return null;
     }
 
     /// <summary>
-    /// Exponential backoff with jitter, which is the only schedule available:
-    /// none of the four providers documents <c>Retry-After</c> and none was ever
-    /// observed sending one.
+    /// How long to wait before the next attempt.
     /// </summary>
-    private Task BackoffAsync(int attempt, AgentLoopOptions options, CancellationToken cancellationToken)
+    /// <param name="attempt">The attempt just finished, zero-based.</param>
+    /// <param name="options">The loop's backoff base.</param>
+    /// <param name="retryAfter">What the provider asked for, when it asked.</param>
+    /// <param name="cancellationToken">Cancels the wait.</param>
+    /// <returns>The completed wait.</returns>
+    /// <remarks>
+    /// A provider's own <c>Retry-After</c> wins, exactly, with no jitter added:
+    /// it knows when its window reopens and guessing over it is how a rate limit
+    /// becomes a ban. None of the four was ever observed sending one, so in
+    /// practice this is exponential backoff with jitter — the only schedule
+    /// available when the provider says nothing.
+    /// </remarks>
+    private Task BackoffAsync(
+        int attempt, AgentLoopOptions options, TimeSpan? retryAfter,
+        CancellationToken cancellationToken)
     {
+        if (retryAfter is { } asked)
+            return asked <= TimeSpan.Zero
+                ? Task.CompletedTask
+                : Task.Delay(asked, _timeProvider, cancellationToken);
+
         if (options.BackoffBase <= TimeSpan.Zero) return Task.CompletedTask;
 
         var baseDelay = options.BackoffBase * Math.Pow(2, attempt);
