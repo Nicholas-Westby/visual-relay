@@ -1,8 +1,8 @@
+using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
-using VisualRelay.Core.Agent;
 
 namespace VisualRelay.DrainQueue;
 

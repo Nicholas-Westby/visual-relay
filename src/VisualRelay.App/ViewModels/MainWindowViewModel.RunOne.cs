@@ -1,15 +1,37 @@
 using VisualRelay.App.Services;
+using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
-using VisualRelay.Core.Agent;
 
 namespace VisualRelay.App.ViewModels;
 
 // ReSharper disable once UnusedType.Global — partial of MainWindowViewModel
 public partial class MainWindowViewModel
 {
+    /// <summary>
+    /// The environment seam every runner-construction site reads, falling back
+    /// to the real process environment when nothing was injected.
+    /// </summary>
+    internal IEnvironmentAccessor Env => EnvironmentAccessor ?? new SystemEnvironmentAccessor();
+
+    /// <summary>Builds the agent for a stage, honouring the agent selector.</summary>
+    /// <param name="config">The repository's relay configuration.</param>
+    /// <returns>The runner to use.</returns>
+    private ISubagentRunner CreateSubagentRunner(RelayConfig config) =>
+        SubagentRunnerFactory.Create(
+            config, new ObservableRelayEventSink(HandleRelayEvent), Env, VerboseSandboxDiagnostics);
+
+    /// <summary>Builds a sandboxed test runner over the configured timeout.</summary>
+    /// <param name="config">The repository's relay configuration.</param>
+    /// <returns>A fresh runner; callers do not share instances.</returns>
+    private SandboxedTestRunner CreateSandboxedTestRunner(RelayConfig config) =>
+        new(
+            new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)),
+            config,
+            VerboseSandboxDiagnostics);
+
     private async Task RunOneAsync(TaskRowViewModel task, bool resume = false)
     {
         if (resume) { ResetStages(task.Id); } else { ResetStages(); }
@@ -24,7 +46,7 @@ public partial class MainWindowViewModel
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
         var subagentRunner = SubagentRunnerFactory.Create(
-            config, sink, EnvironmentAccessor ?? new SystemEnvironmentAccessor(), VerboseSandboxDiagnostics);
+            config, sink, Env, VerboseSandboxDiagnostics);
         var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics), sink, new GitInvoker());
         var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
         try

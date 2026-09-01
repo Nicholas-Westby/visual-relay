@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
+using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Tasks;
@@ -60,9 +61,9 @@ public partial class MainWindowViewModel
 
         var config = await RelayConfigLoader.LoadAsync(RootPath, ct);
         var runner = FixTaskRunnerFactory?.Invoke(config)
-            ?? new SwivalSubagentRunner(config, new GitInvoker(),
-                eventSink: new ObservableRelayEventSink(HandleRelayEvent),
-                verboseDiagnostics: VerboseSandboxDiagnostics);
+            ?? SubagentRunnerFactory.Create(
+                config, new ObservableRelayEventSink(HandleRelayEvent),
+                Env, VerboseSandboxDiagnostics);
 
         FixTaskAuthorOutcome outcome;
         try

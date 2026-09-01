@@ -1,6 +1,7 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
+using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
@@ -59,7 +60,9 @@ public partial class MainWindowViewModel
 
         var config = await RelayConfigLoader.LoadAsync(RootPath, ct);
         var runner = RewriteRunnerFactory?.Invoke(config)
-            ?? new SwivalSubagentRunner(config, new GitInvoker(), eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
+            ?? SubagentRunnerFactory.Create(
+                config, new ObservableRelayEventSink(HandleRelayEvent),
+                Env, VerboseSandboxDiagnostics);
 
         // Run the rewrite on a background task — do NOT block the UI thread.
         var rewriteTask = Task.Run(async () =>

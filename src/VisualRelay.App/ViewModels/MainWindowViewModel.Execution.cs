@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
+using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
@@ -75,17 +76,13 @@ public partial class MainWindowViewModel
 
             // Per-task event sink factory for planning: each planning task
             // gets its own ObservableRelayEventSink wired to HandleRelayEvent.
-            IRelayEventSink PlanSinkFactory(string _) =>
-                new ObservableRelayEventSink(HandleRelayEvent);
+            IRelayEventSink PlanSinkFactory(string _) => new ObservableRelayEventSink(HandleRelayEvent);
 
             var executeSink = new ObservableRelayEventSink(HandleRelayEvent);
-            var executeTestRunner = new SandboxedTestRunner(
-                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics);
+            var executeTestRunner = CreateSandboxedTestRunner(config);
 
-            ISubagentRunner PlanSubagentFactory(string _) =>
-                new SwivalSubagentRunner(config, new GitInvoker(), eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
-            var planTestRunner = new SandboxedTestRunner(
-                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics);
+            ISubagentRunner PlanSubagentFactory(string _) => CreateSubagentRunner(config);
+            var planTestRunner = CreateSandboxedTestRunner(config);
 
             var lifecycle = CreateDrainLifecycleCallbacks();
 
