@@ -3,12 +3,12 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Tests that <see cref="SwivalSubagentRunner.BuildNonoPrefix"/> emits
+/// Tests that <see cref="SandboxedStage.BuildNonoPrefix"/> emits
 /// <c>--skip-dir &lt;name&gt;</c> entries (before the <c>--</c> separator) so
 /// nono's rollback PREFLIGHT skips large/never-rolled-back dirs and stays
 /// under its fixed budget on big target repos.
 /// </summary>
-public sealed partial class SwivalSubagentRunnerSandboxTests
+public sealed partial class SandboxedStageSandboxTests
 {
     [Fact]
     public void BuildNonoPrefix_WithSkipDirs_EmitsSkipDirFlagsBeforeSeparator()
@@ -16,7 +16,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var config = TestConfig();
         string[] skipDirs = [".git", ".relay", "data"];
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: skipDirs);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, skipDirs: skipDirs);
 
         // Every --skip-dir flag (and its value) must appear before the `--` separator.
         var sepIdx = prefix.ToList().IndexOf("--");
@@ -45,7 +45,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         // No skipDirs argument → identical to the historical rollback prefix.
         var config = TestConfig();
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: null);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, skipDirs: null);
 
         Assert.Equal(
             new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
@@ -58,7 +58,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     {
         var config = TestConfig();
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: Array.Empty<string>());
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, skipDirs: Array.Empty<string>());
 
         Assert.Equal(
             new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },

@@ -47,7 +47,7 @@ public sealed class ExtractFailureReasonConcurrentTests
 
         var output = string.Join('\n', lines);
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         // The first line of the reason MUST name the failing test.
         Assert.Contains("everySourceFileUnder200Lines", reason, StringComparison.Ordinal);
@@ -78,7 +78,7 @@ public sealed class ExtractFailureReasonConcurrentTests
 
         var output = string.Join('\n', lines);
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         // The first line must be the failure test name — not a mid-word passing fragment.
         Assert.Contains("buriedFailure", reason, StringComparison.Ordinal);
@@ -105,7 +105,7 @@ public sealed class ExtractFailureReasonConcurrentTests
             "wall-clock ceiling exceeded: 61s > 60s budget",
         });
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         // The non-test gate line (the real cause) survives as the tail.
         Assert.Contains("wall-clock ceiling exceeded", reason, StringComparison.Ordinal);
@@ -133,7 +133,7 @@ public sealed class ExtractFailureReasonConcurrentTests
             "nono: command not found: swival",
         });
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         Assert.Contains("command not found", reason, StringComparison.Ordinal);
         Assert.DoesNotContain("bypass-protection", reason, StringComparison.Ordinal);
@@ -152,7 +152,7 @@ public sealed class ExtractFailureReasonConcurrentTests
             "  Expected 3 but got 0",
         });
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         Assert.Contains("FAIL", reason, StringComparison.Ordinal);
         Assert.Contains("JobFinder", reason, StringComparison.Ordinal);

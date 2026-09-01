@@ -53,13 +53,13 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.Equal("arg1", args[10]);
     }
 
-    // Shared nono-prefix builder (SwivalSubagentRunner.BuildNonoPrefix)
+    // Shared nono-prefix builder (SandboxedStage.BuildNonoPrefix)
 
     [Fact]
     public void BuildNonoPrefix_WithRollback_EmitsRollbackFlags()
     {
         var config = TestConfig();
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true);
         // --silent is the quiet default (output-only); it sits after the rollback flags, before --.
         Assert.Equal(
             new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
@@ -70,7 +70,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     public void BuildNonoPrefix_WithoutRollback_OmitsRollbackFlags()
     {
         var config = TestConfig();
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false);
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" }, prefix);
     }
 
@@ -78,8 +78,8 @@ public sealed class SandboxedTestRunnerArgumentTests
     public void BuildNonoPrefix_TwoCallersDifferOnlyInRollbackFlagPair()
     {
         var config = TestConfig();
-        var swi = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
-        var ver = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+        var swi = SandboxedStage.BuildNonoPrefix(config, rollback: true);
+        var ver = SandboxedStage.BuildNonoPrefix(config, rollback: false);
 
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir }, swi.Take(6));
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir }, ver.Take(6));
@@ -97,9 +97,9 @@ public sealed class SandboxedTestRunnerArgumentTests
     {
         var config = TestConfig();
         Assert.DoesNotContain("--block-net",
-            SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true));
+            SandboxedStage.BuildNonoPrefix(config, rollback: true));
         Assert.DoesNotContain("--block-net",
-            SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false));
+            SandboxedStage.BuildNonoPrefix(config, rollback: false));
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public sealed class SandboxedTestRunnerArgumentTests
             SandboxExtraAllowPaths = [extra]
         };
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false);
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
@@ -234,7 +234,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         var config = TestConfig();
         // SandboxedTestRunner always passes requestDiagnostics: true — the
         // verification path is the ONLY path that requests --diagnostics-json.
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
 
         Assert.Contains("--diagnostics-json", prefix);
         Assert.True(prefix.ToList().IndexOf("--diagnostics-json") < prefix.ToList().IndexOf("--"));
@@ -246,7 +246,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         var config = TestConfig();
         // Swival-agent path: rollback: true, no requestDiagnostics.
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true);
 
         Assert.DoesNotContain("--diagnostics-json", prefix);
     }

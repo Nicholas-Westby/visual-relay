@@ -5,7 +5,7 @@ namespace VisualRelay.Core.Execution;
 // Pure, testable tool-presence probe: checking required binaries (swival, nono)
 // against PATH, with Windows-sandbox awareness. Kept separate from the diagnostics
 // partial so each file stays under the file-size guard.
-public sealed partial class SwivalSubagentRunner
+public static partial class SandboxedStage
 {
     // Returns the required launch tools that do NOT resolve against PATH (empty
     // ⇒ all present). swival and nono are both always required: nono always wraps

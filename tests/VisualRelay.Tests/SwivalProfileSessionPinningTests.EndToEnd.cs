@@ -177,7 +177,7 @@ public sealed partial class SwivalProfileSessionPinningTests
 /// tests can assert the pinned content remains frozen across stages.
 /// When pinned content is present, calls
 /// <see cref="SwivalProfileSession.PrepareWithPinnedContentAsync"/> to
-/// simulate the real <see cref="SwivalSubagentRunner"/> profile lifecycle
+/// simulate the real <see cref="SandboxedStage"/> profile lifecycle
 /// (including divergence event emission and save/restore of tree content).
 /// The simulated swival.toml edit happens INSIDE the session lifetime, so
 /// <see cref="SwivalProfileSession.DisposeAsync"/> can distinguish task
@@ -208,7 +208,7 @@ internal sealed class ProfileEditingSubagentRunner(
         _pinnedContents.Add(invocation.PinnedSwivalProfileContent);
         _pinnedContentsByStage[invocation.Stage.Number] = invocation.PinnedSwivalProfileContent;
 
-        // Simulate what SwivalSubagentRunner does: prepare the profile with
+        // Simulate what SandboxedStage does: prepare the profile with
         // pinned content so the launched swival sees the frozen profile.
         // This also emits swival_profile_divergence events when the tree
         // has diverged from the pinned snapshot.

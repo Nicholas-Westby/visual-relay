@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 // (2) real test-failure lines (Failed …, \bFAIL\b) are anchored as strong signals,
 // (3) benign "0 failed" summaries do NOT anchor.
 // Companion to the existing ExtractFailureReason_* tests in
-// SwivalSubagentRunnerToolPreflightTests.cs; in a separate file to keep both
+// SandboxedStageToolPreflightTests.cs; in a separate file to keep both
 // files under the 300-line guard.
 public sealed class ExtractFailureReasonDistillTests
 {
@@ -24,7 +24,7 @@ public sealed class ExtractFailureReasonDistillTests
             "Failed JobFinder > parses Ashby — expected 3 but got 0",
         });
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         Assert.DoesNotContain("deny_read_user_home", reason, StringComparison.Ordinal);
         Assert.DoesNotContain("deny_credentials", reason, StringComparison.Ordinal);
@@ -59,7 +59,7 @@ public sealed class ExtractFailureReasonDistillTests
             "  nono why -p vr-guard",
         });
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         // The runner's own failure leads and survives.
         Assert.StartsWith("Failed PaymentTest", reason, StringComparison.Ordinal);
@@ -91,7 +91,7 @@ public sealed class ExtractFailureReasonDistillTests
             "  nono why -p vr-guard",
         });
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         Assert.Equal("(no diagnostic output captured)", reason);
     }
@@ -109,7 +109,7 @@ public sealed class ExtractFailureReasonDistillTests
             "wall-clock ceiling exceeded: 61s > 60s budget",
         });
 
-        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+        var reason = SandboxedStage.ExtractFailureReason(output);
 
         Assert.DoesNotContain("Verified 1 pack(s)", reason, StringComparison.Ordinal);
         // The non-test gate line (the real cause) survives as the tail.

@@ -74,7 +74,7 @@ public sealed partial class SplitGuardVerificationTests
     /// in BackendConfigGeneratorTests.KimiK2_7Upstream.cs).
     ///
     /// Baseline composition:
-    ///   SwivalSubagentRunnerWatchdogTests.cs (+ .CpuPulse.cs,
+    ///   SandboxedStageWatchdogTests.cs (+ .CpuPulse.cs,
     ///     .ActivityWatchdog.cs, .TierWindows.cs, .NonzeroExit.cs) 19
     ///   Installer5LauncherTests.cs                                20
     ///   GitCommitterTests.cs + .CommitMsgHooks.cs                 10
@@ -84,8 +84,8 @@ public sealed partial class SplitGuardVerificationTests
     ///   GitCommitterAutoIncludeTests.cs + .Snapshot.cs            14
     ///   RelayDriverGitCommitTests.cs (+ .ResumeCommit.cs,
     ///     .GitignoredBackstop.cs)                                 10
-    ///   SwivalSubagentRunnerCommandFilterTests.cs                 15
-    ///   SwivalSubagentRunnerTests.cs                              10
+    ///   SandboxedStageCommandFilterTests.cs                 15
+    ///   SandboxedStageTests.cs                              10
     ///   RelayDriverTests.cs                                       13
     ///   NoCommitContaminationTests.cs                              0  (→ [Theory])
     ///   PlanPhaseRunnerTests.cs                                    6
@@ -123,13 +123,13 @@ public sealed partial class SplitGuardVerificationTests
         // nono regression) lives in the non-oversized CliNonoGateTests suite.
         // Bumped 149→150 on 2026-06-22: surfacing the real model-backend cause on a
         // swival nonzero exit added RunAsync_ModelAuthFailureSurfacesProxyAuthCause-
-        // NotPromptEcho to the SwivalSubagentRunnerTests family.
+        // NotPromptEcho to the SandboxedStageTests family.
         // Bumped 150→152 on 2026-06-22: the improve-live-tiers-ui task added two
         // TierRows_* [Fact]s to the BackendConfigGeneratorTests family
         // (BackendConfigGeneratorTests.cs: TierRows_HfOnlyAndDeepSeek,
         // TierRows_ClaudePresentAndEmptyKeys).
         // Bumped 152→154 on 2026-06-27: the no-real-sleeps rewrite converted the
-        // SwivalSubagentRunnerWatchdogTests family's real-sleep integration tests to
+        // SandboxedStageWatchdogTests family's real-sleep integration tests to
         // pure DecideOutcome / ResolveTierWindows assertions (net +2 [Fact]s).
         // Bumped 154→159 on 2026-06-28: realigned to the actual oversized-family
         // [Fact] count, which had drifted +5 across intervening commits (the
@@ -156,9 +156,9 @@ public sealed partial class SplitGuardVerificationTests
         // BackendConfigGeneratorTests oversized family.
         // Dropped 185→171 on 2026-07-07: Part B review fix —
         // decision-seam and virtualized WaitAsync tests moved from
-        // SwivalSubagentRunnerWatchdogTests to ActivityWatchdogDecisionTests
+        // SandboxedStageWatchdogTests to ActivityWatchdogDecisionTests
         // (not in the oversized-families prefix list), so the countable
-        // [Fact]s in the SwivalSubagentRunnerWatchdogTests family dropped.
+        // [Fact]s in the SandboxedStageWatchdogTests family dropped.
         // Dropped 173→171 on 2026-07-08: split-slow-test-classes-for-parallelism —
         // promote companion-file partial classes to independent sealed classes.
         // The companion files (GitCommitterTests.CommitMsgHooks.cs etc.) are
@@ -205,21 +205,22 @@ public sealed partial class SplitGuardVerificationTests
         // HfPlusAnthropic_ClaudeLit_OtherTiersFallback and
         // GetTierRows_MissingKeyTierIsNotEditable (-3) across the
         // BackendConfigGenerator families. This is the first downward bump.
-        const int baseline = 175;
+        //
+        // 2026-09-01: 175 -> 140. The Swival subprocess runner was deleted, and
+        // its three tracked test families (Watchdog, Tests, CommandFilter) went
+        // with it. Their prefixes are gone from the list below.
+        const int baseline = 140;
 
         string[] prefixes =
         [
             // ── remaining partial-class families (Watchdog companions, etc.) ──
-            "SwivalSubagentRunnerWatchdogTests",
             "Installer5LauncherTests",
-            "SwivalSubagentRunnerTests",
             // ── split main files ──
             "GitCommitterTests",
             "GitCommitterAutoIncludeTests",
             "RelayDriverResumeTests",
             "BackendConfigGeneratorTests",
             "RelayDriverGitCommitTests",
-            "SwivalSubagentRunnerCommandFilterTests",
             "RelayDriverTests",
             "RelayDriverRerunTests",
             "RelayDriverManifestTests",
@@ -248,7 +249,7 @@ public sealed partial class SplitGuardVerificationTests
             "BackendConfigGeneratorSelectableTests",
             "BackendConfigGeneratorAliasConsistencyTests",
             "RelayDriverBaselineVerifyTests",
-            "SwivalSubagentRunnerCommandFilterIntegrationTests",
+            "SandboxedStageCommandFilterIntegrationTests",
             // ── commit-family facts relocated by the GitSim pilot migration ──
             "GitCommitterHookRejectionTests",
             "GitCommitterResilienceTests",

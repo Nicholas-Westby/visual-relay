@@ -31,7 +31,7 @@ public sealed class RelayDriverGitCommitProofOptOutTests
 
         // Pre-create per-stage .input.json and .report.json artifacts so
         // the commit gate can enumerate them when CommitProofArtifacts is true.
-        // (The test runner doesn't write these — the real SwivalSubagentRunner does.)
+        // (The test runner doesn't write these — the real SandboxedStage does.)
         WriteStageArtifacts(repo.Root, "ship-status", stages: 9);
 
         var runner = new EditingSubagentRunner();
@@ -94,7 +94,7 @@ public sealed class RelayDriverGitCommitProofOptOutTests
 
         // Pre-create per-stage .input.json and .report.json artifacts so
         // the commit gate can enumerate them when CommitProofArtifacts is true.
-        // (The test runner doesn't write these — the real SwivalSubagentRunner does.)
+        // (The test runner doesn't write these — the real SandboxedStage does.)
         WriteStageArtifacts(repo.Root, "ship-status", stages: 9);
 
         var runner = new EditingSubagentRunner();

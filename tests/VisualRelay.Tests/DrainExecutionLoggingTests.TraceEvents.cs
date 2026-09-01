@@ -9,7 +9,7 @@ public sealed partial class DrainExecutionLoggingTests
     public async Task PlanPhaseRunner_TraceEvents_DeliveredToEventSink()
     {
         // The fixed planSubagentFactory now passes an ObservableRelayEventSink
-        // to SwivalSubagentRunner, so trace events reach the GUI event sink.
+        // to SandboxedStage, so trace events reach the GUI event sink.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("trace-me", "# Trace me\n");

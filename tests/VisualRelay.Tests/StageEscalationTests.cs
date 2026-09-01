@@ -4,7 +4,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// The general-purpose escalation ladder shared by both escalation consumers
-/// (the in-process <c>SwivalSubagentRunner.RunAsync</c> retry loop and the
+/// (the in-process <c>SandboxedStage.RunAsync</c> retry loop and the
 /// driver's fix-verify loop): a 1-based run index maps to a model tier (stepped
 /// up cheap→balanced→frontier, capped) and a turn/ceiling multiplier (doubled per
 /// run, or held flat under the 10× boost). Pure — no VR/test-framework specifics.

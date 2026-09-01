@@ -8,7 +8,7 @@ internal sealed record TargetCommandEnvironment(
     IReadOnlyDictionary<string, string> Overrides,
     IReadOnlySet<string> Remove);
 
-public sealed partial class SwivalSubagentRunner
+public static partial class SandboxedStage
 {
     // Build environment overrides shared by every nono-wrapped invocation (the
     // swival stage and the SandboxedTestRunner verify path). Two jobs:

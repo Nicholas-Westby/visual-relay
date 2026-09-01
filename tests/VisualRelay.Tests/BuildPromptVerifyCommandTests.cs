@@ -35,7 +35,7 @@ public sealed class BuildPromptVerifyCommandTests
     {
         var invocation = MakeInvocation(stageNumber, "dotnet test --filter MyFilter");
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains("## Verify command", prompt, StringComparison.Ordinal);
         Assert.Contains("dotnet test --filter MyFilter", prompt, StringComparison.Ordinal);
@@ -48,7 +48,7 @@ public sealed class BuildPromptVerifyCommandTests
     {
         var invocation = MakeInvocation(stageNumber, null);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.DoesNotContain("## Verify command", prompt, StringComparison.Ordinal);
     }
@@ -59,7 +59,7 @@ public sealed class BuildPromptVerifyCommandTests
         // Stage 9 (Verify) does not receive a testCommand — regression guard
         var invocation = MakeInvocation(9, null);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.DoesNotContain("## Verify command", prompt, StringComparison.Ordinal);
     }
@@ -69,7 +69,7 @@ public sealed class BuildPromptVerifyCommandTests
     {
         var invocation = MakeInvocationWithFull(6, "bun test tests/x.tests.cs", "dotnet test");
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains("## Before you declare done", prompt, StringComparison.Ordinal);
         Assert.Contains("dotnet test", prompt, StringComparison.Ordinal);
@@ -80,7 +80,7 @@ public sealed class BuildPromptVerifyCommandTests
     {
         var invocation = MakeInvocationWithFull(6, "dotnet test", "dotnet test");
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.DoesNotContain("## Before you declare done", prompt, StringComparison.Ordinal);
     }
@@ -90,7 +90,7 @@ public sealed class BuildPromptVerifyCommandTests
     {
         var invocation = MakeInvocationWithFull(6, "bun test tests/x.tests.cs", null);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.DoesNotContain("## Before you declare done", prompt, StringComparison.Ordinal);
     }
@@ -100,7 +100,7 @@ public sealed class BuildPromptVerifyCommandTests
     {
         var invocation = MakeInvocationWithFull(8, "bun test tests/x.tests.cs", "dotnet test");
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains("## Before you declare done", prompt, StringComparison.Ordinal);
         Assert.Contains("dotnet test", prompt, StringComparison.Ordinal);

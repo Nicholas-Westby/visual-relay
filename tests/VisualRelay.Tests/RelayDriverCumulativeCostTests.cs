@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// When a main-loop stage (1–9) escalates IN-PROCESS inside
-/// <see cref="SwivalSubagentRunner.RunAsync"/>, the escalated runs each write a
+/// <see cref="SandboxedStage.RunAsync"/>, the escalated runs each write a
 /// distinct <c>stage{n}-attempt{k}.report.json</c>. The driver emits a single
 /// <c>stage_done</c> for that stage, which must carry the turns + cost SUMMED
 /// across every attempt (so it matches the archived
@@ -62,7 +62,7 @@ public sealed class RelayDriverCumulativeCostTests
 /// Simulates an in-process-escalated stage: for the designated stage, RunAsync
 /// writes MULTIPLE <c>stage{n}-attempt{k}.report.json</c> files (one per simulated
 /// escalation run, with the given per-run turn counts and a priced model) — exactly
-/// what the real <see cref="SwivalSubagentRunner"/> leaves behind when it escalates
+/// what the real <see cref="SandboxedStage"/> leaves behind when it escalates
 /// internally — then returns a valid result via the canned
 /// <see cref="ScriptedSubagentRunner"/>. Every other stage writes no report.
 /// </summary>

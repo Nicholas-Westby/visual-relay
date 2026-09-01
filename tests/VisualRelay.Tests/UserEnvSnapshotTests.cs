@@ -6,7 +6,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Tests for <see cref="UserEnvSnapshot"/> loading and
-/// <see cref="SwivalSubagentRunner.BuildTargetCommandEnvironment"/> merge semantics.
+/// <see cref="SandboxedStage.BuildTargetCommandEnvironment"/> merge semantics.
 /// </summary>
 public sealed class UserEnvSnapshotTests : IDisposable
 {
@@ -72,7 +72,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
             ("PATH", "/usr/bin:/bin"));
         _env["VISUAL_RELAY_USER_ENV_SNAPSHOT"] = snapshotPath;
 
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env);
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env);
 
         Assert.NotNull(result);
         var overrides = result.Overrides;
@@ -87,7 +87,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
     [Fact]
     public void BuildTargetCommandEnvironment_WithoutSnapshot_FallsBackToSandboxOverridesOnly()
     {
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env);
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env);
 
         Assert.NotNull(result);
         var overrides = result.Overrides;
@@ -107,7 +107,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
             ("TMPDIR", "/var/folders/ab/cdefg/T"));
         _env["VISUAL_RELAY_USER_ENV_SNAPSHOT"] = snapshotPath;
 
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env);
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env);
 
         Assert.NotNull(result);
         var overrides = result.Overrides;
@@ -129,7 +129,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
         var snapshotPath = WriteSnapshot(("HOME", "/home/user"), ("PATH", "/usr/local/bin:/usr/bin:/bin"));
         _env["VISUAL_RELAY_USER_ENV_SNAPSHOT"] = snapshotPath;
 
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env, processEnv);
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env, processEnv);
 
         Assert.NotNull(result);
         Assert.Contains("DOTNET_ROOT", result.Remove);
@@ -147,7 +147,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
         var snapshotPath = WriteSnapshot(("HOME", "/home/user"), ("PATH", "/usr/bin:/bin"));
         _env["VISUAL_RELAY_USER_ENV_SNAPSHOT"] = snapshotPath;
 
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env, processEnv);
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env, processEnv);
 
         Assert.NotNull(result);
         Assert.DoesNotContain("HOME", result.Remove);
@@ -166,7 +166,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
         var snapshotPath = WriteSnapshot(("HOME", "/home/user"), ("PATH", "/usr/bin:/bin"));
         _env["VISUAL_RELAY_USER_ENV_SNAPSHOT"] = snapshotPath;
 
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env, processEnv);
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env, processEnv);
 
         Assert.NotNull(result);
         Assert.Equal("1", result.Overrides["PYTHONDONTWRITEBYTECODE"]);
@@ -181,8 +181,8 @@ public sealed class UserEnvSnapshotTests : IDisposable
     [Fact]
     public void BuildTargetCommandEnvironment_NoSnapshot_RemoveEmpty()
     {
-        var sandboxEnv = SwivalSubagentRunner.BuildSandboxEnvironment(SandboxOn());
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env);
+        var sandboxEnv = SandboxedStage.BuildSandboxEnvironment(SandboxOn());
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env);
 
         Assert.NotNull(result);
         Assert.Empty(result.Remove);
@@ -196,8 +196,8 @@ public sealed class UserEnvSnapshotTests : IDisposable
     {
         var snapshotPath = WriteSnapshot(("HOME", "/home/user"), ("USER", "testuser"));
         _env["VISUAL_RELAY_USER_ENV_SNAPSHOT"] = snapshotPath;
-        var sandboxEnv = SwivalSubagentRunner.BuildSandboxEnvironment(SandboxOn());
-        var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env);
+        var sandboxEnv = SandboxedStage.BuildSandboxEnvironment(SandboxOn());
+        var result = SandboxedStage.BuildTargetCommandEnvironment(SandboxOn(), _env);
 
         Assert.NotNull(result);
         Assert.Empty(result.Remove);

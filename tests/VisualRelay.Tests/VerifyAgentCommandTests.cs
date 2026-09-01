@@ -55,7 +55,7 @@ public sealed class VerifyAgentCommandTests
         var inv10 = runner.Invocations.Single(i => i.Stage.Number == 10);
         // No imperative full-suite command handed to the read-only stage.
         Assert.Null(inv10.TestCommand);
-        var prompt = SwivalSubagentRunner.BuildPrompt(inv10);
+        var prompt = SandboxedStage.BuildPrompt(inv10);
         Assert.DoesNotContain("Run this exact command", prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("## Verify command", prompt, StringComparison.Ordinal);
         // …but it still receives the harness's captured output to summarize from.
@@ -102,7 +102,7 @@ public sealed class VerifyAgentCommandTests
         var tail = "All tests Passed! Failed: 0 TAIL_SUMMARY_MARKER";
         var invocation = Invocation(10, testCommand: null, lastTestOutput: head + tail);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains("TAIL_SUMMARY_MARKER", prompt, StringComparison.Ordinal);
         Assert.Contains("Passed!", prompt, StringComparison.Ordinal);

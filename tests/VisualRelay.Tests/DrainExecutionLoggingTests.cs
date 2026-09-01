@@ -9,7 +9,7 @@ namespace VisualRelay.Tests;
 /// Tests for the three gaps in parallel-planning drain:
 /// Gap 1 — GuiTaskRunner doesn't wrap a FileRelayEventSink, so execute-phase
 ///         events (stages 5–11) are missing from run.log.
-/// Gap 2 — planSubagentFactory creates SwivalSubagentRunner without eventSink,
+/// Gap 2 — planSubagentFactory creates SandboxedStage without eventSink,
 ///         so trace entries never reach the GUI during planning.
 /// Gap 3 — RelayQueueController.DrainAsync excludes Planned outcomes from
 ///         results, so plannedCount in the GUI is always 0.

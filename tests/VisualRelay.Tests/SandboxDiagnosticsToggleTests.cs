@@ -21,8 +21,8 @@ public sealed class SandboxDiagnosticsToggleTests
     {
         var config = TestConfig();
 
-        var verify = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
-        var swival = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        var verify = SandboxedStage.BuildNonoPrefix(config, rollback: false);
+        var swival = SandboxedStage.BuildNonoPrefix(config, rollback: true);
 
         Assert.Contains("--silent", verify);
         Assert.Contains("--silent", swival);
@@ -36,8 +36,8 @@ public sealed class SandboxDiagnosticsToggleTests
     {
         var config = TestConfig();
 
-        var verify = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true);
-        var swival = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, verboseDiagnostics: true);
+        var verify = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true);
+        var swival = SandboxedStage.BuildNonoPrefix(config, rollback: true, verboseDiagnostics: true);
 
         Assert.DoesNotContain("--silent", verify);
         Assert.DoesNotContain("--silent", swival);
@@ -50,8 +50,8 @@ public sealed class SandboxDiagnosticsToggleTests
         // never-block-network invariant are identical with or without --silent.
         var config = TestConfig();
 
-        var quiet = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
-        var verbose = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true);
+        var quiet = SandboxedStage.BuildNonoPrefix(config, rollback: false);
+        var verbose = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true);
 
         foreach (var prefix in new[] { quiet, verbose })
         {
@@ -88,32 +88,7 @@ public sealed class SandboxDiagnosticsToggleTests
         Assert.DoesNotContain("--silent", args);
     }
 
-    // ── SwivalSubagentRunner.BuildLaunchTarget (swival stage path) ──────
 
-    [Fact]
-    public void SwivalLaunch_QuietByDefault_IncludesSilent()
-    {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
-        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady);
-        var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
-
-        var (_, args) = runner.BuildLaunchTarget(swivalArgs);
-
-        Assert.Contains("--silent", args);
-    }
-
-    [Fact]
-    public void SwivalLaunch_Verbose_OmitsSilent()
-    {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
-        var runner = new SwivalSubagentRunner(
-            TestConfig(), new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady, verboseDiagnostics: true);
-        var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
-
-        var (_, args) = runner.BuildLaunchTarget(swivalArgs);
-
-        Assert.DoesNotContain("--silent", args);
-    }
 
     // ── Request diagnostics (--diagnostics-json) ─────────────────────────
 
@@ -122,7 +97,7 @@ public sealed class SandboxDiagnosticsToggleTests
     {
         var config = TestConfig();
 
-        var verify = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
+        var verify = SandboxedStage.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
 
         Assert.Contains("--diagnostics-json", verify);
         // --diagnostics-json is a nono flag, so it must precede the `--` child separator.
@@ -134,8 +109,8 @@ public sealed class SandboxDiagnosticsToggleTests
     {
         var config = TestConfig();
 
-        var verify = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: false);
-        var swival = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        var verify = SandboxedStage.BuildNonoPrefix(config, rollback: false, requestDiagnostics: false);
+        var swival = SandboxedStage.BuildNonoPrefix(config, rollback: true);
 
         Assert.DoesNotContain("--diagnostics-json", verify);
         Assert.DoesNotContain("--diagnostics-json", swival);
@@ -147,8 +122,8 @@ public sealed class SandboxDiagnosticsToggleTests
         // requestDiagnostics adds --diagnostics-json regardless of verboseDiagnostics.
         var config = TestConfig();
 
-        var quietWithDiag = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
-        var verboseWithDiag = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true, requestDiagnostics: true);
+        var quietWithDiag = SandboxedStage.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
+        var verboseWithDiag = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true, requestDiagnostics: true);
 
         Assert.Contains("--diagnostics-json", quietWithDiag);
         Assert.Contains("--diagnostics-json", verboseWithDiag);

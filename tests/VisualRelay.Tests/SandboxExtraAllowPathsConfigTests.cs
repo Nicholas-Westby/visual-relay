@@ -226,7 +226,7 @@ public sealed class SandboxExtraAllowPathsConfigTests
             SandboxExtraAllowPaths = [extra]
         };
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true);
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
@@ -245,7 +245,7 @@ public sealed class SandboxExtraAllowPathsConfigTests
             SandboxExtraAllowPaths = [extra]
         };
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false);
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);

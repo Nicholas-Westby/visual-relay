@@ -25,7 +25,7 @@ public sealed class SandboxEnvForwardingTests
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        var env = SwivalSubagentRunner.BuildSandboxEnvironment(SandboxOn());
+        var env = SandboxedStage.BuildSandboxEnvironment(SandboxOn());
 
         Assert.NotNull(env);
         Assert.Equal("1", env["PYTHONDONTWRITEBYTECODE"]);
@@ -40,7 +40,7 @@ public sealed class SandboxEnvForwardingTests
         // stage-5/9 timeout). Disabling node reuse (and telemetry) lets the inner
         // command leave no orphans so nono can exit on its own — defence in depth
         // alongside SandboxedTestRunner's idle-reap.
-        var env = SwivalSubagentRunner.BuildSandboxEnvironment(SandboxOn());
+        var env = SandboxedStage.BuildSandboxEnvironment(SandboxOn());
 
         Assert.Equal("1", env["MSBUILDDISABLENODEREUSE"]);
         Assert.Equal("1", env["DOTNET_CLI_TELEMETRY_OPTOUT"]);
@@ -56,7 +56,7 @@ public sealed class SandboxEnvForwardingTests
         if (OperatingSystem.IsWindows())
             return; // /bin/sh-based assertion is POSIX-only; the seam is macOS/Linux.
 
-        var env = SwivalSubagentRunner.BuildSandboxEnvironment(SandboxOn());
+        var env = SandboxedStage.BuildSandboxEnvironment(SandboxOn());
         Assert.NotNull(env);
 
         var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(

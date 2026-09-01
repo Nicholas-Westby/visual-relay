@@ -158,7 +158,7 @@ public sealed partial class RelayConfigLoaderTests
         var stubBin = Path.Combine(repo.Root, "bin");
         Directory.CreateDirectory(stubBin);
         await File.WriteAllTextAsync(Path.Combine(stubBin, "swival"), "#!/bin/sh\nexit 0\n");
-        var missing = SwivalSubagentRunner.MissingRequiredTools(result.Config, pathValue: stubBin);
+        var missing = SandboxedStage.MissingRequiredTools(result.Config, pathValue: stubBin);
         Assert.Contains("nono", missing);
     }
 

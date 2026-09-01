@@ -1,179 +1,113 @@
+using VisualRelay.Core.Agent;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-[Collection("Watchdog")]
+/// <summary>
+/// Covers the stage-input artifact the runner writes beside a stage's report.
+/// <para>
+/// The GUI's stage-input pane reads this file, so it is the only way a user can
+/// see the prompt a stage was given. The Swival runner wrote it while building
+/// its argument list; when that runner was deleted the behaviour had to move to
+/// the in-process loop rather than disappear with it. These tests are the guard
+/// that it did.
+/// </para>
+/// </summary>
 public sealed class StageInputArtifactIntegrationTests
 {
-    [Fact]
-    public async Task RunAsync_WritesInputArtifactOnStageStart()
+    private sealed class Sink : IAgentEventSink
     {
-        SlowIntegration.SkipIfNotOptedIn();
-
-        using var repo = TestRepository.Create();
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
-            repo.Root,
-            "fake-swival-input-artifact",
-            """
-            #!/usr/bin/env bash
-            while [[ $# -gt 0 ]]; do
-              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
-              if [[ "$1" == "--report" ]]; then report_file="$2"; shift 2; else shift; fi
-            done
-            mkdir -p "$trace_dir"
-            printf '```json\n{"summary":"framed","options":["small"]}\n```\n'
-            """);
-        var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(
-            TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
-            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
-
-        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
-
-        Assert.True(result.IsValid);
-
-        // Verify the .input.json artifact was written
-        var expectedInputPath = StageInputArtifact.PathFor(
-            SwivalTestHelpers.Invocation(repo.Root).ReportFile);
-        Assert.True(File.Exists(expectedInputPath),
-            $"Expected .input.json at {expectedInputPath}");
-
-        Assert.True(StageInputArtifact.TryRead(expectedInputPath, out var artifact));
-        Assert.NotNull(artifact);
-        Assert.Equal(1, artifact.Version);
-        Assert.Equal(1, artifact.Stage);
-        Assert.Equal(1, artifact.Attempt);
-        Assert.Equal("Ideate", artifact.Name);
-        Assert.Equal(RelayStages.All[0].SystemPrompt, artifact.SystemPrompt);
-        Assert.Contains("Frame the task", artifact.SystemPrompt);
-        Assert.Contains("# Relay stage 1: Ideate", artifact.InputPrompt);
-        Assert.Contains("Task: task", artifact.InputPrompt);
-        Assert.Contains("## Task input", artifact.InputPrompt);
-        Assert.Contains("# Task", artifact.InputPrompt);
-
-        // Timestamp should be ISO-8601 UTC (.NET "O" produces +00:00 or Z)
-        Assert.StartsWith("202", artifact.Timestamp);
-        Assert.Contains("T", artifact.Timestamp);
-        Assert.True(artifact.Timestamp.EndsWith("Z") || artifact.Timestamp.EndsWith("+00:00"),
-            $"Expected ISO-8601 UTC suffix, got: {artifact.Timestamp}");
+        public void Publish(AgentEvent agentEvent) { }
     }
 
-    [Fact]
-    public async Task RunAsync_EmitsStageInputEventWithMetadataOnly()
-    {
-        SlowIntegration.SkipIfNotOptedIn();
-
-        using var repo = TestRepository.Create();
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
-            repo.Root,
-            "fake-swival-input-event",
-            """
-            #!/usr/bin/env bash
-            while [[ $# -gt 0 ]]; do
-              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
-            done
-            mkdir -p "$trace_dir"
-            printf '```json\n{"summary":"framed","options":["small"]}\n```\n'
-            """);
-        var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(
-            TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
-            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
-
-        await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
-
-        var stageInputEvent = sink.Events.FirstOrDefault(e => e.EventName == "stage_input");
-        Assert.NotNull(stageInputEvent);
-        Assert.Equal("info", stageInputEvent.Level);
-        Assert.Equal("run-1", stageInputEvent.RunId);
-        Assert.Equal(repo.Root, stageInputEvent.RootPath);
-        Assert.Equal("task", stageInputEvent.TaskId);
-        Assert.Equal(1, stageInputEvent.StageNumber);
-        Assert.Equal("cheap", stageInputEvent.Tier);
-        Assert.Equal(1, stageInputEvent.Attempt);
-
-        Assert.NotNull(stageInputEvent.Data);
-        Assert.True(stageInputEvent.Data.ContainsKey("systemBytes"));
-        Assert.True(stageInputEvent.Data.ContainsKey("inputBytes"));
-        Assert.True(stageInputEvent.Data.ContainsKey("path"));
-
-        // Verify the path points to the .input.json file
-        Assert.EndsWith(".input.json", stageInputEvent.Data["path"]);
-
-        // Verify the event does NOT carry the prompt text (only byte lengths)
-        Assert.DoesNotContain("Relay stage", stageInputEvent.Data.Values);
-    }
-
-    [Fact]
-    public async Task RunAsync_FrontLoadedStage6_UsesConfirmImplementationPrompt()
-    {
-        SlowIntegration.SkipIfNotOptedIn();
-
-        using var repo = TestRepository.Create();
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
-            repo.Root,
-            "fake-swival-frontload",
-            """
-            #!/usr/bin/env bash
-            while [[ $# -gt 0 ]]; do
-              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
-            done
-            mkdir -p "$trace_dir"
-            printf '```json\n{"summary":"implemented"}\n```\n'
-            """);
-        var sink = new InMemoryRelayEventSink();
-
-        // RelayDriver bakes the ConfirmImplementation prompt into stage 6
-        // before invocation.  Simulate that here by creating a stage 6 with
-        // the swapped system prompt.
-        var frontLoadedStage = RelayStages.All[5] with
-        {
-            SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt
-        };
-        var invocation = SwivalTestHelpers.Invocation(repo.Root) with
-        {
-            Stage = frontLoadedStage,
-            TraceDirectory = Path.Combine(repo.Root, ".relay", "task", "stage6-attempt1"),
-            ReportFile = Path.Combine(repo.Root, ".relay", "task", "stage6-attempt1.report.json")
-        };
-
-        var runner = new SwivalSubagentRunner(
-            TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
-            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
-
-        var result = await runner.RunAsync(invocation);
-        Assert.True(result.IsValid);
-
-        var expectedInputPath = StageInputArtifact.PathFor(invocation.ReportFile);
-        Assert.True(File.Exists(expectedInputPath));
-
-        Assert.True(StageInputArtifact.TryRead(expectedInputPath, out var artifact));
-        Assert.NotNull(artifact);
-        Assert.Equal(6, artifact.Stage);
-        Assert.Equal("Implement", artifact.Name);
-
-        // Should use the ConfirmImplementation prompt, not the default Implement prompt
-        Assert.Equal(RelayStages.ConfirmImplementationSystemPrompt, artifact.SystemPrompt);
-        Assert.Contains("Do NOT re-narrate or re-implement", artifact.SystemPrompt);
-    }
-
-    private static RelayConfig TestConfig() =>
+    private static StageInvocation Invocation(string root, string reportFile) =>
         new(
-            "llm-tasks",
-            "true",
-            "true",
-            [],
-            new Dictionary<string, string> { ["cheap"] = "cheap" },
-            true,
-            1,
-            1,
-            false,
-            true,
-            0,
-            300_000,
-            new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
-            660_000,
-            InactivityTimeoutMsByTier: null,
-            InactivityTimeoutMs: 600_000);
+            Stage: RelayStages.All[0],
+            Tier: "cheap",
+            RunId: "run-1",
+            TargetRoot: root,
+            TaskName: "a-task",
+            TaskInput: "do the thing",
+            LedgerSoFar: "(none)",
+            Manifest: [],
+            LogSources: [],
+            TraceDirectory: root,
+            ReportFile: reportFile,
+            MaxTurns: 4);
+
+    private static (FirstPartySubagentRunner Runner, InMemoryRelayEventSink Relay) Build(
+        ScriptedModelTransport transport)
+    {
+        var env = new DictionaryEnvironmentAccessor { ["DEEPSEEK_API_KEY"] = "sk-test-value" };
+        var relay = new InMemoryRelayEventSink();
+        return (
+            new FirstPartySubagentRunner(
+                transport, RelayConfigLoader.Defaults(), env, _ => new Sink(),
+                retryBackoffBase: TimeSpan.Zero, relayEvents: relay),
+            relay);
+    }
+
+    /// <summary>The artifact lands beside the report with the prompt in it.</summary>
+    [Fact]
+    public async Task RunAsync_WritesTheInputArtifactBesideTheReport()
+    {
+        using var repo = TestRepository.Create();
+        var reportFile = Path.Combine(repo.Root, "stage1-attempt1.report.json");
+        var (runner, _) = Build(new ScriptedModelTransport().Answer(
+            """{"summary": "s", "options": ["a"]}"""));
+
+        await runner.RunAsync(Invocation(repo.Root, reportFile));
+
+        var inputPath = StageInputArtifact.PathFor(reportFile);
+        Assert.True(File.Exists(inputPath), $"expected an input artifact at {inputPath}");
+        Assert.True(StageInputArtifact.TryRead(inputPath, out var artifact));
+        Assert.Equal(RelayStages.All[0].Number, artifact!.Stage);
+        Assert.Equal(RelayStages.All[0].SystemPrompt, artifact.SystemPrompt);
+        Assert.Contains("do the thing", artifact.InputPrompt, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The stage_input event carries sizes and a path, not the prompt itself, so
+    /// the pane can show the artifact without the event stream carrying it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AnnouncesTheArtifactWithMetadataOnly()
+    {
+        using var repo = TestRepository.Create();
+        var reportFile = Path.Combine(repo.Root, "stage1-attempt1.report.json");
+        var (runner, relay) = Build(new ScriptedModelTransport().Answer(
+            """{"summary": "s", "options": ["a"]}"""));
+
+        await runner.RunAsync(Invocation(repo.Root, reportFile));
+
+        var announced = Assert.Single(relay.Events, e => e.EventName == "stage_input");
+        Assert.NotNull(announced.Data);
+        Assert.Equal(StageInputArtifact.PathFor(reportFile), announced.Data!["path"]);
+        Assert.True(int.Parse(announced.Data["inputBytes"], System.Globalization.CultureInfo.InvariantCulture) > 0);
+        Assert.True(int.Parse(announced.Data["systemBytes"], System.Globalization.CultureInfo.InvariantCulture) > 0);
+        Assert.DoesNotContain("do the thing", string.Join(" ", announced.Data.Values), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The artifact is written before the model is asked, so a stage that never
+    /// finishes still shows what it was given.
+    /// </summary>
+    [Fact]
+    public async Task AStageThatFails_StillLeavesItsInputArtifact()
+    {
+        using var repo = TestRepository.Create();
+        var reportFile = Path.Combine(repo.Root, "stage1-attempt1.report.json");
+        // Queue enough failures to exhaust the retry and the chain: the point is
+        // that the artifact is on disk before the model is ever asked.
+        var transport = new ScriptedModelTransport();
+        for (var i = 0; i < 8; i++) transport.Fails(500, "upstream is down");
+        var (runner, _) = Build(transport);
+
+        await runner.RunAsync(Invocation(repo.Root, reportFile));
+
+        Assert.True(File.Exists(StageInputArtifact.PathFor(reportFile)));
+    }
 }

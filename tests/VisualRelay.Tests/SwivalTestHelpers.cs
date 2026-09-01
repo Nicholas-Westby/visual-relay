@@ -64,9 +64,9 @@ internal static class SwivalTestHelpers
             """);
 
     /// <summary>
-    /// Constructs a RelayConfig for SwivalSubagentRunner tests.
-    /// Shared between SwivalSubagentRunnerCommandFilterTests
-    /// and SwivalSubagentRunnerCommandFilterIntegrationTests.
+    /// Constructs a RelayConfig for SandboxedStage tests.
+    /// Shared between SandboxedStageCommandFilterTests
+    /// and SandboxedStageCommandFilterIntegrationTests.
     /// </summary>
     public static RelayConfig TestConfig(
         int frontendTimeoutMs = 5_000,

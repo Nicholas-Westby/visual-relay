@@ -2,7 +2,7 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class SwivalSubagentRunnerSandboxTests
+public sealed partial class SandboxedStageSandboxTests
 {
     [Fact]
     public void BuildNonoPrefix_GrantsUserTemplatesDir()
@@ -14,7 +14,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         try
         {
             var config = TestConfig();
-            var prefix = SwivalSubagentRunner.BuildNonoPrefix(
+            var prefix = SandboxedStage.BuildNonoPrefix(
                 config, rollback: false, userTemplatesDirOverride: templatesSubdir);
 
             // The templates -a pair must appear after any SandboxExtraAllowPaths pairs.

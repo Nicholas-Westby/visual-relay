@@ -19,7 +19,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS-only /Volumes/ paradigm");
         var config = TestConfig();
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false,
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
             workspaceRoot: "/Volumes/Tera/dev/x");
 
         // run --profile <abs> --allow-cwd -a <templatesDir> -a /Volumes/Tera/.TemporaryItems --silent --
@@ -41,7 +41,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS-only /Volumes/ paradigm");
         var config = TestConfig();
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false,
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
             workspaceRoot: "/Users/nick/dev/x");
 
         // Prefix must be identical to the null-workspaceRoot case: no volume grant.
@@ -56,7 +56,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS-only /Volumes/ paradigm");
         var config = TestConfig();
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false,
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
             workspaceRoot: "/Volumes/Tera/dev/x");
 
         var dashDashIndex = ((IList<string>)prefix).IndexOf("--");
@@ -74,7 +74,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS-only /Volumes/ paradigm");
         var config = TestConfig();
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false,
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
             workspaceRoot: "/Volumes/Tera/dev/x");
 
         var templatesIdx = ((IList<string>)prefix).IndexOf(TemplatesDir);
@@ -92,7 +92,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS-only /Volumes/ paradigm");
         var config = TestConfig();
 
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true,
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true,
             workspaceRoot: "/Volumes/Tera/dev/x");
 
         // run --profile <abs> --allow-cwd -a <templatesDir> -a /Volumes/Tera/.TemporaryItems

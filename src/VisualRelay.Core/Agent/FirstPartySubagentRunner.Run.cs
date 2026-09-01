@@ -22,11 +22,20 @@ public sealed partial class FirstPartySubagentRunner
     {
         var apiKey = _keys.Resolve(route.ApiKeyEnvVar) ?? string.Empty;
         var client = new ChatCompletionClient(_transport, route.Timeouts, _timeProvider);
-        var loop = new AgentTurnLoop(client, _tools, events, _timeProvider);
 
         var budget = invocation.AbsoluteCeilingMs > 0
             ? TimeSpan.FromMilliseconds(invocation.AbsoluteCeilingMs)
             : route.Timeouts.Total;
+
+        // The stall clocks come from the repository's config, per tier. The
+        // watchdog is an event sink, so it sees the loop's own stream; the timer
+        // in SuperviseAsync is what notices when that stream goes quiet.
+        var (firstOutput, inactivity, outputSilence) =
+            ResolveStallWindows(_config, invocation.Tier);
+        var watchdog = new AgentWatchdog(
+            firstOutput, inactivity, budget, outputSilence, _timeProvider);
+        var loop = new AgentTurnLoop(
+            client, _tools, new FanOutAgentEventSink(events, watchdog), _timeProvider);
 
         var options = new AgentLoopOptions(
             Model: route.UpstreamModel,
@@ -43,10 +52,10 @@ public sealed partial class FirstPartySubagentRunner
             ContextWindow: route.ContextWindow,
             RetryBackoffBase: _retryBackoffBase);
 
-        return await loop.RunAsync(
-            conversation,
-            options,
-            new ToolContext(invocation.TargetRoot, budget),
+        return await SuperviseAsync(
+            watchdog,
+            token => loop.RunAsync(
+                conversation, options, new ToolContext(invocation.TargetRoot, budget), token),
             cancellationToken).ConfigureAwait(false);
     }
 

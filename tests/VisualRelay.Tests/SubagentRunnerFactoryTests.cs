@@ -1,77 +1,62 @@
 using VisualRelay.Core.Agent;
+using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Covers the selector that decides which agent runs a stage. It is the shadow
-/// mechanism: both agents read the same config and write the same report, so a
-/// drain can be run under either and compared without a branch.
+/// Covers the one place a stage's agent is built.
+/// <para>
+/// This used to choose between the Swival subprocess and the in-process loop on
+/// a <c>VR_AGENT</c> environment variable. The subprocess is gone, so the
+/// selector is gone with it and there is exactly one answer. What still matters
+/// is that every call site funnels through here, which is what made the cutover
+/// one decision rather than eight.
+/// </para>
 /// </summary>
 public sealed class SubagentRunnerFactoryTests
 {
-    private static DictionaryEnvironmentAccessor Env(string? value)
+    /// <summary>The factory builds the in-process loop.</summary>
+    [Fact]
+    public void TheFactory_BuildsTheInProcessLoop()
     {
-        var env = new DictionaryEnvironmentAccessor();
-        if (value is not null) env[SubagentRunnerFactory.SelectorEnvVar] = value;
-        return env;
+        var runner = SubagentRunnerFactory.Create(
+            RelayConfigLoader.Defaults(), new InMemoryRelayEventSink(),
+            new DictionaryEnvironmentAccessor());
+
+        Assert.IsType<FirstPartySubagentRunner>(runner);
     }
 
     /// <summary>
-    /// Unset means the existing subprocess runner. The new loop is opt-in until
-    /// it has been measured against real work.
+    /// It builds the same agent whatever the environment says. A leftover
+    /// <c>VR_AGENT</c> in someone's shell must not select anything, because
+    /// there is nothing else to select.
     /// </summary>
-    [Fact]
-    public void UnsetSelector_KeepsTheExistingAgent()
-    {
-        Assert.False(SubagentRunnerFactory.UsesFirstParty(Env(null)));
-    }
-
-    /// <summary>The documented value selects the first-party loop.</summary>
-    [Fact]
-    public void TheDocumentedValue_SelectsTheFirstPartyLoop()
-    {
-        Assert.True(SubagentRunnerFactory.UsesFirstParty(
-            Env(SubagentRunnerFactory.FirstPartyValue)));
-    }
-
-    /// <summary>
-    /// The comparison ignores case, so a shell that upper-cases the value still
-    /// selects what the operator meant.
-    /// </summary>
-    [Fact]
-    public void TheValue_IsMatchedIgnoringCase()
-    {
-        Assert.True(SubagentRunnerFactory.UsesFirstParty(Env("FirstParty")));
-        Assert.True(SubagentRunnerFactory.UsesFirstParty(Env("FIRSTPARTY")));
-    }
-
-    /// <summary>
-    /// Anything else keeps the existing agent. A typo must not silently select
-    /// an agent the operator did not ask for, in either direction.
-    /// </summary>
-    /// <param name="value">A value that is not the documented one.</param>
+    /// <param name="selector">A value the old selector would have honoured.</param>
     [Theory]
-    [InlineData("")]
+    [InlineData("firstparty")]
     [InlineData("swival")]
-    [InlineData("first-party")]
-    [InlineData("1")]
-    public void AnythingElse_KeepsTheExistingAgent(string value)
+    [InlineData("")]
+    public void TheEnvironment_NoLongerSelectsAnything(string selector)
     {
-        Assert.False(SubagentRunnerFactory.UsesFirstParty(Env(value)));
+        var env = new DictionaryEnvironmentAccessor { ["VR_AGENT"] = selector };
+
+        var runner = SubagentRunnerFactory.Create(
+            RelayConfigLoader.Defaults(), new InMemoryRelayEventSink(), env);
+
+        Assert.IsType<FirstPartySubagentRunner>(runner);
     }
 
     /// <summary>
-    /// The selector name is the one the documentation gives, so a reader
-    /// following the docs sets a variable that is actually read.
+    /// The runner it builds satisfies the seam the driver is written against,
+    /// which is what roughly eighty stage-level doubles depend on.
     /// </summary>
     [Fact]
-    public void TheSelectorName_MatchesTheDocumentation()
+    public void WhatItBuilds_SatisfiesTheDriverSeam()
     {
-        Assert.Equal("VR_AGENT", SubagentRunnerFactory.SelectorEnvVar);
-        Assert.Equal("firstparty", SubagentRunnerFactory.FirstPartyValue);
-
-        var docs = File.ReadAllText(Path.Combine(RepoSetup.Root, "docs", "OPERATIONS.md"));
-        Assert.Contains(SubagentRunnerFactory.SelectorEnvVar, docs, StringComparison.Ordinal);
-        Assert.Contains(SubagentRunnerFactory.FirstPartyValue, docs, StringComparison.Ordinal);
+        Assert.IsAssignableFrom<ISubagentRunner>(
+            SubagentRunnerFactory.Create(
+                RelayConfigLoader.Defaults(), new InMemoryRelayEventSink(),
+                new DictionaryEnvironmentAccessor()));
     }
 }

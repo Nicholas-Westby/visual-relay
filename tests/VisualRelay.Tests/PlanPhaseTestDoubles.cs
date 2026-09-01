@@ -203,7 +203,7 @@ internal sealed class DualTaskSubagentRunner(string taskId, string codeFile, str
 /// <summary>
 /// Wraps an inner <see cref="ScriptedSubagentRunner"/> and publishes trace-level
 /// events to an optional <see cref="IRelayEventSink"/> — simulating what
-/// SwivalSubagentRunner's trace tailer does when its eventSink is non-null.
+/// SandboxedStage's trace tailer does when its eventSink is non-null.
 /// When <c>traceSink</c> is null, trace events are silently dropped
 /// (mirroring the GUI gap where planSubagentFactory doesn't pass an eventSink).
 /// </summary>

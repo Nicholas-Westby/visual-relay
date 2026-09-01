@@ -9,7 +9,7 @@ namespace VisualRelay.Core.Agent.Tools;
 /// in-process command guard, wrap the command in the hardened sandbox, spawn it in
 /// its own process group, and describe the outcome to the model.
 /// <para>The sandbox is always on and there is no opt-out. The prefix comes from the
-/// shared <c>SwivalSubagentRunner.BuildNonoPrefix</c> builder — the same one the
+/// shared <c>SandboxedStage.BuildNonoPrefix</c> builder — the same one the
 /// swival stage and <c>SandboxedTestRunner</c> use — with
 /// <c>rollback: false</c>. Dropping nono's rollback is what the spec asks for and
 /// what the measurements support (bare spawn 3.6 ms, nono without rollback 127 ms,
@@ -78,7 +78,7 @@ public sealed partial class SandboxedCommandExecutor(
         if (launchError is not null)
             return ToolResult.Error(launchError);
 
-        var environment = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);
+        var environment = SandboxedStage.BuildTargetCommandEnvironment(config);
         var startedAt = _timeProvider.GetTimestamp();
 
         CommandRunOutcome outcome;

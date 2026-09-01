@@ -28,7 +28,7 @@ public sealed class BuildPromptScratchGuidanceTests
             MaxTurns: 200,
             TasksDir: "llm-tasks");
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains(".relay/scratch/", prompt, StringComparison.Ordinal);
     }
@@ -51,7 +51,7 @@ public sealed class BuildPromptScratchGuidanceTests
             MaxTurns: 200,
             TasksDir: "llm-tasks");
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.DoesNotContain(".relay-scratch", prompt, StringComparison.Ordinal);
     }
@@ -75,7 +75,7 @@ public sealed class BuildPromptScratchGuidanceTests
             MaxTurns: 200,
             TasksDir: null);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.DoesNotContain(".relay-scratch", prompt, StringComparison.Ordinal);
         Assert.DoesNotContain(".relay/scratch", prompt, StringComparison.Ordinal);

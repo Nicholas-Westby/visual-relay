@@ -82,8 +82,6 @@ public sealed partial class SplitGuardVerificationTests
         string[] expected =
         [
             "ActivityWatchdogSocketWedgeTests.cs",
-            "SwivalSubagentRunnerWatchdogTests.cs",
-            "SwivalSubagentRunnerTests.cs",
             "SandboxedTestRunnerReapTests.cs",
         ];
 
@@ -175,16 +173,14 @@ public sealed partial class SplitGuardVerificationTests
 
     /// <summary>After consolidation, private helpers must not appear as method definitions in individual Swival* files.</summary>
     [Fact]
-    public void SwivalTestFiles_DoNotContainDuplicatedPrivateHelpers()
+    public void SandboxedStageTestFiles_DoNotContainDuplicatedPrivateHelpers()
     {
+        // The Swival runner's own test families went with the runner. What is
+        // left are the tests of the stage support that outlived it.
         string[] swivalFiles =
         [
-            "SwivalSubagentRunnerWatchdogTests.cs",
-            "SwivalSubagentRunnerTests.cs",
-            "SwivalSubagentRunnerCommandFilterTests.cs",
-            "SwivalSubagentRunnerContractRetryTests.cs",
-            "SwivalSubagentRunnerSandboxTests.cs",
-            "SwivalSubagentRunnerGuardTests.cs",
+            "SandboxedStageSandboxTests.cs",
+            "SandboxedStageManifestExistenceTests.cs",
         ];
 
         foreach (var fileName in swivalFiles)

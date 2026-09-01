@@ -6,7 +6,7 @@ namespace VisualRelay.Core.Execution;
 // so prompt construction (including the ## Verify output section) lives in one focused
 // place. TrimForTail (the tail-window helper these share with the diagnostics extractors)
 // stays in ProcessRunners.Helpers.cs.
-public sealed partial class SwivalSubagentRunner
+public static partial class SandboxedStage
 {
     internal static string BuildPrompt(StageInvocation invocation)
     {

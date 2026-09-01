@@ -20,7 +20,7 @@ public sealed class VerifyOutputTailAndPathTests
         // "…" marks truncation and is not part of the kept window.
         var body = new string('x', 5000);
 
-        var trimmed = SwivalSubagentRunner.TrimForTail(body);
+        var trimmed = SandboxedStage.TrimForTail(body);
 
         var keptLength = trimmed.StartsWith('…') ? trimmed.Length - 1 : trimmed.Length;
         Assert.True(keptLength >= 1800, $"expected >= 1800 kept chars, got {keptLength}");
@@ -32,7 +32,7 @@ public sealed class VerifyOutputTailAndPathTests
         // The real error sits at the END after the sandbox banner — keep the tail.
         var body = new string('A', 5000) + "REAL_ERROR_AT_END";
 
-        var trimmed = SwivalSubagentRunner.TrimForTail(body);
+        var trimmed = SandboxedStage.TrimForTail(body);
 
         Assert.EndsWith("REAL_ERROR_AT_END", trimmed);
         Assert.StartsWith("…", trimmed);
@@ -46,7 +46,7 @@ public sealed class VerifyOutputTailAndPathTests
         const string path = "/repo/.relay/task/stage10-attempt2.verify-output.txt";
         var invocation = MakeVerifyInvocation(lastTestOutput: "Failed! - 3 failed", verifyOutputPath: path);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains("## Verify output", prompt, StringComparison.Ordinal);
         Assert.Contains(path, prompt, StringComparison.Ordinal);
@@ -58,7 +58,7 @@ public sealed class VerifyOutputTailAndPathTests
     {
         var invocation = MakeVerifyInvocation(lastTestOutput: "Failed! - 3 failed", verifyOutputPath: null);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains("## Verify output", prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("Full output:", prompt, StringComparison.Ordinal);
@@ -71,7 +71,7 @@ public sealed class VerifyOutputTailAndPathTests
         var body = new string('A', 5000) + "PASS/FAIL SUMMARY AT END";
         var invocation = MakeVerifyInvocation(lastTestOutput: body, verifyOutputPath: null);
 
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
 
         Assert.Contains("PASS/FAIL SUMMARY AT END", prompt, StringComparison.Ordinal);
         Assert.True(prompt.Count(c => c == 'A') >= 1800,

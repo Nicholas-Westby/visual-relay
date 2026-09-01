@@ -272,11 +272,11 @@ public partial class MainWindowViewModel
         // front, not a failed stage full of nono advisory noise. Reuse the runner's
         // MissingToolsMessage verbatim so both surfaces never drift. PATH comes from
         // the injected accessor when present (tests), else the real process PATH.
-        var missingTools = SwivalSubagentRunner.MissingRequiredTools(
+        var missingTools = SandboxedStage.MissingRequiredTools(
             result.Config, EnvironmentAccessor?.GetEnvironmentVariable("PATH"));
         if (missingTools.Count > 0)
         {
-            StatusText = SwivalSubagentRunner.MissingToolsMessage(missingTools);
+            StatusText = SandboxedStage.MissingToolsMessage(missingTools);
             return false;
         }
 

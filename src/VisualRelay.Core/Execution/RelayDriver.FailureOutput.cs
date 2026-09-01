@@ -12,7 +12,7 @@ public sealed partial class RelayDriver
     /// <summary>
     /// Builds the DISTILLED combined failure output handed to the fix-verify agent as the
     /// in-prompt tail — test (failure reason only), guard, new-guard-probe, and bootstrap
-    /// failures. The test portion is the distilled <see cref="SwivalSubagentRunner.ExtractFailureReason"/>
+    /// failures. The test portion is the distilled <see cref="SandboxedStage.ExtractFailureReason"/>
     /// so the tail stays legible; the FULL version persisted to the artifact is
     /// <see cref="BuildFullFailureOutput"/>.
     /// </summary>
@@ -25,7 +25,7 @@ public sealed partial class RelayDriver
         IReadOnlyList<SandboxDenial>? guardDenials = null,
         IReadOnlyList<SandboxDenial>? bootstrapDenials = null) =>
         BuildCombinedFailure(
-            testResult.ExitCode != 0 ? SwivalSubagentRunner.ExtractFailureReason(testResult.Output) : null,
+            testResult.ExitCode != 0 ? SandboxedStage.ExtractFailureReason(testResult.Output) : null,
             guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput,
             guardDenials, bootstrapDenials);
 

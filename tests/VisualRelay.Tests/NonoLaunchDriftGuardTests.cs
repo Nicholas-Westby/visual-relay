@@ -18,8 +18,8 @@ public sealed class NonoLaunchDriftGuardTests
         // Everything else (profile, --allow-cwd, extra allow paths) must be identical.
         var config = TestConfig();
 
-        var agentPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true).ToList();
-        var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false).ToList();
+        var agentPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: true).ToList();
+        var verifyPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: false).ToList();
 
         // Both must start with: run --profile <abs> --allow-cwd
         var head = new[] { "run", "--profile", NonoProfileEnsurer.ResolveProfilePath(), "--allow-cwd" };
@@ -45,8 +45,8 @@ public sealed class NonoLaunchDriftGuardTests
             SandboxExtraAllowPaths = ["/tmp/extra-cache", "/tmp/extra-build"]
         };
 
-        var agentPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true).ToList();
-        var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false).ToList();
+        var agentPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: true).ToList();
+        var verifyPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: false).ToList();
 
         // Both must contain the extra paths as -a <path> pairs.
         foreach (var extraPath in config.SandboxExtraAllowPaths!)
@@ -70,9 +70,9 @@ public sealed class NonoLaunchDriftGuardTests
         var config = TestConfig();
         var rootPath = "/Volumes/Tera/dev/x";
 
-        var agentPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true,
+        var agentPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: true,
             workspaceRoot: rootPath).ToList();
-        var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false,
+        var verifyPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
             workspaceRoot: rootPath).ToList();
 
         // Both must contain the volume temp grant.

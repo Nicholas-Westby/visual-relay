@@ -22,7 +22,7 @@ public sealed partial class SandboxedTestRunner(
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
         var (fileName, args) = ResolveLaunch(command, rootPath);
-        var targetEnv = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);
+        var targetEnv = SandboxedStage.BuildTargetCommandEnvironment(config);
 
         // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
         // supervises the test process tree and can outlive the FINISHED tests —
@@ -64,7 +64,7 @@ public sealed partial class SandboxedTestRunner(
         // when quiet); it never changes what the sandbox enforces.
         // requestDiagnostics: true requests --diagnostics-json so denial records are
         // captured and surfaced in verify artifacts — the verification path ONLY.
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath, requestDiagnostics: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath, requestDiagnostics: true);
 
         if (inner is ShellTestRunner)
         {

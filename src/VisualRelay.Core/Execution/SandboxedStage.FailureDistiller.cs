@@ -8,8 +8,41 @@ namespace VisualRelay.Core.Execution;
 // first line of the distilled reason so the GUI banner, NEEDS-REVIEW headline,
 // and flag reason actually name the failing test instead of a mid-word fragment
 // of a passing-test duration line.
-public sealed partial class SwivalSubagentRunner
+public static partial class SandboxedStage
 {
+    // A bare nono CLI-flag remediation hint, e.g. "--allow ~/…", "--read-file ~/…",
+    // "--write ~/…". Anchored at line start (line is pre-trimmed) so a real diagnostic
+    // that merely contains such a token mid-line is never dropped.
+    private static readonly Regex NonoFlagHintLine = new(
+        @"^--(allow|read|write)\b", RegexOptions.Compiled);
+
+    // Substituted when nothing survives filtering (all advisory noise or empty
+    // output) so the caller never emits a dangling "swival exit 1: " with no cause
+    // while still keeping its "(full output: <path>)" breadcrumb.
+    private const string NoDiagnosticOutput = "(no diagnostic output captured)";
+    private static readonly Regex VerifiedPacksLine = new(
+        @"^Verified\s+\d+\s+pack\(s\)\s*$", RegexOptions.Compiled);
+    // A line that is ONLY a bare nono advisory token like "deny_read_user_home".
+    private static readonly Regex BareDenyAdvisoryLine = new(
+        @"^deny_[a-z0-9_]+\s*$", RegexOptions.Compiled);
+    // nono's standing system-services / keychain advisory and its remediation hint
+    // lines (the "Next steps:" block and bare --allow/--read/--write flag suggestions
+    // it emits). Matched by nono's own distinctive wording and CLI-flag hint shapes —
+    // never by any test-framework output — so the distilled reason reflects the test
+    // command's failure and never nono's per-run keychain chatter. <paramref name="line"/>
+    // is already trimmed, so indented hint lines match by their leading token.
+    private static bool IsNonoSystemServiceAdvisory(string line) =>
+        line.StartsWith("system services:", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("mach-lookup (com.apple.SecurityServer)", StringComparison.Ordinal) ||
+        line.Contains("Keychain access requires granting the login keychain path", StringComparison.Ordinal) ||
+        line.Contains("Library/Keychains", StringComparison.Ordinal) ||
+        line.StartsWith("Next steps:", StringComparison.OrdinalIgnoreCase) ||
+        line.StartsWith("Discover paths:", StringComparison.OrdinalIgnoreCase) ||
+        line.StartsWith("Query policy:", StringComparison.OrdinalIgnoreCase) ||
+        line.StartsWith("nono learn", StringComparison.Ordinal) ||
+        line.StartsWith("nono why", StringComparison.Ordinal) ||
+        NonoFlagHintLine.IsMatch(line);
+
     // Shared core for ExtractFailureReason and BuildNonzeroExitReason. Returns the
     // distilled reason AND whether it anchored on a genuine failure marker
     // (strong/weak signal) rather than falling back to the tail / placeholder. The

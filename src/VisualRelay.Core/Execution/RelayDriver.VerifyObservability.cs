@@ -33,7 +33,7 @@ public sealed partial class RelayDriver
     {
         var check = overrideCheck ?? (testResult.ExitCode == 0 ? "green" : "red");
         var reason = testResult.ExitCode != 0
-            ? SwivalSubagentRunner.ExtractFailureReason(testResult.Output)
+            ? SandboxedStage.ExtractFailureReason(testResult.Output)
             : BuildSetupCheckFailureReason(setupChecks);
         // NOTE: WorkingTreeHash fingerprints only the manifest files' contents — a coarse
         // signal, acceptable for observability (and for the Task 2 convergence guard).

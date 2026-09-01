@@ -41,7 +41,7 @@ public sealed class AgentToolCatalogTests
             File.ReadAllText(Path.Combine(
                 RepoSetup.Root, "src/VisualRelay.Core/Execution/RelayDriver.ReviewPairTriage.cs")),
             File.ReadAllText(Path.Combine(
-                RepoSetup.Root, "src/VisualRelay.Core/Execution/ProcessRunners.ManifestValidation.cs")));
+                RepoSetup.Root, "src/VisualRelay.Core/Execution/SandboxedStage.ManifestValidation.cs")));
 
         Assert.Contains("view_image", prompts, StringComparison.Ordinal);
         Assert.Contains("list_files", prompts, StringComparison.Ordinal);

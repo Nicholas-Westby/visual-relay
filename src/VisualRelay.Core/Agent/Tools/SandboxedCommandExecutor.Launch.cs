@@ -57,7 +57,7 @@ public sealed partial class SandboxedCommandExecutor
         // rollback: false — the agent path drops nono's rollback (see the type doc).
         // requestDiagnostics stays off: that JSON is a verify-artifact concern, and
         // its banner would be noise in the model's tool result.
-        var arguments = new List<string>(SwivalSubagentRunner.BuildNonoPrefix(
+        var arguments = new List<string>(SandboxedStage.BuildNonoPrefix(
             config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: targetRoot))
         {
             program,

@@ -182,7 +182,7 @@ public sealed class NonoRollbackSkipDirsTests
     [Fact]
     public async Task ComputeAsync_RealGitInvoker_SizeGatesIgnoredDirs()
     {
-        // Regression guard for the production wiring gap: SwivalSubagentRunner was
+        // Regression guard for the production wiring gap: SandboxedStage was
         // constructed WITHOUT a gitInvoker at every production site, which silently
         // dropped the size-gated skips (keeping only the always-list) and let a
         // multi-GB git-ignored dir blow nono's rollback budget. A null invoker MUST

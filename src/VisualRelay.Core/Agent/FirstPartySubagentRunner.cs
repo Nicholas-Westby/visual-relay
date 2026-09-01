@@ -3,6 +3,7 @@ using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Llm;
 using VisualRelay.Core.Llm.Routing;
+using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Agent;
@@ -28,6 +29,10 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     private readonly RelayConfig _config;
     private readonly ProviderKeyResolver _keys;
     private readonly Func<StageInvocation, IAgentEventSink> _events;
+
+    private readonly IRelayEventSink? _relayEvents;
+
+    private readonly IGitInvoker _git;
     private readonly IReadOnlyList<IAgentTool> _tools;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan? _retryBackoffBase;
@@ -57,8 +62,12 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
         Func<StageInvocation, IAgentEventSink> events,
         IReadOnlyList<IAgentTool>? tools = null,
         TimeProvider? timeProvider = null,
-        TimeSpan? retryBackoffBase = null)
+        TimeSpan? retryBackoffBase = null,
+        IRelayEventSink? relayEvents = null,
+        IGitInvoker? git = null)
     {
+        _relayEvents = relayEvents;
+        _git = git ?? new GitInvoker();
         _retryBackoffBase = retryBackoffBase;
         _transport = transport;
         _config = config;
@@ -83,7 +92,8 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
 
         // Identical to what the previous runner sent, so a differential compares
         // loops rather than prompts.
-        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+        var prompt = SandboxedStage.BuildPrompt(invocation);
+        WriteStageInput(invocation, prompt);
         var conversation = new List<ChatMessage>
         {
             new("system", invocation.Stage.SystemPrompt),
@@ -110,7 +120,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
         }
 
         await WriteReportAsync(invocation, last!, events, cancellationToken).ConfigureAwait(false);
-        return ToSubagentResult(invocation, last!);
+        return await ToSubagentResultAsync(invocation, last!, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -131,7 +141,8 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
             .Where(route => present.Contains(route.ApiKeyEnvVar))];
     }
 
-    private static SubagentResult ToSubagentResult(StageInvocation invocation, AgentLoopResult result)
+    private async Task<SubagentResult> ToSubagentResultAsync(
+        StageInvocation invocation, AgentLoopResult result, CancellationToken cancellationToken)
     {
         if (result.Outcome != AgentLoopOutcome.Success)
             return new SubagentResult(
@@ -141,7 +152,23 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
                 HardAbort: result.Outcome == AgentLoopOutcome.Cancelled);
 
         var contract = StageContractReader.Read(result.Answer, invocation.Stage.OutputContract);
-        return new SubagentResult(
-            result.Answer, contract.Json, contract.Succeeded, contract.Error);
+        if (!contract.Succeeded || contract.Json is not { } json)
+            return new SubagentResult(result.Answer, contract.Json, contract.Succeeded, contract.Error);
+
+        // Stages 4 and 10 name the files they intend to change. A gitignored or
+        // absent path there produces a manifest the commit stage cannot honour,
+        // so it is rejected here and the corrective message tells the model what
+        // to fix. The subprocess runner did this at the same point; it is a
+        // property of the contract, not of how the stage was run.
+        if (invocation.Stage.Number is 4 or 10)
+        {
+            var manifestError = await SandboxedStage.CheckManifestAgainstGitignoreAsync(
+                json, invocation.Stage.Number, invocation.TargetRoot, _git, cancellationToken)
+                .ConfigureAwait(false);
+            if (manifestError is not null)
+                return new SubagentResult(result.Answer, null, false, manifestError);
+        }
+
+        return new SubagentResult(result.Answer, json, true, contract.Error);
     }
 }

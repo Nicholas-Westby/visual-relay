@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace VisualRelay.Core.Execution;
 
-public sealed partial class SwivalSubagentRunner
+public static partial class SandboxedStage
 {
     /// <summary>
     /// Validates manifest paths for existence and gitignore status. Runs an
