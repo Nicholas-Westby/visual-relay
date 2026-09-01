@@ -107,7 +107,7 @@ valid empty-body request and executes the command. Use `curl -X POST …` for bo
 The following tools are available in source checkouts but are **not shipped** in the
 Homebrew formula:
 
-- `./visual-relay sample-reset <path>` — regenerates a sample tasks repository with
+- `./visual-relay gen-sample <path>` — regenerates a sample tasks repository with
   repeatable demo state (runs `tools/VisualRelay.SampleTasks`).
 - `./visual-relay run-task <path> <task>` — runs a single task headlessly through the
   full Relay pipeline (runs `tools/VisualRelay.RunTask`).
