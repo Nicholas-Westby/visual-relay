@@ -42,7 +42,7 @@ Each stage carries its tier, file access scope, command scope, prompt, and JSON 
 ## Execution Model
 Runs are serialized. A `RelayQueueController` owns the in-memory queue order, selected task, run state, pause request, and boundary decisions. A `RelayDriver` owns one task's staged execution and emits structured events. Reliable simulated runners back the tests.
 
-A stage is run by the in-process agent loop, built by `SubagentRunnerFactory`. It calls the providers directly over their OpenAI-compatible endpoints, with no proxy and no subprocess, and publishes token deltas, tool calls and interventions as they happen — so the LLM command pane populates *while the stage is running*.
+A stage is run by the in-process agent loop, built by `SubagentRunnerFactory`. It calls the providers directly over their OpenAI-compatible endpoints, with no local service and no subprocess, and publishes token deltas, tool calls and interventions as they happen — so the LLM command pane populates *while the stage is running*.
 
 That last part is new. Until 2026-09-01 a stage ran as a third-party CLI subprocess whose JSONL transcript was written *at process exit*: measured across 957 archived stages, 99.96% of agent wall time carried no live model output at all, so the pane stayed empty for the whole stage and filled in only once it ended. The subprocess, and the local gateway it spoke to, have been removed.
 

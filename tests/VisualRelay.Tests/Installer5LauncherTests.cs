@@ -5,7 +5,7 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Tests for the <c>visual-relay</c> launcher script changes in installer-5:
 /// published-binary preference, sample-reset removal, and SCRIPT_DIR-relative
-/// backend.sh invocation. These must FAIL before the implementation lands.
+/// resolution. These must FAIL before the implementation lands.
 /// </summary>
 public sealed partial class Installer5LauncherTests
 {

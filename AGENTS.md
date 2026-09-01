@@ -48,8 +48,8 @@ dev loop.
 ## Which agent runs a stage
 
 One does: the in-process turn loop, built by `SubagentRunnerFactory`. It calls
-providers directly over their OpenAI-compatible endpoints, with no proxy and no
-subprocess, and streams model output into the Activity column while the stage is
+providers directly over their OpenAI-compatible endpoints, with no local service
+and no subprocess, and streams model output into the Activity column while the stage is
 still running.
 
 There used to be a `VR_AGENT` selector choosing between this and a third-party

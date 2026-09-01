@@ -3,8 +3,8 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Tests for <c>.github/workflows/release.yml</c> (CI release workflow).
 /// The workflow must trigger on tag push, build self-contained osx-arm64/x64
-/// bundles, ad-hoc sign them, assemble tarballs with the launcher + tools/backend,
-/// compute sha256, and create a GitHub Release.
+/// bundles, ad-hoc sign them, assemble tarballs with the launcher, compute
+/// sha256, and create a GitHub Release.
 /// These must FAIL before the file exists.
 /// </summary>
 public sealed class Installer5ReleaseWorkflowTests
