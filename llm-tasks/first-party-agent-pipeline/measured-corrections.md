@@ -242,3 +242,43 @@ span without checking it parsed, so a sentence containing `{file, line}` written
 after the contract block won, and the stage was flagged with a parse error
 against prose while the real contract sat just above it. The extractor it
 replaced checked that candidates parse; this one now does too.
+
+## What the target-repo matrix found
+
+Adding Tier A of the matrix (step 35) turned up defects beyond the JVM gap the
+spec named. The JVM gap was real: `TestPathClassifier` has always classified
+`.java` and `.kt` files as tests while no detector recognised `pom.xml` or
+`build.gradle`, so every Maven or Gradle repository fell through all eight rules
+onto the empty placeholder.
+
+**Init could never validate a repo-relative program.** .NET resolves a relative
+`ProcessStartInfo.FileName` against the calling process's current directory, not
+against `WorkingDirectory`, so `./gradlew test` raised ENOENT and was rejected at
+init even though the pipeline runs the same command under `/bin/sh` with the repo
+as cwd, where it resolves perfectly. This is the same init-versus-pipeline family
+as the `&&` mismatch the spec names, and it would have made wrapper preference
+actively harmful. It also blocked the common `./scripts/test.sh` shape outright.
+
+**The `&&` shell mismatch is real in BOTH directions.** The spec describes a
+chained command being rejected at init but running fine later. The reverse also
+holds: `true && <absent binary>` is *accepted* at init, because a direct exec
+hands `&&` and the binary name to `true` as plain arguments and it exits 0, while
+`/bin/sh` would fail it.
+
+**The persisted config HTML-escapes the command.** `vitest run && tsc --noEmit`
+is written to `.relay/config.json` as `vitest run && tsc --noEmit`. It
+round-trips losslessly, but a file users are invited to hand-edit does not read
+back as written.
+
+**`cargo test {files}` expands to a shape cargo cannot use.** A
+`tests/integration_test.rs` does classify, so the token expands to
+`cargo test tests/integration_test.rs` — but cargo reads a bare positional as a
+test-NAME filter, not a path. It matches nothing and reports green. The same
+shape would be wrong for Maven and Gradle, which need `-Dtest=` and `--tests`.
+
+Smaller ones, all now pinned rather than fixed: a Python repo with both
+`pyproject.toml` and `tests/` yields `pytest` twice; a conventional .NET repo
+gets `pytest` as its second candidate purely from a root `tests/` directory;
+`GuardCommandDetector` still enumerates a `tools/guards/*.sh` directory that was
+ported to C# and no longer exists here; and GitSim reads only the root
+`.gitignore`, so a nested one has no effect.
