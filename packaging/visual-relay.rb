@@ -4,7 +4,6 @@ class VisualRelay < Formula
   license "MIT"
   version "0.1.0"
 
-  depends_on "uv"
   depends_on "nolabs-ai/nono/nono"
 
   on_macos do

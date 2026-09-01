@@ -2,7 +2,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Tests for <c>packaging/visual-relay.rb</c> (Homebrew formula template).
-/// The formula must be a Formula (not Cask), depend on uv, have per-arch URLs,
+/// The formula must be a Formula (not Cask), depend on nono, have per-arch URLs,
 /// install into libexec, and symlink bin/visual-relay.
 /// These must FAIL before the file exists.
 /// </summary>
@@ -53,14 +53,16 @@ public sealed class Installer5FormulaTests
     // ── 2. Dependencies ──────────────────────────────────────────────────
 
     [Fact]
-    public void Formula_DependsOnUv()
+    public void Formula_DependsOnNonoAndNotUv()
     {
         var content = ReadFormula();
 
-        // Must declare uv as a dependency (the backend lifecycle provisions the
-        // litellm venv with uv).
+        // nono is the sandbox and stays. uv existed only to build the Python
+        // venv for the LiteLLM proxy, which is gone, so depending on it would
+        // make every install pull a toolchain nothing uses.
         Assert.Contains("depends_on", content, StringComparison.Ordinal);
-        Assert.Contains("uv", content, StringComparison.Ordinal);
+        Assert.Contains("nolabs-ai/nono/nono", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("depends_on \"uv\"", content, StringComparison.Ordinal);
     }
 
     [Fact]

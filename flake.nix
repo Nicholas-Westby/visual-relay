@@ -54,8 +54,6 @@
               openssl
               zlib
               nonoPinned
-              uv
-              python313
             ];
 
             DOTNET_CLI_TELEMETRY_OPTOUT = "1";
