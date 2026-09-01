@@ -2,12 +2,12 @@ namespace VisualRelay.Core.CommandGuard;
 
 /// <summary>
 /// Verdict from <see cref="CommandGuardDecider.Decide"/>.
-/// Serialized by the guard binary to the JSON protocol swival expects.
+/// Serialized by the guard binary to the command-middleware JSON protocol.
 /// </summary>
 public sealed class CommandGuardResult
 {
     /// <summary>
-    /// Swival action: <c>"allow"</c> or <c>"deny"</c>.
+    /// Middleware action: <c>"allow"</c> or <c>"deny"</c>.
     /// </summary>
     private string Action { get; }
 
@@ -50,7 +50,7 @@ public sealed class CommandGuardResult
         new("allow", mode, command);
 
     /// <summary>
-    /// Deny the command. Swival will block execution and show
+    /// Deny the command. The caller blocks execution and shows
     /// <paramref name="reason"/> to the agent.
     /// </summary>
     public static CommandGuardResult Deny(string reason) =>

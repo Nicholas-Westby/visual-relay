@@ -16,8 +16,8 @@ tier's model chain, calls the first provider whose key is present, and streams
 what the model produces into the Activity column as it arrives rather than when
 the stage ends.
 
-Until 2026-09-01 this worked differently: each stage was a `swival` subprocess
-talking to a LiteLLM proxy that Visual Relay started on `127.0.0.1:4000` and
+Until 2026-09-01 this worked differently: each stage was a third-party CLI
+subprocess talking to a LiteLLM proxy that Visual Relay started on `127.0.0.1:4000` and
 provisioned into a `uv`-built Python venv. The proxy, the venv, the subprocess
 and the `uv` dependency have all been removed. If you have an old
 `~/.local/share/visual-relay/backend-venv` or a stray `litellm.pid`, nothing

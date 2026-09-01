@@ -18,7 +18,7 @@ public static partial class SandboxPathInspector
     /// <summary>
     /// Extracts the fully-resolved <c>groups.include</c> from a
     /// <c>nono profile show &lt;profile&gt; --json</c> payload — the effective chain
-    /// (vr-guard → swival → default) with every inherited group present.
+    /// (vr-guard → default) with every inherited group present.
     /// </summary>
     internal static IReadOnlyList<string> ParseResolvedGroupIncludes(string showJson)
     {

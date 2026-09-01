@@ -6,11 +6,11 @@ namespace VisualRelay.Core.Agent.Tools;
 
 /// <summary>
 /// The command guard, applied IN-PROCESS on every command a tool runs.
-/// <para>Swival reached the guard as an external binary wired through
-/// <c>--command-middleware</c>, which <c>ProcessRunners.BuildArguments</c> only
-/// passes when <c>&lt;targetRoot&gt;/.githooks/command-guard</c> exists. Visual Relay
+/// <para>The subprocess agent reached the guard as an external binary wired through
+/// its command-middleware hook, which the launch only passed when
+/// <c>&lt;targetRoot&gt;/.githooks/command-guard</c> exists. Visual Relay
 /// never provisions that file into a target repository, so every repository except
-/// this one ran with no command guard at all, and swival's <c>python</c> tool
+/// this one ran with no command guard at all, and that agent's <c>python</c> tool
 /// bypassed the middleware entirely (89 uninspected calls in this repo's history).
 /// Calling <see cref="CommandGuardDecider"/> directly closes both holes: the policy
 /// now applies in every repository, to every command tool, with no subprocess.</para>

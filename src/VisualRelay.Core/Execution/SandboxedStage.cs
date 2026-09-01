@@ -8,7 +8,7 @@ namespace VisualRelay.Core.Execution;
 /// goes in, the nono prefix and environment it runs under, the tools it needs on
 /// PATH, and the failure reason distilled from what comes back.
 /// <para>
-/// These were static members of the Swival subprocess runner. They are not about
+/// These were static members of the retired subprocess runner. They are not about
 /// that runner: the in-process agent loop builds the same prompt, launches the
 /// same sandbox and distils the same failures, so they outlive it and live here
 /// under a name that says what they do.
@@ -20,7 +20,7 @@ public static partial class SandboxedStage
     private const string NonoBinary = "nono";
 
     /// <summary>
-    /// Shared nono-prefix builder: Swival and verification callers produce
+    /// Shared nono-prefix builder: agent and verification callers produce
     /// identical prefixes except for <c>--rollback</c> / <c>--no-rollback-prompt</c>
     /// (controlled by <paramref name="rollback"/>).  The sandbox is always on, so
     /// this never returns empty.  Appends
@@ -29,7 +29,7 @@ public static partial class SandboxedStage
     /// <paramref name="skipDirs"/> (basenames) are emitted as
     /// <c>--skip-dir &lt;name&gt;</c> — before <c>--</c> — so nono's rollback
     /// PREFLIGHT skips them and stays under its fixed budget on large repos
-    /// (the swival path passes these; the verify path leaves them null).
+    /// (the agent path passes these; the verify path leaves them null).
     /// When <paramref name="verboseDiagnostics"/> is false (the default = quiet)
     /// <c>--silent</c> is added so nono prints none of its own banner / summary /
     /// status / WARN-preflight / failure-footer chatter, leaving only the child
@@ -88,7 +88,7 @@ public static partial class SandboxedStage
         if (rollback) { args.Add("--rollback"); args.Add("--no-rollback-prompt"); }
 
         // Request machine-readable diagnostics JSON on stderr.  Only the
-        // verification path requests this; swival agent runs do not.
+        // verification path requests this; agent runs do not.
         // Independent of verboseDiagnostics — we keep --silent so nono's
         // human footer stays suppressed.
         if (requestDiagnostics) { args.Add("--diagnostics-json"); }

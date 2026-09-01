@@ -23,7 +23,7 @@ public static class PlanningWorktree
     /// <see cref="PruneLeftoversAsync"/> at every planning phase — which deletes
     /// every leftover run dir under its repo-hash namespace. Sharing one namespace
     /// would let the drain's prune wipe a live rewrite worktree out from under the
-    /// running swival process (and vice-versa). Separate namespaces make a prune
+    /// running rewrite (and vice-versa). Separate namespaces make a prune
     /// physically unable to see the other kind.
     /// </remarks>
     private static string GetTempRoot(string repoRoot, string runId, bool isRewrite)

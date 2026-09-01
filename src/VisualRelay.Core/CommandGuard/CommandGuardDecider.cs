@@ -3,19 +3,19 @@ using System.Text.Json;
 namespace VisualRelay.Core.CommandGuard;
 
 /// <summary>
-/// Pure, IO-free strip logic. Reads a swival command-middleware payload and
+/// Pure, IO-free strip logic. Reads a command-middleware payload and
 /// returns a verdict: pass-through allow, rewritten allow (with hook-bypass
 /// flags stripped), or deny.
 /// </summary>
 public static partial class CommandGuardDecider
 {
     /// <summary>
-    /// Decides the verdict for a swival command-middleware payload.
+    /// Decides the verdict for a command-middleware payload.
     /// On internal error, fails OPEN for non-commit commands and fails
     /// CLOSED (deny) for git commit commands when <paramref name="rawJson"/>
     /// is supplied so the payload can be identified.
     /// </summary>
-    /// <param name="payload">The swival middleware JSON payload.</param>
+    /// <param name="payload">The middleware JSON payload.</param>
     /// <param name="rawJson">
     /// The raw JSON string (available from Program.cs stdin). Used only in
     /// the catch path for fail-closed git-commit detection. Optional;

@@ -23,15 +23,13 @@ public static partial class BackendConfigGenerator
     /// WATCH: if DeepSeek ever starts ENFORCING reasoning_content on tool-call
     /// history, the failure signature is HTTP 400 from turn 2 of tool-calling
     /// stages. RENAMING THESE ALIASES WOULD NOT HELP — that remedy was recorded
-    /// in error and is corrected here on 2026-08-31: swival 1.0.38's
-    /// _needs_reasoning_content keys on BASE URL, never the model name, and says
-    /// so in its own docstring. The relay always points swival at 127.0.0.1:4000,
-    /// so the gate is false whatever an alias is called, and litellm's
-    /// DeepSeekChatConfig._fill_reasoning_content is inert too — it fires only
-    /// once the caller sends thinking/reasoning_effort, which nothing here does.
-    /// Both nets are off; the stack passes empirically (33 proxied calls, zero
-    /// 4xx) only because DeepSeek does not enforce the rule today. Real levers
-    /// that day: pass swival's --reasoning-effort, or replay it via --llm-filter.
+    /// in error and is corrected here on 2026-08-31: the two compatibility nets
+    /// that used to replay reasoning_content both keyed on the base URL or on an
+    /// explicit thinking/reasoning_effort field, never on the alias, and both went
+    /// with the retired proxy stack. Nothing on the direct path sends the field at
+    /// all. The stack passes empirically (33 calls, zero 4xx) only because DeepSeek
+    /// does not enforce the rule today. The lever that day is to send
+    /// reasoning_effort on the request itself.
     /// </summary>
     internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {

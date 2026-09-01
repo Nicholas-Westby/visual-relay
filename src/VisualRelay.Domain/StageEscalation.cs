@@ -3,7 +3,7 @@ namespace VisualRelay.Domain;
 /// <summary>
 /// General-purpose escalation ladder shared by the two escalation consumers so the
 /// tier+turn math has a single source of truth: the in-process subagent retry loop
-/// (<c>SwivalSubagentRunner.RunAsync</c>, which escalates on contract/exit/stall
+/// (<c>FirstPartySubagentRunner.RunAsync</c>, which escalates on contract/exit/stall
 /// failures it can see) and the driver's fix-verify loop (which escalates on an
 /// external verify/test-red failure). Given a 1-based <em>run</em> index it yields:
 /// <list type="bullet">

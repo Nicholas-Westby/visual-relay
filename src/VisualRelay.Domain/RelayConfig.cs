@@ -22,7 +22,7 @@ public sealed record RelayConfig(
     // tasks in BoostTurnsTaskIds.  Set to 0 to disable (not recommended).
     int SubagentTimeoutMilliseconds,
     int TestTimeoutMilliseconds,
-    // Per-tier first-output watchdog (ms). A swival invocation that emits zero
+    // Per-tier first-output watchdog (ms). A stage invocation that emits zero
     // trace entries / stdout bytes within this window is killed and the stage
     // escalates to the next tier. The threshold varies sharply by tier:
     //   cheap    ~90 s  (healthy max ~34 s)
@@ -109,7 +109,7 @@ public sealed record RelayConfig(
     bool RetryFlakyVerify = true,
     // Per-repo escape hatch for exotic toolchain cache paths the vr-guard profile
     // baseline does not cover.  Each entry is appended as `-a <path>` to BOTH the
-    // Swival nono run invocation and the verification nono run invocation, so the
+    // agent nono run invocation and the verification nono run invocation, so the
     // effective allowlist is the UNION of the profile grants and these extras.
     // Entries are validated during config load: `..` (path traversal) is rejected
     // with a load error; `~` and `$HOME` are expanded; and each normalized absolute

@@ -16,7 +16,7 @@ internal sealed class GuiTaskRunner(
     string mainRootPath, RelayConfig config,
     IRelayEventSink sharedSink, ITestRunner testRunner,
     // Output-only nono-diagnostics verbosity (the global "verbose diagnostics"
-    // preference), forwarded verbatim to the per-call SwivalSubagentRunner.
+    // preference), forwarded verbatim to the per-call subagent runner.
     bool verboseDiagnostics = false) : IRelayTaskRunner
 {
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)

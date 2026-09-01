@@ -6,7 +6,7 @@ namespace VisualRelay.Core.Agent.Tools;
 /// <summary>
 /// The timeout a command tool actually applies, plus the sentences that explain it
 /// to the model.
-/// <para>Swival clamped every command to a hidden <c>MAX_TIMEOUT = 240</c> seconds
+/// <para>The subprocess agent clamped every command to a hidden <c>MAX_TIMEOUT = 240</c> seconds
 /// with no flag or env var, and then reported <c>command timed out after 240s</c> —
 /// a number the model never asked for, so it could not learn to adapt and retried at
 /// the same doomed value (378 of 5,750 command calls in this repo's history asked for

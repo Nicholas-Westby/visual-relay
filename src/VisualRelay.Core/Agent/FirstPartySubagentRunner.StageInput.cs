@@ -14,8 +14,8 @@ public sealed partial class FirstPartySubagentRunner
     /// <param name="invocation">The stage being run.</param>
     /// <param name="prompt">The prompt the model was given.</param>
     /// <remarks>
-    /// The Swival runner did this while assembling its argument list. That is
-    /// not a property of running a subprocess — the pane reads the artifact
+    /// The subprocess runner did this while assembling its argument list. That
+    /// is not a property of running a subprocess — the pane reads the artifact
     /// either way — so it moved here rather than being lost with the runner.
     /// Best-effort throughout: a stage must never fail because a diagnostic
     /// artifact could not be written.

@@ -265,9 +265,9 @@ public partial class MainWindowViewModel
             return false;
         }
 
-        // Fail fast before launching when a required tool (swival always; nono when
-        // the sandbox is on) isn't on PATH — the user gets an actionable message up
-        // front, not a failed stage full of nono advisory noise. Reuse the runner's
+        // Fail fast before launching when the sandbox isn't available on this
+        // machine — the user gets an actionable message up front, not a failed
+        // stage full of nono advisory noise. Reuse the runner's
         // MissingToolsMessage verbatim so both surfaces never drift. PATH comes from
         // the injected accessor when present (tests), else the real process PATH.
         var missingTools = SandboxedStage.MissingRequiredTools(

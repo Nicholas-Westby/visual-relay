@@ -16,8 +16,8 @@ public static partial class SandboxedStage
     // wrapper alive past completion (the stage-5/9 timeout-after-tests-pass).
     //
     // The Python-containment overrides that used to sit here — the HF, XDG and uv
-    // cache redirects into ~/.config/swival, and the bytecode and encoding
-    // settings — existed because a Python subprocess ran inside this sandbox.
+    // cache redirects into the retired agent's own config dir, and the bytecode and
+    // encoding settings — existed because a Python subprocess ran inside this sandbox.
     // Nothing Python runs here any more, so they went with it. A target repo that
     // is itself Python keeps its own environment; nono's own profile still grants
     // the uv cache paths.

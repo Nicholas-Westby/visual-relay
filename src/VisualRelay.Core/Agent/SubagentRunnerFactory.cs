@@ -10,8 +10,8 @@ namespace VisualRelay.Core.Agent;
 /// <summary>
 /// Builds the agent that runs a stage.
 /// <para>
-/// Every call site goes through here, which is what made the cutover from the
-/// Swival subprocess one decision rather than eight. There is no selector any
+/// Every call site goes through here, which is what made the cutover off the
+/// subprocess agent one decision rather than eight. There is no selector any
 /// more: the in-process loop is the only agent.
 /// </para>
 /// </summary>

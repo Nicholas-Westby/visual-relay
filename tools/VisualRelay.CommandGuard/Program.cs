@@ -1,7 +1,7 @@
 using System.Text.Json;
 using VisualRelay.Core.CommandGuard;
 
-// VisualRelay.CommandGuard — Swival command-middleware that strips git
+// VisualRelay.CommandGuard — a command-middleware filter that strips git
 // hook-bypass flags (--no-verify / -n) so the per-repo authority hook
 // re-engages. Reads a JSON payload from stdin, writes the verdict to stdout.
 //

@@ -5,9 +5,8 @@ namespace VisualRelay.Core.Execution;
 
 /// <summary>
 /// Ensures the <c>VisualRelay.CommandGuard</c> middleware binary is published
-/// to <c>&lt;repoRoot&gt;/command-guard/</c> before a run starts, so the
-/// swival <c>--command-middleware</c> wrapper can exec it from inside the
-/// nono sandbox.
+/// to <c>&lt;repoRoot&gt;/command-guard/</c> before a run starts, so a
+/// command-middleware wrapper can exec it from inside the nono sandbox.
 ///
 /// <para>Publishes as a <b>self-contained</b> binary so no .NET runtime
 /// discovery is needed in the sandbox.  Mirrors the pattern of

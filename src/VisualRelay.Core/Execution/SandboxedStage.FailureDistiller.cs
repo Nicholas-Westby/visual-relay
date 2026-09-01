@@ -17,7 +17,7 @@ public static partial class SandboxedStage
         @"^--(allow|read|write)\b", RegexOptions.Compiled);
 
     // Substituted when nothing survives filtering (all advisory noise or empty
-    // output) so the caller never emits a dangling "swival exit 1: " with no cause
+    // output) so the caller never emits a bare "exit 1:" with no cause
     // while still keeping its "(full output: <path>)" breadcrumb.
     private const string NoDiagnosticOutput = "(no diagnostic output captured)";
     private static readonly Regex VerifiedPacksLine = new(
@@ -43,12 +43,11 @@ public static partial class SandboxedStage
         line.StartsWith("nono why", StringComparison.Ordinal) ||
         NonoFlagHintLine.IsMatch(line);
 
-    // Shared core for ExtractFailureReason and BuildNonzeroExitReason. Returns the
-    // distilled reason AND whether it anchored on a genuine failure marker
-    // (strong/weak signal) rather than falling back to the tail / placeholder. The
-    // flag is what BuildNonzeroExitReason uses to decide whether swival's own output
-    // is diagnostic, or whether it must consult the proxy log instead of echoing a
-    // tail that is really just the prompt.
+    // Shared core for ExtractFailureReason. Returns the distilled reason AND
+    // whether it anchored on a genuine failure marker (strong/weak signal) rather
+    // than falling back to the tail / placeholder. The flag told the retired
+    // nonzero-exit reporter whether the captured output was diagnostic at all, or
+    // whether it was really just an echo of the prompt.
     private static (string Reason, bool HasMarker) DistillFailure(string output, int tailChars)
     {
         var lines = output.Replace("\r\n", "\n").Split('\n');

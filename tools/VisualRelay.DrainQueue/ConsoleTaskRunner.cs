@@ -18,7 +18,7 @@ namespace VisualRelay.DrainQueue;
 public sealed class ConsoleTaskRunner(
     string mainRootPath, RelayConfig config, ITestRunner testRunner,
     // Output-only nono-diagnostics verbosity (the global "verbose diagnostics"
-    // preference), forwarded verbatim to the per-call SwivalSubagentRunner.
+    // preference), forwarded verbatim to the per-call subagent runner.
     bool verboseDiagnostics = false,
     IEnvironmentAccessor? environmentAccessor = null)
     : IRelayTaskRunner

@@ -20,8 +20,8 @@ internal static partial class ProcessCapture
     /// <summary>
     /// VR runs under <c>nix develop</c>, which exports <c>DEVELOPER_DIR</c>/<c>SDKROOT</c>
     /// pointing at the nix apple-sdk (for VR's own .NET build). A child process that
-    /// invokes <c>/usr/bin/git</c> (the macOS xcrun shim) — swival inside nono, the verify
-    /// test command — would treat that nix path as the developer directory, find no Command
+    /// invokes <c>/usr/bin/git</c> (the macOS xcrun shim) — an agent command inside nono,
+    /// the verify test command — would treat that nix path as the developer directory, find no Command
     /// Line Tools there, and trigger the macOS "install the command line developer tools"
     /// dialog. Strip the LEAKED nix value so the child falls back to the xcode-select
     /// default; a real (non-nix) <c>DEVELOPER_DIR</c> set for the target is left intact.

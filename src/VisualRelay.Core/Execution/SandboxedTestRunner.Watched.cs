@@ -7,7 +7,7 @@ namespace VisualRelay.Core.Execution;
 public sealed partial class SandboxedTestRunner
 {
     // CPU-tree sampling cadence for the filesystem-independent liveness pulse
-    // (mirrors SwivalSubagentRunner). It is what distinguishes a busy-but-silent
+    // (mirrors the agent's own watchdog). It is what distinguishes a busy-but-silent
     // test run (CPU pulses keep the run alive — never reaped) from a finished or
     // stalled one (no pulses → the idle deadline fires). Must stay well below
     // TestIdleGraceMilliseconds so a busy window is sampled several times before

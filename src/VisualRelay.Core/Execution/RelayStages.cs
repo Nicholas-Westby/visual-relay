@@ -10,7 +10,7 @@ public static class RelayStages
         Stage(2, "Research", "cheap", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "findings": string, "constraints": string[] }"""),
         Stage(3, "Diagnose", "balanced", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "evidence": string, "excerpts": string[], "repro": string }"""),
         Stage(4, "Plan", "balanced", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "plan": string, "manifest": string[] }"""),
-        // Stage 5 writes are "all" because the swival/nono sandbox has no partial-write
+        // Stage 5 writes are "all" because the nono sandbox has no partial-write
         // affordance ("some" = read-only). WorktreeFilter.DiscardNonTestEditsAsync
         // enforces test-only edits post-hoc — non-testFile changes are reverted before
         // the red-gate runs, so only test edits survive into stage 6.

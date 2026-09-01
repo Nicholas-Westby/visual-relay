@@ -4,7 +4,7 @@ namespace VisualRelay.Core.Execution;
 
 /// <summary>
 /// Self-provisions the MXC runtime the way the Windows launcher provisions
-/// .NET/uv/swival: a no-op when <c>wxc-exec</c> is already resolvable, otherwise —
+/// .NET and uv: a no-op when <c>wxc-exec</c> is already resolvable, otherwise —
 /// with consent — it downloads the pinned, Microsoft-signed release from
 /// <c>microsoft/mxc</c> and installs the Windows x64 binaries (wxc-exec plus its
 /// sandbox daemon/guest/host-prep helpers) into the per-user cache slot

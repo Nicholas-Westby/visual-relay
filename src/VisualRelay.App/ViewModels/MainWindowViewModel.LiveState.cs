@@ -8,7 +8,7 @@ public partial class MainWindowViewModel
 {
     // internal so a VM test can drive the drain run-start / completion hooks
     // directly (clearing + refreshing the detail-pane error) without launching
-    // a real swival/relay run. The drain command builds it the same way.
+    // a real relay run. The drain command builds it the same way.
     internal DrainLifecycleCallbacks CreateDrainLifecycleCallbacks()
     {
         return new DrainLifecycleCallbacks
