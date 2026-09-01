@@ -124,12 +124,12 @@ public sealed class Installer5ReleaseWorkflowTests
     }
 
     [Fact]
-    public void Workflow_DoesNotPublishTheDeletedProxyTools()
+    public void Workflow_DoesNotPublishTheDeletedGatewayTools()
     {
         var content = ReadWorkflow();
 
-        // The proxy and its config generator are gone; publishing either would
-        // fail the release build on a project that no longer exists.
+        // The local gateway and its config generator are gone; publishing either
+        // would fail the release build on a project that no longer exists.
         Assert.DoesNotContain("VisualRelay.GenBackendConfig", content, StringComparison.Ordinal);
         Assert.DoesNotContain("VisualRelay.Backend", content, StringComparison.Ordinal);
     }
@@ -178,7 +178,7 @@ public sealed class Installer5ReleaseWorkflowTests
     }
 
     [Fact]
-    public void Workflow_DoesNotShipTheDeletedProxyConfig()
+    public void Workflow_DoesNotShipTheDeletedGatewayConfig()
     {
         var content = ReadWorkflow();
 
