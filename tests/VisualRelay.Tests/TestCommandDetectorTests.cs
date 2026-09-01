@@ -2,7 +2,7 @@ using VisualRelay.Core.Init;
 
 namespace VisualRelay.Tests;
 
-public sealed class TestCommandDetectorTests
+public sealed partial class TestCommandDetectorTests
 {
     // ── Detect (backward-compatible convenience) ────────────────────────
 
@@ -195,6 +195,8 @@ public sealed class TestCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "");            // go
         File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "");     // swift
         File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{}");    // node
+        File.WriteAllText(Path.Combine(repo.Root, "pom.xml"), "<project/>"); // maven
+        File.WriteAllText(Path.Combine(repo.Root, "build.gradle"), "");      // gradle
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));         // weak python
 
         var candidates = TestCommandDetector.DetectCandidates(repo.Root);
@@ -207,6 +209,8 @@ public sealed class TestCommandDetectorTests
             "cargo test",
             "go test ./...",
             "swift test",
+            "mvn test",
+            "gradle test",
             "pytest"   // tests/ dir weak signal, last
         ], candidates);
     }

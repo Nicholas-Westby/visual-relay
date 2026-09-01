@@ -15,7 +15,10 @@ namespace VisualRelay.Core.Init;
 //   5. Rust          (Cargo.toml)                 → "cargo test"
 //   6. Go            (go.mod)                     → "go test ./..."
 //   7. Swift         (Package.swift)              → "swift test"
-//   8. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
+//   8. Maven         (pom.xml)                    → "./mvnw test" | "mvn test"
+//   9. Gradle        (build.gradle[.kts] / settings.gradle[.kts])
+//                                                 → "./gradlew test" | "gradle test"
+//  10. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
 //
 // An explicit project script (package.json scripts.test) beats an inferred runner
 // (bun test). This way a Bun-lockfile repo whose tests are vitest via scripts.test
@@ -82,7 +85,27 @@ public static class TestCommandDetector
             candidates.Add("swift test");
         }
 
-        // 8. Python (weak) — tests/ or test/ directory is a last-resort signal
+        // 8. Maven. `pom.xml` is REQUIRED by a Maven build, so it is the single
+        //    unambiguous marker; Gradle files can additionally appear in a
+        //    Maven-primary repo as an auxiliary/included build, so Maven ranks first
+        //    of the two. `test` (not `verify`) is the narrowest lifecycle phase that
+        //    runs the Surefire unit tests — `verify` also runs Failsafe integration
+        //    tests and packaging, which is far slower and routinely needs external
+        //    services, so it is the wrong default for a per-stage test command.
+        if (File.Exists(Path.Combine(rootPath, "pom.xml")))
+        {
+            candidates.Add($"{WrapperOrTool(rootPath, "mvnw", "mvn")} test");
+        }
+
+        // 9. Gradle. `test` rather than `check` or `build`: `check` also runs whichever
+        //    static-analysis plugins the project applies (checkstyle/spotbugs/ktlint),
+        //    which belong in guardCmd, not testCmd, and `build` additionally packages.
+        if (HasAnyGradleManifest(rootPath))
+        {
+            candidates.Add($"{WrapperOrTool(rootPath, "gradlew", "gradle")} test");
+        }
+
+        // 10. Python (weak) — tests/ or test/ directory is a last-resort signal
         if (Directory.Exists(Path.Combine(rootPath, "tests"))
             || Directory.Exists(Path.Combine(rootPath, "test")))
         {
@@ -91,6 +114,22 @@ public static class TestCommandDetector
 
         return candidates;
     }
+
+    // Prefer the checked-in build-tool wrapper over the bare tool: `./mvnw` and
+    // `./gradlew` pin the exact build-tool version the project was authored against
+    // (and are what its own CI runs), while a machine-wide `mvn`/`gradle` may be
+    // absent entirely or a different major version that refuses the build.
+    private static string WrapperOrTool(string rootPath, string wrapper, string tool) =>
+        File.Exists(Path.Combine(rootPath, wrapper)) ? $"./{wrapper}" : tool;
+
+    // Any one of the four root Gradle manifests marks a Gradle build: Groovy or
+    // Kotlin DSL, and settings-only (an umbrella/composite build whose modules
+    // carry the build scripts) as well as build-script-only (a single project).
+    private static bool HasAnyGradleManifest(string rootPath) =>
+        File.Exists(Path.Combine(rootPath, "build.gradle"))
+        || File.Exists(Path.Combine(rootPath, "build.gradle.kts"))
+        || File.Exists(Path.Combine(rootPath, "settings.gradle"))
+        || File.Exists(Path.Combine(rootPath, "settings.gradle.kts"));
 
     private static string? ReadPackageJsonScriptsTest(string rootPath)
     {
