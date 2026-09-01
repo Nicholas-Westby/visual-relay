@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using VisualRelay.Core.Execution;
 using VisualRelay.Core.Llm;
 using VisualRelay.Core.Llm.Routing;
 
@@ -91,9 +90,9 @@ public sealed class RequestGoldenTests
     {
         var missing = new List<string>();
         foreach (var alias in ProviderRoutes.Aliases)
-        foreach (var (stage, _, _, _) in Shapes)
-            if (!File.Exists(RequestGolden.PathFor(alias, stage)))
-                missing.Add($"{alias}/{stage}");
+            foreach (var (stage, _, _, _) in Shapes)
+                if (!File.Exists(RequestGolden.PathFor(alias, stage)))
+                    missing.Add($"{alias}/{stage}");
 
         Assert.True(missing.Count == 0,
             $"routes with no goldened request body (run with {RequestGolden.UpdateEnvVar}=1, "

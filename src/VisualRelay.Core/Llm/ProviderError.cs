@@ -52,7 +52,7 @@ public sealed record ProviderError(
     TimeSpan? RetryAfter = null)
 {
     /// <summary>The header a provider uses to ask for a specific wait.</summary>
-    public const string RetryAfterHeader = "Retry-After";
+    private const string RetryAfterHeader = "Retry-After";
 
     /// <summary>
     /// Reads <c>Retry-After</c> from response headers. Accepts both forms the

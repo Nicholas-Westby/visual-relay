@@ -48,7 +48,7 @@ public sealed class ReportSchemaRoundTripTests
                 CompletionTokens = 400,
                 CachedTokens = 1500,
             },
-            null,
+            Error: null,
             ServedModel: "deepseek-v4-flash");
 
     /// <summary>Every golden report is still readable by the cost estimator.</summary>

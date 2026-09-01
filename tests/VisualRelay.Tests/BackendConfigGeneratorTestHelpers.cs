@@ -57,7 +57,7 @@ internal static class BackendConfigGeneratorTestHelpers
     /// that is the always-available model of last resort.
     /// </summary>
     /// <param name="tier">The tier to check.</param>
-    /// <param name="fallbacks">The resolved fallback chains.</param>
+    /// <param name="fb">The resolved fallback chains.</param>
     /// <returns>True when the chain terminates in the floor model.</returns>
     public static bool ChainTerminatesInFallback(string tier, Dictionary<string, List<string>> fb) =>
         fb.TryGetValue(tier, out var chain)
@@ -114,20 +114,20 @@ internal static class BackendConfigGeneratorTestHelpers
         if (chains != null)
         {
             foreach (var tier in chains.Keys.OrderBy(t => t, StringComparer.Ordinal))
-            foreach (var (model, _) in chains[tier].OrderBy(c => c.Model, StringComparer.Ordinal))
-            {
-                if (model == "fallback") continue; // a tier alias, not a model
-                if (!routable.Contains(model))
-                    problems.Add($"chained but not routable: {model} (tier {tier})");
-            }
+                foreach (var (model, _) in chains[tier].OrderBy(c => c.Model, StringComparer.Ordinal))
+                {
+                    if (model == "fallback") continue; // a tier alias, not a model
+                    if (!routable.Contains(model))
+                        problems.Add($"chained but not routable: {model} (tier {tier})");
+                }
         }
 
         if (selectable != null)
         {
             foreach (var tier in selectable.Keys.OrderBy(t => t, StringComparer.Ordinal))
-            foreach (var model in selectable[tier].OrderBy(m => m, StringComparer.Ordinal))
-                if (!routable.Contains(model))
-                    problems.Add($"selectable but not routable: {model} (tier {tier})");
+                foreach (var model in selectable[tier].OrderBy(m => m, StringComparer.Ordinal))
+                    if (!routable.Contains(model))
+                        problems.Add($"selectable but not routable: {model} (tier {tier})");
         }
 
         return problems;

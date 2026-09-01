@@ -17,7 +17,7 @@ public sealed class AgentTranscriptBuffer(int capacity = AgentTranscriptBuffer.D
     : IAgentEventSink
 {
     /// <summary>Characters kept by default: enough to read, small enough to hold.</summary>
-    internal const int DefaultCapacity = 64 * 1024;
+    private const int DefaultCapacity = 64 * 1024;
 
     private readonly StringBuilder _text = new();
     private readonly Lock _gate = new();

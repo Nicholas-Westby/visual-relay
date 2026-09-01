@@ -16,14 +16,14 @@ namespace VisualRelay.Tests;
 internal static class RequestGolden
 {
     /// <summary>Set to <c>1</c> to rewrite goldens instead of asserting them.</summary>
-    public const string UpdateEnvVar = "VR_UPDATE_GOLDENS";
+    internal const string UpdateEnvVar = "VR_UPDATE_GOLDENS";
 
     /// <summary>Whether this run rewrites goldens rather than checking them.</summary>
-    public static bool Updating =>
+    private static bool Updating =>
         string.Equals(Environment.GetEnvironmentVariable(UpdateEnvVar), "1", StringComparison.Ordinal);
 
     /// <summary>The goldens directory in the source tree, not the output copy.</summary>
-    public static string Root =>
+    private static string Root =>
         Path.Combine(RepoSetup.Root, "tests", "VisualRelay.Tests", "Goldens", "request");
 
     /// <summary>The path a model-and-stage golden lives at.</summary>
@@ -39,8 +39,7 @@ internal static class RequestGolden
     /// <param name="model">The catalog alias.</param>
     /// <param name="stage">The stage name.</param>
     /// <param name="body">The serialized request body.</param>
-    /// <returns>The golden's content after the call.</returns>
-    public static string AssertOrUpdate(string model, string stage, string body)
+    public static void AssertOrUpdate(string model, string stage, string body)
     {
         var path = PathFor(model, stage);
         var pretty = Prettify(body);
@@ -49,7 +48,7 @@ internal static class RequestGolden
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, pretty);
-            return pretty;
+            return;
         }
 
         Assert.True(File.Exists(path),
@@ -57,7 +56,6 @@ internal static class RequestGolden
             + "live run proving the provider accepts this body.");
 
         Assert.Equal(File.ReadAllText(path).ReplaceLineEndings("\n"), pretty.ReplaceLineEndings("\n"));
-        return pretty;
     }
 
     /// <summary>Every golden currently on disk, as model-and-stage pairs.</summary>
@@ -67,11 +65,11 @@ internal static class RequestGolden
         if (!Directory.Exists(Root)) yield break;
 
         foreach (var modelDir in Directory.EnumerateDirectories(Root).OrderBy(d => d, StringComparer.Ordinal))
-        foreach (var file in Directory.EnumerateFiles(modelDir, "*.json").OrderBy(f => f, StringComparer.Ordinal))
-            yield return (
-                Path.GetFileName(modelDir),
-                Path.GetFileNameWithoutExtension(file),
-                File.ReadAllText(file));
+            foreach (var file in Directory.EnumerateFiles(modelDir, "*.json").OrderBy(f => f, StringComparer.Ordinal))
+                yield return (
+                    Path.GetFileName(modelDir),
+                    Path.GetFileNameWithoutExtension(file),
+                    File.ReadAllText(file));
     }
 
     private static string Prettify(string json) =>

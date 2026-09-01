@@ -15,11 +15,10 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class AgentFaultMatrixTests
 {
-    private sealed class RecordingSink : IAgentEventSink
+    /// <summary>These tests assert on outcomes and requests, not on events.</summary>
+    private sealed class SilentSink : IAgentEventSink
     {
-        public List<AgentEvent> Events { get; } = [];
-
-        public void Publish(AgentEvent agentEvent) => Events.Add(agentEvent);
+        public void Publish(AgentEvent agentEvent) { }
     }
 
     private static AgentLoopOptions Options(int retryBudget = 2, TimeSpan? backoff = null) =>
@@ -35,7 +34,7 @@ public sealed class AgentFaultMatrixTests
 
     private static async Task<AgentLoopResult> RunAsync(
         ScriptedModelTransport transport, AgentLoopOptions options,
-        RecordingSink sink, TimeProvider? clock = null)
+        SilentSink sink, TimeProvider? clock = null)
     {
         var provider = clock ?? TimeProvider.System;
         var loop = new AgentTurnLoop(
@@ -53,7 +52,7 @@ public sealed class AgentFaultMatrixTests
     [Fact]
     public async Task ATruncatedFencedAnswer_ComesBackAsTextTheContractRejects()
     {
-        var sink = new RecordingSink();
+        var sink = new SilentSink();
         var transport = new ScriptedModelTransport()
             .AnswersVerbatim("Here is the plan.\n\n```json\n{\"summary\": \"it was go");
 
@@ -73,7 +72,7 @@ public sealed class AgentFaultMatrixTests
     [Fact]
     public async Task AnEmptyResponse_IsNotACompletedTurn()
     {
-        var sink = new RecordingSink();
+        var sink = new SilentSink();
         var transport = new ScriptedModelTransport().AnswersNothing().AnswersNothing().AnswersNothing();
 
         var result = await RunAsync(transport, Options(), sink);
@@ -94,7 +93,7 @@ public sealed class AgentFaultMatrixTests
     [InlineData(3, 4)]
     public async Task ARateLimit_IsRetriedExactlyToTheBudget(int retryBudget, int expectedRequests)
     {
-        var sink = new RecordingSink();
+        var sink = new SilentSink();
         var transport = new ScriptedModelTransport();
         for (var i = 0; i < expectedRequests + 2; i++)
             transport.Fails(429, """{"error":{"message":"slow down","type":"rate_limit_error"}}""");
@@ -128,7 +127,7 @@ public sealed class AgentFaultMatrixTests
     public async Task RetryAfter_IsWaitedOutExactlyOnVirtualTime()
     {
         var clock = new ManualTimeProvider();
-        var sink = new RecordingSink();
+        var sink = new SilentSink();
         var transport = new ScriptedModelTransport()
             .FailsWith(429, """{"error":{"message":"slow down","type":"rate_limit_error"}}""",
                 new Dictionary<string, string> { ["Retry-After"] = "90" })

@@ -56,8 +56,11 @@ public sealed class AgentCancellationTests
         {
             if (emitFirst)
             {
-                yield return Encoding.UTF8.GetBytes(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n");
+                yield return """
+                    data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
+
+
+                    """u8.ToArray();
                 gate.TrySetResult();
             }
             else
@@ -67,7 +70,6 @@ public sealed class AgentCancellationTests
 
             // Never writes again; only cancellation ends this.
             await BlockUntilCancelled(cancellationToken).ConfigureAwait(false);
-            yield break;
         }
     }
 
@@ -84,7 +86,7 @@ public sealed class AgentCancellationTests
         {
             entered.TrySetResult();
             await BlockUntilCancelled(cancellationToken).ConfigureAwait(false);
-            return new ToolResult(string.Empty, false);
+            return new ToolResult(string.Empty);
         }
     }
 
