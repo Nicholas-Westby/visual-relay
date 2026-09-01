@@ -27,7 +27,12 @@ public static partial class RelayConfigLoader
             BaselineVerify: true,
             ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 2_700_000,
-            TestTimeoutMilliseconds: 300_000,
+            // 600s. Five minutes killed a healthy six-minute suite, which is
+            // the case the tool-timeout work was written for: a repo whose
+            // tests legitimately take that long saw them reaped and reported
+            // red. Still far below the stage cap, and a repo that needs more
+            // sets its own.
+            TestTimeoutMilliseconds: 600_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>
             {
                 ["cheap"] = 90_000,

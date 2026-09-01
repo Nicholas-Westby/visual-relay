@@ -8,6 +8,35 @@ namespace VisualRelay.Core.Execution;
 // stays in ProcessRunners.Helpers.cs.
 public static partial class SandboxedStage
 {
+    /// <summary>
+    /// How many manifest entries reach the prompt.
+    /// <para>
+    /// A very large repository can produce a manifest of thousands of paths.
+    /// Pasting all of them spends the context window on a file listing before
+    /// the model has read a line of code, and on the smallest window in the
+    /// catalog that is most of the budget. The count is always stated, so the
+    /// model knows the list was cut rather than that the repo is small.
+    /// </para>
+    /// </summary>
+    internal const int MaxManifestEntriesInPrompt = 100;
+
+    /// <summary>
+    /// The manifest as the prompt carries it, capped and counted.
+    /// </summary>
+    /// <param name="manifest">Every path the manifest names.</param>
+    /// <returns>The prompt section text.</returns>
+    private static string ManifestText(IReadOnlyList<string> manifest)
+    {
+        if (manifest.Count == 0) return "(not set yet)";
+        if (manifest.Count <= MaxManifestEntriesInPrompt) return string.Join('\n', manifest);
+
+        var shown = string.Join('\n', manifest.Take(MaxManifestEntriesInPrompt));
+        var hidden = manifest.Count - MaxManifestEntriesInPrompt;
+        return shown
+            + $"\n… and {hidden} more (manifest has {manifest.Count} entries; "
+            + "read what you need with the file tools rather than assuming this list is complete)";
+    }
+
     internal static string BuildPrompt(StageInvocation invocation)
     {
         var parts = new List<string>
@@ -20,7 +49,7 @@ public static partial class SandboxedStage
             invocation.TaskInput,
             string.Empty,
             "## Manifest",
-            invocation.Manifest.Count > 0 ? string.Join('\n', invocation.Manifest) : "(not set yet)"
+            ManifestText(invocation.Manifest)
         };
         if (!string.IsNullOrWhiteSpace(invocation.TasksDir))
         {

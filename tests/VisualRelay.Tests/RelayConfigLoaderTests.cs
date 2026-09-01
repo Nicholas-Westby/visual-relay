@@ -104,7 +104,7 @@ public sealed partial class RelayConfigLoaderTests
     }
 
     [Fact]
-    public async Task LoadAsync_TestTimeoutMs_DefaultsTo300000()
+    public async Task LoadAsync_TestTimeoutMs_DefaultsTo600000()
     {
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
@@ -114,8 +114,10 @@ public sealed partial class RelayConfigLoaderTests
 
         var config = await RelayConfigLoader.LoadAsync(repo.Root);
 
-        // When the JSON omits testTimeoutMs, the default 5-minute cap is used.
-        Assert.Equal(300_000, config.TestTimeoutMilliseconds);
+        // When the JSON omits testTimeoutMs, the default 10-minute cap is used.
+        // It was five minutes, which reaped a healthy six-minute suite and
+        // reported it red — the case the tool-timeout work was written for.
+        Assert.Equal(600_000, config.TestTimeoutMilliseconds);
     }
 
     [Fact]
