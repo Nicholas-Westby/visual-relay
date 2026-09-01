@@ -4,12 +4,12 @@ namespace VisualRelay.Core.Execution;
 
 /// <summary>
 /// Generates the Visual-Relay-authored Microsoft Execution Containers (MXC) policy
-/// that wraps swival on Windows — the analogue of the nono <c>vr-guard</c> profile.
+/// that confines a stage on Windows — the analogue of the nono <c>vr-guard</c> profile.
 /// VR hand-authors this policy (never the SDK's auto-generated one, which can be
 /// over-permissive): writes are confined to the workspace plus the same
 /// per-ecosystem toolchain caches vr-guard grants, reads are broad (the agent must
-/// read the system), and outbound network stays open (swival must reach the LiteLLM
-/// proxy and providers; Windows MXC would not filter it anyway). The pinned MXC
+/// read the system), and outbound network stays open (the agent must reach the model
+/// providers; Windows MXC would not filter it anyway). The pinned MXC
 /// version is a single constant so flipping to a newer release is one edit.
 /// </summary>
 public static class MxcPolicyGenerator
@@ -23,8 +23,8 @@ public static class MxcPolicyGenerator
     /// <c>filesystem.readwritePaths</c> = workspace root followed by
     /// <paramref name="cacheDirs"/>; reads stay broad by MXC default (no
     /// <c>readonlyPaths</c> needed); and <c>network.defaultPolicy = "allow"</c> opts
-    /// back into outbound-open (MXC is deny-by-default since SDK 0.3.0), so swival can
-    /// reach the LiteLLM proxy. The command is supplied at launch via the <c>--</c>
+    /// back into outbound-open (MXC is deny-by-default since SDK 0.3.0), so the agent
+    /// can reach the model providers. The command is supplied at launch via the <c>--</c>
     /// separator, so no <c>process</c> block is emitted. Denials default to the full
     /// canonical set; the Windows launch path passes an existence-filtered set (see the
     /// overload).
@@ -109,7 +109,6 @@ public static class MxcPolicyGenerator
             Path.Combine(home, ".nuget", "packages"),
             Path.Combine(home, ".dotnet"),
             Path.Combine(home, ".cargo"),
-            Path.Combine(home, ".config", "swival"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Unity"),
             Path.GetTempPath(),
         };

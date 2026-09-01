@@ -106,7 +106,7 @@ static MainWindowViewModel BuildViewModel(string root, string demoTaskMarkdown)
     viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding", costUsd: 0.0018, seconds: 64, stages: 12));
     viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware", costUsd: 0.0121, seconds: 284, stages: 12));
     viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test", costUsd: 0.0032, seconds: 95, stages: 12));
-    viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "swival exit 2", costUsd: 0.0009, seconds: 31, stages: 2));
+    viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "the stage stalled", costUsd: 0.0009, seconds: 31, stages: 2));
     // Give one demo card a DayHeader so the screenshot exercises the day-header
     // row (archive view shows grouped day headers like "Today ($1.04)").
     viewModel.Tasks[1].DayHeader = "Today ($1.04)";
