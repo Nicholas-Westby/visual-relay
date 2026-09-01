@@ -551,3 +551,41 @@ One portability defect found alongside: the differential's corpus check was a
 hard assertion against a gitignored directory, so the suite went red on any clean
 checkout. Absent now skips; present-but-thin still fails, which is the case it
 was actually written to catch.
+
+## Step 38's secondary metrics, reported
+
+Step 38 names secondary metrics to report against the Phase 0 corpus baselines.
+The earlier write-up gave three of them and skipped five. Here are the rest,
+computed from the same twelve benchmark runs.
+
+| Metric | Phase 0 corpus (1109 reports) | swival, 6 runs | firstparty, 6 runs |
+| --- | --- | --- | --- |
+| Tool calls per stage | 31.56 mean | 6.51 | 4.65 |
+| Failed tool calls per stage | 0.95 mean | 0.58 | 0.11 |
+| Failed share of all tool calls | 3.0% | 9.0% | 2.4% |
+| Resilience interventions | 0.37 compactions/stage | 1 | 0 |
+| Contract retries | 2.33% of attempts | 0 | 0 |
+| Stage-7 Review verdicts | — | all completed | all completed |
+| Manifest violations | — | 0 | 0 |
+
+The benchmark tasks are far smaller than a corpus task, which is why both arms
+sit well under the corpus means for tool calls. Within the comparison the
+interesting number is the failure share: the first-party arm failed 2.4% of its
+tool calls against the subprocess arm's 9.0%, on the same three tasks. The
+plausible reason is the guard — every command now runs through the same hardened
+prefix with no opt-out, so a call that would have been rejected downstream is
+shaped correctly before it is made — but six runs cannot establish that, and this
+is reported as an observation rather than a cause.
+
+Zero counts over six runs bound a rate loosely, not tightly: no resilience
+intervention, contract retry or manifest violation fired on the new arm, which is
+consistent with the corpus rates (0.37 compactions and 2.33% retries per stage
+would predict roughly two and one across 63 stages) but does not distinguish
+"rarer" from "unlucky".
+
+**One metric is not reportable from the surviving artifacts.** Retry rate per
+arm needed the per-attempt report files, and the benchmark repositories were
+deleted after the runs to keep the VM's disk free — which the session's own
+instructions asked for. The logs carry attempt markers only on the subprocess
+arm, so the two are not comparable. Measuring it properly needs a fresh paid run
+with the reports retained.
