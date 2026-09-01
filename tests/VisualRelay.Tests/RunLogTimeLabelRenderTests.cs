@@ -80,14 +80,16 @@ public sealed class RunLogTimeLabelRenderTests
         host.Show();
         Dispatcher.UIThread.RunJobs();
 
-        return runLogView.GetVisualDescendants()
-            .OfType<TextBlock>()
-            .Where(tb => tb.IsVisible)
-            .Select(tb => tb.Text)
-            .Concat(runLogView.GetVisualDescendants()
+        return
+        [
+            .. runLogView.GetVisualDescendants()
+                .OfType<TextBlock>()
+                .Where(tb => tb.IsVisible)
+                .Select(tb => tb.Text),
+            .. runLogView.GetVisualDescendants()
                 .OfType<SelectableTextBlock>()
                 .Where(stb => stb.IsVisible)
-                .Select(stb => stb.Text))
-            .ToList();
+                .Select(stb => stb.Text),
+        ];
     }
 }
