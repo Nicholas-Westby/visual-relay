@@ -50,7 +50,7 @@ public sealed class BackendConfigGeneratorSelectableTests
         var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present, overrides);
 
         // cheap should fall through to the HF floor ("fallback"), not kimi-k2.
-        Assert.Equal("fallback", aliases["cheap"]);
+        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["cheap"]);
         Assert.DoesNotContain("kimi-k2", aliases.Values);
     }
 
@@ -69,9 +69,8 @@ public sealed class BackendConfigGeneratorSelectableTests
         foreach (var (tier, models) in sm)
             Assert.True(models.Count <= 6, $"Tier '{tier}' has {models.Count} selectable models (max 6)");
 
-        // All model names must come from the real model_list.
-        var realSet = BackendConfigGeneratorTestHelpers.ParseModelNames(
-            File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath));
+        // All model names must be models the catalog can actually route to.
+        var realSet = BackendConfigGeneratorTestHelpers.RoutableModels();
 
         foreach (var (tier, models) in sm)
             foreach (var model in models)

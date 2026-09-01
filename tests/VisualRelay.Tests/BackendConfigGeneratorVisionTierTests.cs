@@ -15,30 +15,28 @@ public sealed class BackendConfigGeneratorVisionTierTests
 
     // ── 1. Template model strings ────────────────────────────────────────
 
+    /// <summary>
+    /// The 235B vision route is auto-routed: no provider is pinned, so Hugging
+    /// Face picks the serving host. That is why its price and window are
+    /// recorded at the worst case.
+    /// </summary>
     [Fact]
-    public void VisionTemplate_Vl235bModelString_IsAutoRouted()
+    public void VisionRoute_Vl235bModelString_IsAutoRouted()
     {
-        var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
+        var upstream = BackendConfigGeneratorTestHelpers.UpstreamModel("hf-qwen3-vl-235b");
 
-        // The 235B entry must use the auto-routed path (no pinned provider
-        // like /novita/ or /deepinfra/ in the segment).
-        Assert.Contains(
-            "model: huggingface/Qwen/Qwen3-VL-235B-A22B-Instruct",
-            yaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("huggingface/novita/Qwen/Qwen3-VL-235B", yaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("huggingface/deepinfra/Qwen/Qwen3-VL-235B", yaml, StringComparison.Ordinal);
+        Assert.Equal("Qwen/Qwen3-VL-235B-A22B-Instruct", upstream);
+        Assert.DoesNotContain(":", upstream!, StringComparison.Ordinal);
     }
 
+    /// <summary>The 30B vision route is auto-routed for the same reason.</summary>
     [Fact]
-    public void VisionTemplate_Vl30bModelString_IsAutoRouted()
+    public void VisionRoute_Vl30bModelString_IsAutoRouted()
     {
-        var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
+        var upstream = BackendConfigGeneratorTestHelpers.UpstreamModel("hf-qwen3-vl-30b");
 
-        Assert.Contains(
-            "model: huggingface/Qwen/Qwen3-VL-30B-A3B-Instruct",
-            yaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("huggingface/novita/Qwen/Qwen3-VL-30B", yaml, StringComparison.Ordinal);
-        Assert.DoesNotContain("huggingface/deepinfra/Qwen/Qwen3-VL-30B", yaml, StringComparison.Ordinal);
+        Assert.Equal("Qwen/Qwen3-VL-30B-A3B-Instruct", upstream);
+        Assert.DoesNotContain(":", upstream!, StringComparison.Ordinal);
     }
 
     // ── 3. Chain exact membership ────────────────────────────────────────
@@ -129,11 +127,11 @@ public sealed class BackendConfigGeneratorVisionTierTests
         // No HF_TOKEN → both VL models unavailable → vision tier skipped
         // entirely, so a vision request produces a "model not found" error
         // instead of a silent text-model answer.
-        // An empty key set now throws (zero-key guard in BackendConfigGenerator)
-        // because callers must fall back to the static template instead.
+        // With no key at all, no tier resolves to anything. The stage then
+        // fails naming the key that would fix it, rather than the proxy's old
+        // behaviour of falling back to a static config it could not authenticate.
         var noKeys = new HashSet<string>();
-        Assert.Throws<InvalidOperationException>(
-            () => BackendConfigGeneratorTestHelpers.GeneratedAliases(noKeys));
+        Assert.Empty(BackendConfigGeneratorTestHelpers.GeneratedAliases(noKeys));
 
         var dsOnly = new HashSet<string> { "DEEPSEEK_API_KEY" };
         var dsAliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(dsOnly);

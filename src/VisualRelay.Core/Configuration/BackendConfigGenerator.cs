@@ -9,7 +9,8 @@ namespace VisualRelay.Core.Configuration;
 public static partial class BackendConfigGenerator
 {
     /// <summary>Fallback-floor model the <c>fallback</c> tier alias resolves to.</summary>
-    private const string FallbackFloorModel = "hf-qwen3-coder-next";
+    /// <summary>The always-available model every chain terminates in.</summary>
+    public const string FallbackFloorModel = "hf-qwen3-coder-next";
 
     /// <summary>Tier alias name for the always-available HF floor.</summary>
     private const string FallbackTier = "fallback";
@@ -108,8 +109,18 @@ public static partial class BackendConfigGenerator
 
         foreach (var tier in Chains.Keys)
         {
-            if (!aliases.TryGetValue(tier, out var model))
-                continue;
+            // A tier with no backing key does not RESOLVE, but it is still
+            // shown: the panel's job is to tell the user which key would make
+            // it work, and hiding it says nothing. The first candidate is what
+            // the tier would use, and KeyPresent is false.
+            //
+            // Vision is the exception, and the same named rule governs it here
+            // as in routing: an unbacked vision tier is omitted entirely rather
+            // than offered, so nothing suggests an image request would work.
+            var resolved = aliases.TryGetValue(tier, out var alias);
+            if (!resolved && OmittedWhenUnbacked(tier)) continue;
+
+            var model = resolved ? alias! : Chains[tier][0].Model;
 
             var requiredKey = model == "fallback" ? "HF_TOKEN" : GetRequiredKey(model);
             var chainText = fallbacks.TryGetValue(tier, out var fb) && fb.Count > 0
@@ -120,7 +131,7 @@ public static partial class BackendConfigGenerator
                 Tier: tier,
                 Model: model,
                 ProviderName: ProviderNames[requiredKey],
-                KeyPresent: presentKeys.Contains(requiredKey),
+                KeyPresent: resolved && presentKeys.Contains(requiredKey),
                 FallbackChainText: chainText)
             {
                 SelectableModels = SelectableModelsByTier.TryGetValue(tier, out var slm) ? slm : [],
@@ -132,80 +143,38 @@ public static partial class BackendConfigGenerator
     }
 
     /// <summary>
-    /// Generates a LiteLLM config YAML from <paramref name="templatePath"/>,
-    /// rewriting aliases and fallbacks so every tier points at the best model
-    /// whose required key is in <paramref name="presentKeys"/>.
+    /// A one-line, human-readable account of how each tier resolves for a given
+    /// set of present keys, and which keys those are.
     /// </summary>
-    /// <param name="presentKeys">Set of environment variable names that are set.</param>
-    /// <param name="templatePath">Path to the static <c>litellm-config.yaml</c> template.</param>
-    /// <param name="overrides">Optional per-tier model overrides applied when the chosen model's key is present.</param>
-    /// <returns>
-    /// A tuple of the generated YAML text and a one-line human-readable summary
-    /// of tier→model resolutions and detected keys.
-    /// </returns>
-    public static (string Yaml, string Summary) Generate(
-        ISet<string> presentKeys,
-        string templatePath,
-        IReadOnlyDictionary<string, string>? overrides = null)
+    /// <param name="presentKeys">Which provider keys are set.</param>
+    /// <param name="overrides">Per-tier model overrides from config.</param>
+    /// <returns>The summary line.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// When no provider key is present. There is nothing to summarize, and a
+    /// caller that has not checked would otherwise render a tier table of
+    /// models it cannot reach.
+    /// </exception>
+    /// <remarks>
+    /// This replaces a function that rendered a whole LiteLLM YAML document and
+    /// returned this line alongside it. The proxy is gone; the line is what
+    /// anything actually wanted.
+    /// </remarks>
+    public static string Summarize(
+        ISet<string> presentKeys, IReadOnlyDictionary<string, string>? overrides = null)
     {
         if (presentKeys.Count == 0)
             throw new InvalidOperationException(
-                "BackendConfigGenerator.Generate called with zero provider keys. " +
-                "Callers must detect this condition and fall back to the static template.");
+                "BackendConfigGenerator.Summarize called with zero provider keys. "
+                + "Callers must detect this condition and say so instead.");
 
-        var lines = File.ReadAllLines(templatePath);
+        var (aliases, _) = ResolveTiers(presentKeys, overrides);
 
-        // Locate the boundary markers in the template.
-        var aliasStart = -1;
-        var litellmStart = -1;
-        for (var i = 0; i < lines.Length; i++)
-        {
-            if (lines[i] == "  model_group_alias:") aliasStart = i;
-            if (lines[i] == "litellm_settings:") litellmStart = i;
-        }
+        var resolutions = aliases
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => $"{pair.Key}\u2192{pair.Value}");
+        var keys = presentKeys.OrderBy(key => key, StringComparer.Ordinal);
 
-        if (aliasStart < 0 || litellmStart < 0)
-            throw new InvalidOperationException(
-                "Template is missing required sections (model_group_alias / litellm_settings).");
-
-        var (aliases, fallbacks) = ResolveTiers(presentKeys, overrides);
-
-        // Reassemble the YAML: verbatim prefix + generated aliases/fallbacks + verbatim suffix.
-        var result = new List<string>(lines.Length);
-
-        // Everything before model_group_alias (model_list, stream_timeout).
-        for (var i = 0; i < aliasStart; i++)
-            result.Add(lines[i]);
-
-        // Generated model_group_alias block.
-        result.Add("  model_group_alias:");
-        foreach (var (tier, model) in aliases.OrderBy(a => a.Key, StringComparer.Ordinal))
-            result.Add($"    {tier}: {model}");
-        result.Add("");
-
-        // Generated fallbacks block.
-        result.Add("  fallbacks:");
-        foreach (var (tier, chain) in fallbacks.OrderBy(f => f.Key, StringComparer.Ordinal))
-            result.Add($"    - {tier}: [{string.Join(", ", chain)}]");
-        result.Add("");
-
-        // Everything from litellm_settings onward.
-        for (var i = litellmStart; i < lines.Length; i++)
-            result.Add(lines[i]);
-
-        var yaml = string.Join("\n", result) + "\n";
-
-        // One-line summary for stderr / logs.
-        var tierResolutions = new List<string>();
-        foreach (var (tier, model) in aliases.OrderBy(a => a.Key, StringComparer.Ordinal))
-            tierResolutions.Add($"{tier}→{model}");
-
-        var keysDetected = presentKeys.OrderBy(k => k, StringComparer.Ordinal).ToList();
-        var summary = keysDetected.Count > 0
-            ? $"backend: config generated — {string.Join(", ", tierResolutions)}; keys: {string.Join(", ", keysDetected)}"
-            : $"backend: config generated — {string.Join(", ", tierResolutions)}; keys: (none)";
-
-        return (yaml, summary);
+        return $"models resolved \u2014 {string.Join(", ", resolutions)}; keys: {string.Join(", ", keys)}";
     }
 
     /// <summary>
@@ -233,18 +202,15 @@ public static partial class BackendConfigGenerator
                 .Select(c => c.Model)
                 .ToList();
 
-            // Degenerate: no key at all. An unbacked vision tier is skipped
-            // entirely so a request produces "model not found" instead of
-            // a silent fallback to a text model. Other tiers still produce
-            // a valid alias so the proxy boots (the model defs exist, just
-            // no api_key value).
-            if (chain.Count == 0)
-            {
-                if (OmittedWhenUnbacked(tier)) continue;
-                aliases[tier] = tier == FallbackTier ? FallbackFloorModel : FallbackTier;
-                fallbacks[tier] = [FallbackTier];
-                continue;
-            }
+            // No key backs any model in this tier, so the tier is omitted.
+            //
+            // Every tier except vision used to resolve anyway, to a model whose
+            // key was absent, for one stated reason: so the proxy would boot with
+            // the model definitions present and no api_key value. The proxy is
+            // gone and the claim was never true of the request — a stage routed
+            // there failed at the provider. Omitting it means the caller learns
+            // which key is missing instead.
+            if (chain.Count == 0) continue;
 
             // When the first surviving model for a non-fallback tier is the
             // HF floor model itself, point the alias at the "fallback" tier

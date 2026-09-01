@@ -98,21 +98,18 @@ public sealed class BackendConfigGeneratorDeepSeekCheapTierTests
     }
 
     /// <summary>
-    /// The proxy dispatches on the first-party DeepSeek route, at the same 75s
-    /// ceiling as its sibling. That ceiling is what trips the fallback chain
-    /// before the relay's cheap-tier first-output watchdog kills swival on the
-    /// provider that is already hanging.
+    /// The vision-exp route dispatches to DeepSeek on the same budgets as its
+    /// sibling. Those budgets are what trip the fallback chain before the stage
+    /// watchdog fires on a provider that is already hanging.
     /// </summary>
     [Fact]
-    public void FlashVisionExp_RoutesToDeepSeekAtTheSharedFlashTimeout()
+    public void FlashVisionExp_RoutesToDeepSeekOnTheSharedFlashBudgets()
     {
-        var yaml = File.ReadAllText(BackendConfigGeneratorTestHelpers.TemplatePath);
-
         Assert.Equal(
-            "deepseek/deepseek-v4-flash-vision-exp",
-            BackendConfigGeneratorTestHelpers.ParseUpstreamModel(yaml, "deepseek-v4-flash-vision-exp"));
+            "deepseek-v4-flash-vision-exp",
+            BackendConfigGeneratorTestHelpers.UpstreamModel("deepseek-v4-flash-vision-exp"));
 
-        var timeouts = BackendConfigGeneratorTestHelpers.ParseModelTimeouts(yaml);
+        var timeouts = BackendConfigGeneratorTestHelpers.ModelTimeouts();
         Assert.Equal(timeouts["deepseek-v4-flash"], timeouts["deepseek-v4-flash-vision-exp"]);
     }
 }

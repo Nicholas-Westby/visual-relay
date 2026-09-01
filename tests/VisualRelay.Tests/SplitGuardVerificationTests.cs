@@ -209,7 +209,12 @@ public sealed partial class SplitGuardVerificationTests
         // 2026-09-01: 175 -> 140. The Swival subprocess runner was deleted, and
         // its three tracked test families (Watchdog, Tests, CommandFilter) went
         // with it. Their prefixes are gone from the list below.
-        const int baseline = 140;
+        //
+        // 2026-09-01: 140 -> 138. The proxy's YAML template went too, and the
+        // BackendConfigGenerator families that asserted against its shape were
+        // rewritten against the C# catalog, which needs fewer facts to say the
+        // same thing.
+        const int baseline = 138;
 
         string[] prefixes =
         [

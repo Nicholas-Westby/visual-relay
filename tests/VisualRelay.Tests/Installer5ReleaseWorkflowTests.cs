@@ -178,12 +178,14 @@ public sealed class Installer5ReleaseWorkflowTests
     }
 
     [Fact]
-    public void Workflow_CopiesBackendTools()
+    public void Workflow_DoesNotShipTheDeletedProxyConfig()
     {
         var content = ReadWorkflow();
 
-        // Must copy tools/backend/ into the publish layout.
-        Assert.Contains("tools/backend", content, StringComparison.Ordinal);
+        // tools/backend held the LiteLLM template. The catalog lives in C# now,
+        // so copying that directory would ship a path that does not exist.
+        Assert.DoesNotContain("tools/backend", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("litellm-config", content, StringComparison.Ordinal);
     }
 
     [Fact]

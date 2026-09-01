@@ -44,7 +44,7 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Human-readable summary of tier→model resolutions given present keys,
-    /// produced by <see cref="BackendConfigGenerator.Generate"/>.
+    /// produced by <see cref="BackendConfigGenerator.Summarize"/>.
     /// Retained for logging/diagnostics; the Live Tiers UI binds to
     /// <see cref="LitTierRows"/> instead.
     /// </summary>
@@ -156,19 +156,9 @@ public partial class MainWindowViewModel
                     overrides = configResult.Config.TierModelOverrides;
             }
 
-            // Resolve the template the same way the tests do: walk up from the
-            // app base directory until we find the repo root, then into tools/backend.
-            var templatePath = LocateTemplate();
-            if (templatePath is not null && File.Exists(templatePath))
-            {
-                LitTiersSummary = presentKeys.Count == 0
-                    ? "backend: zero keys — using static config"
-                    : BackendConfigGenerator.Generate(presentKeys, templatePath, overrides).Summary;
-            }
-            else
-            {
-                LitTiersSummary = "(template not found)";
-            }
+            LitTiersSummary = presentKeys.Count == 0
+                ? "no provider key set — no tier can run"
+                : BackendConfigGenerator.Summarize(presentKeys, overrides);
 
             _suppressLitTierPersist = true;
             LitTierRows.Clear();
@@ -235,17 +225,6 @@ public partial class MainWindowViewModel
         if (overrides.Count > 0)
             RelayConfigWriter.UpsertTierModelOverrides(RootPath, overrides);
         return Task.CompletedTask;
-    }
-
-    private static string? LocateTemplate()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "visual-relay")))
-            dir = dir.Parent;
-
-        return dir is not null
-            ? Path.Combine(dir.FullName, "tools", "backend", "litellm-config.yaml")
-            : null;
     }
 
     private static string MaskValue(string value)

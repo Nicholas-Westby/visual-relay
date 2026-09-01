@@ -1,294 +1,135 @@
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Llm.Routing;
 
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Shared helpers extracted from the former BackendConfigGeneratorTests partial
-/// class so companion files can be promoted to independent parallel test classes.
+/// Shared helpers for the catalog guards.
+/// <para>
+/// These used to generate a LiteLLM YAML document and parse the answers back out
+/// of it, because the proxy's config was the source of truth for tier
+/// resolution, fallbacks and per-model timeouts. It no longer is: the catalog
+/// lives in <see cref="BackendConfigGenerator"/> and
+/// <see cref="ProviderRoutes"/>, and the YAML is gone. The method names and
+/// shapes are kept so the guards that call them read unchanged — only where the
+/// answers come from moved.
+/// </para>
 /// </summary>
 internal static class BackendConfigGeneratorTestHelpers
 {
-    public static string TemplatePath =>
-        Path.Combine(RepoSetup.Root, "tools", "backend", "litellm-config.yaml");
+    /// <summary>Tier to its resolved primary model, for a set of present keys.</summary>
+    /// <param name="keys">Which provider keys are set.</param>
+    /// <returns>Tier to primary model.</returns>
+    public static Dictionary<string, string> GeneratedAliases(ISet<string> keys) =>
+        GeneratedAliases(keys, null);
 
-    public static Dictionary<string, string> GeneratedAliases(ISet<string> keys)
-    {
-        var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath);
-        return ParseAliases(yaml);
-    }
-
-    public static Dictionary<string, List<string>> GeneratedFallbacks(ISet<string> keys)
-    {
-        var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath);
-        return ParseFallbacks(yaml);
-    }
-
-    public static (string Yaml, string Summary) Generate(ISet<string> keys) =>
-        BackendConfigGenerator.Generate(keys, TemplatePath);
-
+    /// <summary>Tier to its resolved primary model, honouring config overrides.</summary>
+    /// <param name="keys">Which provider keys are set.</param>
+    /// <param name="overrides">Per-tier model overrides from config.</param>
+    /// <returns>Tier to primary model.</returns>
     public static Dictionary<string, string> GeneratedAliases(
-        ISet<string> keys,
-        IReadOnlyDictionary<string, string>? overrides)
-    {
-        var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath, overrides);
-        return ParseAliases(yaml);
-    }
+        ISet<string> keys, IReadOnlyDictionary<string, string>? overrides) =>
+        BackendConfigGenerator.ResolveChains(keys, overrides)
+            .Where(pair => pair.Value.Count > 0)
+            .ToDictionary(pair => pair.Key, pair => pair.Value[0], StringComparer.Ordinal);
 
+    /// <summary>Tier to the models it falls through to after its primary.</summary>
+    /// <param name="keys">Which provider keys are set.</param>
+    /// <returns>Tier to its fallback chain.</returns>
+    public static Dictionary<string, List<string>> GeneratedFallbacks(ISet<string> keys) =>
+        GeneratedFallbacks(keys, null);
+
+    /// <summary>Tier to the models it falls through to, honouring overrides.</summary>
+    /// <param name="keys">Which provider keys are set.</param>
+    /// <param name="overrides">Per-tier model overrides from config.</param>
+    /// <returns>Tier to its fallback chain.</returns>
     public static Dictionary<string, List<string>> GeneratedFallbacks(
-        ISet<string> keys,
-        IReadOnlyDictionary<string, string>? overrides)
-    {
-        var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath, overrides);
-        return ParseFallbacks(yaml);
-    }
-
-    /// Extracts tier→model from the model_group_alias: block.
-    public static Dictionary<string, string> ParseAliases(string yaml)
-    {
-        var result = new Dictionary<string, string>();
-        var inBlock = false;
-        foreach (var raw in yaml.Split('\n'))
-        {
-            var line = raw.TrimEnd('\r');
-            if (line == "  model_group_alias:") { inBlock = true; continue; }
-            if (!inBlock) continue;
-            if (line.Length > 0 && !line.StartsWith("    ")) break;
-            var t = line.TrimStart();
-            if (t.Length == 0) continue;
-            var colon = t.IndexOf(':');
-            if (colon < 0) continue;
-            var key = t[..colon].Trim();
-            var value = t[(colon + 1)..].Trim();
-            if (key.Length > 0 && value.Length > 0) result[key] = value;
-        }
-        return result;
-    }
-
-    /// Extracts tier→[models] from the fallbacks: block.
-    public static Dictionary<string, List<string>> ParseFallbacks(string yaml)
-    {
-        var result = new Dictionary<string, List<string>>();
-        var inBlock = false;
-        foreach (var raw in yaml.Split('\n'))
-        {
-            var line = raw.TrimEnd('\r');
-            if (line == "  fallbacks:") { inBlock = true; continue; }
-            if (!inBlock) continue;
-            if (line.Length > 0 && !line.StartsWith("    ") && !line.StartsWith("  ")) break;
-            var t = line.TrimStart();
-            if (t.Length == 0 || !t.StartsWith("- ")) continue;
-            var inner = t[2..];
-            var colon = inner.IndexOf(':');
-            if (colon < 0) continue;
-            var key = inner[..colon].Trim();
-            var rest = inner[(colon + 1)..].Trim();
-            if (rest.StartsWith('[') && rest.EndsWith(']'))
-            {
-                result[key] = rest[1..^1].Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
-            }
-        }
-        return result;
-    }
-
-    public static bool ChainTerminatesInFallback(string tier, Dictionary<string, List<string>> fb)
-        => fb.TryGetValue(tier, out var c) && c.Count > 0 && c[^1] == "fallback";
+        ISet<string> keys, IReadOnlyDictionary<string, string>? overrides) =>
+        BackendConfigGenerator.ResolveChains(keys, overrides)
+            .Where(pair => pair.Value.Count > 1)
+            .ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.Skip(1).ToList(),
+                StringComparer.Ordinal);
 
     /// <summary>
-    /// Extracts the upstream <c>model:</c> value for a given
-    /// <c>model_name:</c> from the <c>model_list:</c> section of a
-    /// litellm-config YAML string.
+    /// Whether a tier's chain ends at the fallback floor. Every chain must:
+    /// that is the always-available model of last resort.
     /// </summary>
-    public static string? ParseUpstreamModel(string yaml, string modelName)
-    {
-        var lines = yaml.Split('\n');
-        string? currentModel = null;
-        var inModelList = false;
+    /// <param name="tier">The tier to check.</param>
+    /// <param name="fallbacks">The resolved fallback chains.</param>
+    /// <returns>True when the chain terminates in the floor model.</returns>
+    public static bool ChainTerminatesInFallback(string tier, Dictionary<string, List<string>> fb) =>
+        fb.TryGetValue(tier, out var chain)
+        && chain.Count > 0
+        && string.Equals(chain[^1], BackendConfigGenerator.FallbackFloorModel, StringComparison.Ordinal);
 
-        foreach (var raw in lines)
-        {
-            var line = raw.TrimEnd('\r');
+    /// <summary>The concrete id a provider is sent for a catalog alias.</summary>
+    /// <param name="modelName">The catalog alias.</param>
+    /// <returns>The upstream model id, or <c>null</c> when nothing routes it.</returns>
+    public static string? UpstreamModel(string modelName) =>
+        ProviderRoutes.For(modelName)?.UpstreamModel;
 
-            if (line == "model_list:") { inModelList = true; continue; }
-            if (!inModelList) continue;
+    /// <summary>Catalog alias to its total request budget in seconds.</summary>
+    /// <returns>One entry per routed model.</returns>
+    public static Dictionary<string, int> ModelTimeouts() =>
+        ProviderRoutes.Aliases.ToDictionary(
+            alias => alias,
+            alias => (int)ProviderRoutes.For(alias)!.Timeouts.Total.TotalSeconds,
+            StringComparer.Ordinal);
 
-            // Exit on a top-level key after model_list.
-            if (line.Length > 0 && !line.StartsWith(' ') && !line.StartsWith('#'))
-                break;
-
-            // Each model entry starts with "  - model_name: <name>".
-            if (line.StartsWith("  - model_name: "))
-            {
-                currentModel = line["  - model_name: ".Length..].Trim();
-                continue;
-            }
-
-            // model: lives inside litellm_params (6-space indent).
-            if (currentModel == modelName)
-            {
-                var trimmed = line.TrimStart();
-                if (trimmed.StartsWith("model: "))
-                {
-                    return trimmed["model: ".Length..].Trim();
-                }
-            }
-        }
-
-        return null;
-    }
+    /// <summary>Every model the catalog can route to.</summary>
+    /// <returns>The routable model names.</returns>
+    public static HashSet<string> RoutableModels() =>
+        ProviderRoutes.Aliases.ToHashSet(StringComparer.Ordinal);
 
     /// <summary>
-    /// Extracts model_name → timeout (seconds) from the <c>model_list:</c>
-    /// section. Models without a <c>timeout:</c> key are absent from the
-    /// result. Stops scanning at the first top-level key after model_list
-    /// (e.g. <c>router_settings:</c>).
+    /// Compares the routable catalog against pricing, chain and selectable
+    /// copies, returning ordered problem strings. One code path serves both the
+    /// guard and its negative control, so a control that passes proves the guard
+    /// can fail.
     /// </summary>
-    public static Dictionary<string, int> ParseModelTimeouts(string yaml)
-    {
-        var result = new Dictionary<string, int>();
-        var lines = yaml.Split('\n');
-        string? currentModel = null;
-        var inModelList = false;
-
-        foreach (var raw in lines)
-        {
-            var line = raw.TrimEnd('\r');
-
-            if (line == "model_list:") { inModelList = true; continue; }
-            if (!inModelList) continue;
-
-            // Exit on a top-level (non-indented) key — router_settings:,
-            // litellm_settings:, or anything else at column 0 that isn't a
-            // comment or blank line.
-            if (line.Length > 0 && !line.StartsWith(' ') && !line.StartsWith('#'))
-                break;
-
-            // Each model entry starts with "  - model_name: <name>".
-            if (line.StartsWith("  - model_name: "))
-            {
-                currentModel = line["  - model_name: ".Length..].Trim();
-                continue;
-            }
-
-            // timeout: lives inside litellm_params (6-space indent).
-            if (currentModel != null)
-            {
-                var trimmed = line.TrimStart();
-                if (trimmed.StartsWith("timeout: "))
-                {
-                    var val = trimmed["timeout: ".Length..].Trim();
-                    if (int.TryParse(val, out var seconds))
-                        result[currentModel] = seconds;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Extracts every <c>model_name:</c> value from the <c>model_list:</c>
-    /// section of a litellm-config YAML string.
-    /// </summary>
-    public static HashSet<string> ParseModelNames(string yaml)
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        var lines = yaml.Split('\n');
-        var inModelList = false;
-
-        foreach (var raw in lines)
-        {
-            var line = raw.TrimEnd('\r');
-
-            if (line == "model_list:") { inModelList = true; continue; }
-            if (!inModelList) continue;
-
-            // Exit on a top-level (non-indented) key — router_settings:,
-            // litellm_settings:, or anything else at column 0 that isn't a
-            // comment or blank line.
-            if (line.Length > 0 && !line.StartsWith(' ') && !line.StartsWith('#'))
-                break;
-
-            // Each model entry starts with "  - model_name: <name>".
-            if (line.StartsWith("  - model_name: "))
-                result.Add(line["  - model_name: ".Length..].Trim());
-        }
-
-        return result;
-    }
-
-    /// Compares a YAML model_list against pricing/chain/selectable copies; returns ordered problem strings (shared guard+control code path).
+    /// <param name="routable">The routable model set to compare against.</param>
+    /// <param name="pricingKeys">Priced model names, when checking pricing.</param>
+    /// <param name="chains">Tier chains, when checking chain reachability.</param>
+    /// <param name="selectable">Selectable models per tier, when checking those.</param>
+    /// <returns>Ordered problem descriptions; empty when consistent.</returns>
     public static IReadOnlyList<string> FindCatalogProblems(
-        string templateYaml,
+        HashSet<string> routable,
         IEnumerable<string>? pricingKeys = null,
         IReadOnlyDictionary<string, List<(string Model, string RequiredKey)>>? chains = null,
         IReadOnlyDictionary<string, IReadOnlyList<string>>? selectable = null)
     {
-        var templateModels = ParseModelNames(templateYaml);
         var problems = new List<string>();
 
         if (pricingKeys != null)
         {
             var priced = pricingKeys.ToHashSet(StringComparer.Ordinal);
-            foreach (var model in templateModels.Where(m => !priced.Contains(m)).OrderBy(m => m, StringComparer.Ordinal))
+            foreach (var model in routable.Where(m => !priced.Contains(m)).OrderBy(m => m, StringComparer.Ordinal))
                 problems.Add($"routable but not priced: {model}");
-            foreach (var model in priced.Where(m => !templateModels.Contains(m)).OrderBy(m => m, StringComparer.Ordinal))
+            foreach (var model in priced.Where(m => !routable.Contains(m)).OrderBy(m => m, StringComparer.Ordinal))
                 problems.Add($"priced but not routable: {model}");
         }
 
         if (chains != null)
         {
             foreach (var tier in chains.Keys.OrderBy(t => t, StringComparer.Ordinal))
-                foreach (var (model, _) in chains[tier].OrderBy(c => c.Model, StringComparer.Ordinal))
-                {
-                    if (model == "fallback")
-                        continue; // tier alias, not a model_name
-                    if (!templateModels.Contains(model))
-                        problems.Add($"chained but not routable: {model} (tier {tier})");
-                }
+            foreach (var (model, _) in chains[tier].OrderBy(c => c.Model, StringComparer.Ordinal))
+            {
+                if (model == "fallback") continue; // a tier alias, not a model
+                if (!routable.Contains(model))
+                    problems.Add($"chained but not routable: {model} (tier {tier})");
+            }
         }
 
         if (selectable != null)
         {
             foreach (var tier in selectable.Keys.OrderBy(t => t, StringComparer.Ordinal))
-                foreach (var model in selectable[tier].OrderBy(m => m, StringComparer.Ordinal))
-                {
-                    if (!templateModels.Contains(model))
-                        problems.Add($"selectable but not routable: {model} (tier {tier})");
-                }
+            foreach (var model in selectable[tier].OrderBy(m => m, StringComparer.Ordinal))
+                if (!routable.Contains(model))
+                    problems.Add($"selectable but not routable: {model} (tier {tier})");
         }
 
         return problems;
-    }
-
-    /// <summary>
-    /// Extracts <c>model = "…"</c> values from a swival.toml profile string,
-    /// keyed by profile name (e.g. <c>"balanced"</c> → <c>"balanced"</c>).
-    /// </summary>
-    public static Dictionary<string, string> ParseSwivalProfileModelValues(string toml)
-    {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        string? currentProfile = null;
-
-        foreach (var raw in toml.Split('\n'))
-        {
-            var line = raw.TrimEnd('\r').Trim();
-            if (line.StartsWith("[profiles.", StringComparison.Ordinal) && line.EndsWith(']'))
-            {
-                currentProfile = line["[profiles.".Length..^1];
-            }
-            else if (currentProfile != null && line.StartsWith("model = \"", StringComparison.Ordinal))
-            {
-                var closeQuote = line.IndexOf('"', "model = \"".Length);
-                if (closeQuote >= 0)
-                {
-                    var model = line["model = \"".Length..closeQuote];
-                    result[currentProfile] = model;
-                }
-
-                currentProfile = null; // consume the model line
-            }
-        }
-
-        return result;
     }
 }

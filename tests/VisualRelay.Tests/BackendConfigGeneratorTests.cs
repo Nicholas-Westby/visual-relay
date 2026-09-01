@@ -9,11 +9,11 @@ public sealed class BackendConfigGeneratorTests
     public void HfOnly_DefaultTiersResolveToFallbackFloor()
     {
         var present = new HashSet<string> { "HF_TOKEN" };
-        var (yaml, summary) = BackendConfigGeneratorTestHelpers.Generate(present);
-        var aliases = BackendConfigGeneratorTestHelpers.ParseAliases(yaml);
+        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
+        var summary = BackendConfigGenerator.Summarize(present);
 
-        Assert.Equal("fallback", aliases["cheap"]);
-        Assert.Equal("fallback", aliases["balanced"]);
+        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["cheap"]);
+        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["balanced"]);
         // The HF route to GLM 5.3 Flash (frontier primary) requires HF_TOKEN,
         // which is present, so frontier resolves to it (not the fallback floor).
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
@@ -76,7 +76,7 @@ public sealed class BackendConfigGeneratorTests
         Assert.Contains("kimi-k2", chain);
         Assert.Contains("deepseek-v4-pro", chain);
         Assert.Contains("hf-qwen3-coder-next", chain);
-        Assert.Equal("fallback", chain[^1]);
+        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, chain[^1]);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
             Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks));
@@ -92,28 +92,26 @@ public sealed class BackendConfigGeneratorTests
     public void ShapeGuard_ParsesAndEveryTierHasNonEmptyChainEndingInFallback()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var (yaml, _) = BackendConfigGeneratorTestHelpers.Generate(present);
-        var aliases = BackendConfigGeneratorTestHelpers.ParseAliases(yaml);
-        var fallbacks = BackendConfigGeneratorTestHelpers.ParseFallbacks(yaml);
-
-        Assert.Contains("model_group_alias:", yaml, StringComparison.Ordinal);
-        Assert.Contains("fallbacks:", yaml, StringComparison.Ordinal);
-        // model_list and litellm_settings preserved verbatim.
-        Assert.Contains("kimi-k2", yaml, StringComparison.Ordinal);
-        Assert.Contains("hf-glm-5.3-flash", yaml, StringComparison.Ordinal);
-        Assert.Contains("drop_params: true", yaml, StringComparison.Ordinal);
-        Assert.Contains("json_logs: true", yaml, StringComparison.Ordinal);
-        Assert.Contains("stream_timeout:", yaml, StringComparison.Ordinal);
-        Assert.Contains("request_timeout:", yaml, StringComparison.Ordinal);
+        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
+        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier", "fallback" })
         {
             Assert.True(aliases.ContainsKey(tier), $"tier '{tier}' must have an alias");
             Assert.False(string.IsNullOrWhiteSpace(aliases[tier]),
                 $"alias for '{tier}' must be non-empty");
-            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
-                $"fallback chain for {tier} should terminate in fallback");
         }
+
+        // Every tier bottoms out at the floor model. The fallback tier IS the
+        // floor, so it has no chain of its own to terminate — the proxy's
+        // config gave it a self-referential entry; the resolved chain does not.
+        foreach (var tier in new[] { "cheap", "balanced", "frontier" })
+            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
+                $"fallback chain for {tier} should terminate in the floor model");
+
+        Assert.Equal(BackendConfigGenerator.FallbackFloorModel, aliases["fallback"]);
+        Assert.False(fallbacks.ContainsKey("fallback"),
+            "the floor tier has nothing to fall back to");
 
         // Vision tier: present with a vision-only fallback chain.
         Assert.True(aliases.ContainsKey("vision"));
@@ -128,7 +126,7 @@ public sealed class BackendConfigGeneratorTests
     public void Summary_MentionsDetectedKeysAndResolution()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var (_, summary) = BackendConfigGeneratorTestHelpers.Generate(present);
+        var summary = BackendConfigGenerator.Summarize(present);
 
         Assert.Contains("HF_TOKEN", summary, StringComparison.Ordinal);
         Assert.Contains("DEEPSEEK_API_KEY", summary, StringComparison.Ordinal);
@@ -140,15 +138,12 @@ public sealed class BackendConfigGeneratorTests
     [Fact]
     public void EmptyKeySet_ThrowsInvalidOperationException()
     {
-        // After zero-key guard: BackendConfigGenerator.Generate must refuse to
-        // produce a degenerate config when the present-key set is empty.
-        // Callers (BackendConfigStep.Generate) detect this up front and fall
-        // back to the static template instead — the same pattern used for
-        // generation timeout/failure.
+        // Summarize refuses a degenerate answer when no key is present.
+        // Callers detect this up front and say so, rather than rendering a tier
+        // table of models they cannot reach.
         var present = new HashSet<string>();
         var ex = Assert.Throws<InvalidOperationException>(
-            () => BackendConfigGenerator.Generate(
-                present, BackendConfigGeneratorTestHelpers.TemplatePath));
+            () => BackendConfigGenerator.Summarize(present));
         Assert.Contains("zero", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("provider keys", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
