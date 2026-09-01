@@ -75,6 +75,18 @@ public sealed record AgentStats
     public int PromptTokens { get; init; }
 
     /// <summary>
+    /// Each call's measured input tokens, in call order — the real context the
+    /// provider billed for, not a share of the stage total.
+    /// <para>
+    /// The report timeline needs these. Without them it fabricated a linear
+    /// ramp, whose last entry came out equal to the SUM of every call's input;
+    /// the cost estimator reads that last entry as the final context and bills
+    /// it as fresh input.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<int> PromptTokensPerCall { get; init; } = [];
+
+    /// <summary>
     /// Measured output tokens, summed across calls. Replaces
     /// <c>answer.Length / 4</c> plus fifty per turn.
     /// </summary>

@@ -48,11 +48,17 @@ public sealed partial class AgentTurnLoop
         /// <summary>Deadline for the whole stage, from which tool budgets derive.</summary>
         public DateTimeOffset Deadline { get; } = startedAt + options.Budget;
 
+        private readonly List<int> _promptTokensPerCall = [];
+
+        /// <summary>Each call's measured input tokens, in call order.</summary>
+        public IReadOnlyList<int> PromptTokensPerCall => _promptTokensPerCall;
+
         /// <summary>Adds one call's measured usage to the running totals.</summary>
         /// <param name="usage">The usage the provider reported.</param>
         public void AddUsage(ProviderUsage? usage)
         {
             if (usage is null) return;
+            _promptTokensPerCall.Add(usage.PromptTokens);
             Totals = new ProviderUsage(
                 Totals.PromptTokens + usage.PromptTokens,
                 Totals.CompletionTokens + usage.CompletionTokens,
@@ -101,6 +107,7 @@ public sealed partial class AgentTurnLoop
                 TotalLlmTimeSeconds = Math.Round(LlmSeconds, 3),
                 TotalToolTimeSeconds = Math.Round(ToolSeconds, 3),
                 PromptTokens = Totals.PromptTokens,
+                PromptTokensPerCall = [.. PromptTokensPerCall],
                 CompletionTokens = Totals.CompletionTokens,
                 CachedTokens = Totals.CachedTokens,
                 ReasoningTokens = Totals.ReasoningTokens,

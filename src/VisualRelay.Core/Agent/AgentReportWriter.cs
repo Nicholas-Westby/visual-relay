@@ -134,9 +134,12 @@ public static class AgentReportWriter
         var timeline = new JsonArray();
         if (stats.LlmCalls == 0) return timeline;
 
-        // Input tokens are attributed evenly across calls. The per-call split is
-        // not recorded separately; the stage total is measured and exact, which
-        // is what the cost actually depends on.
+        // Each call's real input context, which is what the cost estimator reads
+        // the last of. Attributing the stage total evenly and accumulating it —
+        // what this used to do — makes the last entry the SUM of every call's
+        // input, and the estimator then bills that sum as fresh input.
+        var measured = stats.PromptTokensPerCall;
+        var haveMeasured = measured.Count == stats.LlmCalls;
         var perCall = stats.PromptTokens / stats.LlmCalls;
         var perCallSeconds = Math.Round(stats.TotalLlmTimeSeconds / stats.LlmCalls, 3);
 
@@ -146,7 +149,9 @@ public static class AgentReportWriter
                 ["turn"] = i + 1,
                 ["type"] = "llm_call",
                 ["duration_s"] = perCallSeconds,
-                ["prompt_tokens_est"] = perCall * (i + 1),
+                // Stats from before per-call recording still get a timeline of
+                // the right shape, so the archived schema stays readable.
+                ["prompt_tokens_est"] = haveMeasured ? measured[i] : perCall * (i + 1),
                 ["is_retry"] = false,
             });
 

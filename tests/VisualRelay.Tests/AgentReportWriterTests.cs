@@ -230,4 +230,54 @@ public sealed class AgentReportWriterTests
             TestFileSystem.DeleteDirectoryResilient(directory);
         }
     }
+
+    /// <summary>
+    /// The timeline carries each call's REAL input context. It used to
+    /// fabricate a linear ramp from the stage total, so its last entry equalled
+    /// the SUM of every call's input. The cost estimator reads that last entry
+    /// as the final context and bills it, so a seven-call stage whose contexts
+    /// were mostly cache hits was billed as though the whole sum were fresh
+    /// input. A real stage-1 report showed 35,077 there against a true final
+    /// context far below it.
+    /// </summary>
+    [Fact]
+    public void TheTimeline_CarriesTheRealPerCallContext()
+    {
+        var result = Result() with
+        {
+            Stats = Result().Stats with
+            {
+                LlmCalls = 3,
+                PromptTokens = 3000,
+                PromptTokensPerCall = [400, 900, 1700],
+            },
+        };
+
+        var report = Parse(AgentReportWriter.Build(
+            result, "cheap", "the task prompt", DateTimeOffset.UtcNow));
+
+        var contexts = report.GetProperty("timeline").EnumerateArray()
+            .Where(e => e.GetProperty("type").GetString() == "llm_call")
+            .Select(e => e.GetProperty("prompt_tokens_est").GetInt32())
+            .ToList();
+
+        Assert.Equal([400, 900, 1700], contexts);
+        // The point of the fix: the last entry is the last call's context, not
+        // the stage total.
+        Assert.NotEqual(3000, contexts[^1]);
+    }
+
+    /// <summary>
+    /// Stats with no per-call record still produce a timeline of the right
+    /// length, so the archived schema stays readable.
+    /// </summary>
+    [Fact]
+    public void WithNoPerCallRecord_TheTimelineIsStillTheRightLength()
+    {
+        var report = Parse(AgentReportWriter.Build(
+            Result(), "cheap", "the task prompt", DateTimeOffset.UtcNow));
+
+        Assert.Equal(3, report.GetProperty("timeline").EnumerateArray()
+            .Count(e => e.GetProperty("type").GetString() == "llm_call"));
+    }
 }
