@@ -27,7 +27,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     private readonly IProviderTransport _transport;
     private readonly RelayConfig _config;
     private readonly IEnvironmentAccessor _environment;
-    private readonly IAgentEventSink _events;
+    private readonly Func<StageInvocation, IAgentEventSink> _events;
     private readonly IReadOnlyList<IAgentTool> _tools;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan? _retryBackoffBase;
@@ -36,7 +36,11 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     /// <param name="transport">The provider transport to send through.</param>
     /// <param name="config">The repository's relay configuration.</param>
     /// <param name="environment">Where provider keys are read from.</param>
-    /// <param name="events">Where the loop's event stream goes.</param>
+    /// <param name="events">
+    /// Builds the event sink for a stage. It is per-invocation because the sink
+    /// labels each event with the stage it belongs to, and the stage is not
+    /// known until the driver calls in.
+    /// </param>
     /// <param name="tools">The tools the model may call.</param>
     /// <param name="timeProvider">Clock, for virtual-time tests.</param>
     /// <param name="retryBackoffBase">
@@ -47,7 +51,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
         IProviderTransport transport,
         RelayConfig config,
         IEnvironmentAccessor environment,
-        IAgentEventSink events,
+        Func<StageInvocation, IAgentEventSink> events,
         IReadOnlyList<IAgentTool>? tools = null,
         TimeProvider? timeProvider = null,
         TimeSpan? retryBackoffBase = null)
@@ -65,6 +69,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     public async Task<SubagentResult> RunAsync(
         StageInvocation invocation, CancellationToken cancellationToken = default)
     {
+        var events = _events(invocation);
         var chain = ResolveChain(invocation.Tier);
         if (chain.Count == 0)
             return new SubagentResult(
@@ -87,7 +92,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            last = await RunOnRouteAsync(route, conversation, invocation, cancellationToken)
+            last = await RunOnRouteAsync(route, conversation, invocation, events, cancellationToken)
                 .ConfigureAwait(false);
 
             // A hop is worth taking only for a fault of this route. An exhausted
@@ -96,12 +101,12 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
             if (last.Outcome != AgentLoopOutcome.Error) break;
 
             if (!ReferenceEquals(route, chain[^1]))
-                _events.Publish(new AgentEvent(
+                events.Publish(new AgentEvent(
                     AgentEventKind.Retry, _timeProvider.GetUtcNow(), last.Stats.Turns,
                     Text: last.Error, Detail: "falling through to the next model in the chain"));
         }
 
-        await WriteReportAsync(invocation, last!, cancellationToken).ConfigureAwait(false);
+        await WriteReportAsync(invocation, last!, events, cancellationToken).ConfigureAwait(false);
         return ToSubagentResult(invocation, last!);
     }
 

@@ -17,11 +17,12 @@ public sealed partial class FirstPartySubagentRunner
         ProviderRoute route,
         IReadOnlyList<ChatMessage> conversation,
         StageInvocation invocation,
+        IAgentEventSink events,
         CancellationToken cancellationToken)
     {
         var apiKey = _environment.GetEnvironmentVariable(route.ApiKeyEnvVar) ?? string.Empty;
         var client = new ChatCompletionClient(_transport, route.Timeouts, _timeProvider);
-        var loop = new AgentTurnLoop(client, _tools, _events, _timeProvider);
+        var loop = new AgentTurnLoop(client, _tools, events, _timeProvider);
 
         var budget = invocation.AbsoluteCeilingMs > 0
             ? TimeSpan.FromMilliseconds(invocation.AbsoluteCeilingMs)
@@ -55,7 +56,8 @@ public sealed partial class FirstPartySubagentRunner
     /// better than losing the work.
     /// </summary>
     private async Task WriteReportAsync(
-        StageInvocation invocation, AgentLoopResult result, CancellationToken cancellationToken)
+        StageInvocation invocation, AgentLoopResult result, IAgentEventSink events,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(invocation.ReportFile)) return;
 
@@ -68,7 +70,7 @@ public sealed partial class FirstPartySubagentRunner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _events.Publish(new AgentEvent(
+            events.Publish(new AgentEvent(
                 AgentEventKind.TurnFinished, _timeProvider.GetUtcNow(), result.Stats.Turns,
                 Detail: "report could not be written: " + ex.Message));
         }

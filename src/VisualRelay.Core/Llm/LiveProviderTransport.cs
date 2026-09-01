@@ -39,6 +39,33 @@ public sealed class LiveProviderTransport : IProviderTransport, IDisposable
     /// <summary>The handler this transport sends through.</summary>
     private HttpMessageHandler Handler { get; }
 
+    /// <summary>
+    /// Builds a transport with the pooling policy the providers need.
+    /// <para>
+    /// A short <c>PooledConnectionLifetime</c> replaces the <c>Connection: close</c>
+    /// header the old config sent, which was inert twice over: all four endpoints
+    /// negotiate HTTP/2, where <c>Connection</c> is a prohibited header, and in
+    /// .NET setting it sends the header while the socket is reused anyway. Only
+    /// the pooling knobs actually force a fresh connection, and recycling also
+    /// clears stale DNS against these load balancers.
+    /// </para>
+    /// <para>
+    /// The connect timeout is the only budget the handler owns; the other three
+    /// belong to the caller, because one HTTP timeout cannot express them and
+    /// would abort a healthy slow stream.
+    /// </para>
+    /// </summary>
+    /// <param name="connectTimeout">TCP connect budget.</param>
+    /// <returns>A transport over a freshly configured handler.</returns>
+    public static LiveProviderTransport CreateDefault(TimeSpan? connectTimeout = null) =>
+        new(new SocketsHttpHandler
+        {
+            ConnectTimeout = connectTimeout ?? ProviderTimeouts.Default.Connect,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30),
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
+        });
+
     /// <inheritdoc />
     public async Task<ProviderResponse> SendAsync(
         ProviderRequest request, CancellationToken cancellationToken = default)

@@ -2,6 +2,7 @@ using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
+using VisualRelay.Core.Agent;
 
 namespace VisualRelay.DrainQueue;
 
@@ -29,7 +30,7 @@ public sealed class ConsoleTaskRunner(
         var fileSink = new FileRelayEventSink(
             Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(consoleSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, new GitInvoker(), eventSink: sink, verboseDiagnostics: verboseDiagnostics);
+        var subagentRunner = SubagentRunnerFactory.Create(config, sink, new SystemEnvironmentAccessor(), verboseDiagnostics);
         var deps = new RelayDriverDependencies(
             subagentRunner, testRunner, sink, new GitInvoker(), environmentAccessor);
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));

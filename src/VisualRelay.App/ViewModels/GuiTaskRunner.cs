@@ -1,6 +1,8 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
+using VisualRelay.Core.Agent;
+using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.App.ViewModels;
 
@@ -21,7 +23,7 @@ internal sealed class GuiTaskRunner(
     {
         var fileSink = new FileRelayEventSink(Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(sharedSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, new GitInvoker(), eventSink: sink, verboseDiagnostics: verboseDiagnostics);
+        var subagentRunner = SubagentRunnerFactory.Create(config, sink, new SystemEnvironmentAccessor(), verboseDiagnostics);
         var deps = new RelayDriverDependencies(subagentRunner, testRunner, sink, new GitInvoker());
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         return driver.RunTaskAsync(rootPath, taskId, cancellationToken);

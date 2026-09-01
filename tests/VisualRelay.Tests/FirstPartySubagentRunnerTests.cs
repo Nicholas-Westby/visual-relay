@@ -47,7 +47,7 @@ public sealed class FirstPartySubagentRunnerTests
     private static FirstPartySubagentRunner Build(
         ScriptedModelTransport transport, DictionaryEnvironmentAccessor env, Sink sink,
         IReadOnlyList<IAgentTool>? tools = null) =>
-        new(transport, RelayConfigLoader.Defaults(), env, sink, tools,
+        new(transport, RelayConfigLoader.Defaults(), env, _ => sink, tools,
             retryBackoffBase: TimeSpan.Zero);
 
     /// <summary>

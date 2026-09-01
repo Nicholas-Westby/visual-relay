@@ -3,6 +3,7 @@ using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
+using VisualRelay.Core.Agent;
 
 namespace VisualRelay.App.ViewModels;
 
@@ -22,7 +23,8 @@ public partial class MainWindowViewModel
         var observable = new ObservableRelayEventSink(HandleRelayEvent);
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, new GitInvoker(), eventSink: sink, verboseDiagnostics: VerboseSandboxDiagnostics);
+        var subagentRunner = SubagentRunnerFactory.Create(
+            config, sink, EnvironmentAccessor ?? new SystemEnvironmentAccessor(), VerboseSandboxDiagnostics);
         var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics), sink, new GitInvoker());
         var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
         try
