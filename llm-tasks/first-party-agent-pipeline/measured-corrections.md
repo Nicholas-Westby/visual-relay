@@ -304,6 +304,37 @@ timing gap is the part worth trusting: the first-party arm finished in roughly
 60% of the time, using about 80% of the turns and 60% of the tool calls, and
 that ordering held on every one of the three tasks independently.
 
+### Step 38's acceptance rule cannot be met as written
+
+Step 38 asks for per-stage pass rate with Wilson 95% intervals, accepting when
+no stage's lower bound sits more than five points below the old arm's point
+estimate. Computed that way on this run, every stage fails — including the six
+stages where BOTH arms scored a clean 6/6:
+
+| stage | swival | firstparty | gate | verdict |
+| --- | --- | --- | --- | --- |
+| 1-3 | 100% (lower 61.0) | 100% (lower 61.0) | 95% | fail |
+| 4 | 100% (lower 61.0) | 83% (lower 43.6) | 95% | fail |
+| 5-9 | 100% (lower 61.0) | 100% (lower 56.6) | 95% | fail |
+
+A rule that rejects two arms with identical perfect scores is measuring sample
+size, not quality. That is expected at n=6 and is not itself the problem.
+
+The problem is that **the rule barely passes at the spec's own scale either**.
+Step 37 specifies N=5 per task per arm across 12 tasks, so n=60 per stage. A
+FLAWLESS new arm at 60/60 has a Wilson lower bound of 94.0%. Five points below a
+perfect old arm is 95%. So if Swival scores 100% on a stage, no possible result
+lets the new arm clear that stage — not even a spotless 60 for 60. The rule only
+admits a pass when the old arm's own point estimate is at or below 99.0%.
+
+Phase 0 measured a 2.3% retry rate, so Swival is probably not perfect per stage
+and the gate is probably reachable in practice. But it is reachable by accident
+rather than by design, and one unusually good Swival sample would block a cutover
+on a new arm that made no mistakes at all. Before Phase 6 runs for real, the rule
+wants restating as a difference between the arms with an interval on THAT
+difference (a two-proportion test), not as one arm's interval against the other
+arm's point estimate.
+
 ### The one failure was real, and worth the whole exercise
 
 The single failure was not noise. Its plan stage wrote a correct contract and was
