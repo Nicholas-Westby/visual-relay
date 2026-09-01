@@ -93,7 +93,7 @@ public sealed class FdLeakTests
         // setpgid(0,0) — a child perl -e would only change perl's pgid,
         // not the shell's.  Perl is guaranteed on macOS and near-universal
         // on Linux; when absent the test will fail early (non-zero exit).
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
+        var script = await StageTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fork-detached",
             "#!/usr/bin/env perl\n" +
@@ -174,7 +174,7 @@ public sealed class FdLeakTests
         //
         // Perl shebang so the process itself calls setpgid(0,0); perl is
         // guaranteed on macOS and near-universal on Linux.
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
+        var script = await StageTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fork-inherit",
             "#!/usr/bin/env perl\n" +

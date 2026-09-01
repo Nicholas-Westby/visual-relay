@@ -32,7 +32,6 @@ public partial class MainWindowViewModel
             StatusText = "Refreshing";
             await ReloadTaskListAsync();
             StatusText = savedStatus;
-            await RefreshBackendStatusAsync();
             return;
         }
 
@@ -42,40 +41,7 @@ public partial class MainWindowViewModel
             await ReloadTaskListAsync();
             StatusText = FormatQueueStatus();
         });
-
-        // Manual Refresh also re-probes so the top-bar status dot stays current.
-        await RefreshBackendStatusAsync();
     }
-    /// <summary>Backend lifecycle for the one-click recovery; overridable so tests drive the wiring hermetically. Production runs the shared <see cref="BackendLifecycle"/> with diagnostics routed to Trace.</summary>
-    internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>
-        new BackendLifecycle(
-            options: BackendStartOptions.FromEnvironment() with
-            {
-                RepoRoot = Environment.GetEnvironmentVariable("VISUAL_RELAY_SCRIPT_DIR")
-                    ?? Environment.CurrentDirectory,
-            },
-            log: line => Trace.WriteLine($"backend: {line}"));
-
-    [RelayCommand(CanExecute = nameof(CanStartBackend))]
-    private async Task StartBackendAsync()
-    {
-        // Best-effort one-click recovery: run the shared C# backend lifecycle off the UI thread, never throw. Wires the run-active gate so the staleness check never restarts the proxy mid-drain.
-        try
-        {
-            var lifecycle = BackendLifecycleFactory();
-            lifecycle.IsRunActive = () => IsBusy;
-            await lifecycle.StartAsync();
-        }
-        catch (Exception ex)
-        {
-            // Toolchain missing, spawn failure, etc. — leave the dot red.
-            Trace.WriteLine($"StartBackendAsync: backend lifecycle failed: {ex.Message}");
-        }
-
-        await RefreshBackendStatusAsync();
-    }
-
-    private bool CanStartBackend() => !IsBackendReachable;
     [RelayCommand]
     private void TogglePause()
     {

@@ -10,14 +10,13 @@ public sealed class MainWindowViewModelInitTests
     // ── Startup-inspection isolation ─────────────────────────────────────
 
     [Fact]
-    public async Task LoadInitialAsync_WithNoRoot_DoesNotTriggerSandboxInspectionOrBackendProbe()
+    public async Task LoadInitialAsync_WithNoRoot_DoesNotTriggerSandboxInspection()
     {
         var viewModel = new MainWindowViewModel(); // default root; no repo on disk
         await viewModel.LoadInitialAsync();
 
         Assert.False(viewModel.IsSandboxInfoLoading);
         Assert.False(viewModel.IsSandboxInfoAvailable);
-        Assert.Null(viewModel.BackendStatusMessage);
     }
 
     [Fact]
@@ -35,22 +34,6 @@ public sealed class MainWindowViewModelInitTests
         await viewModel.LastSandboxInspection!;
 
         Assert.False(viewModel.IsSandboxInfoLoading);
-    }
-
-    [Fact]
-    public async Task StartBackgroundInspections_TriggersBackendStatusRefresh()
-    {
-        var viewModel = new MainWindowViewModel();
-        viewModel.StartBackgroundInspections();
-
-        // The probe is an HTTP GET carrying its own 2s timeout and it never
-        // throws. With _isBackendReachable defaulting to false it always
-        // produces an observable change: IsBackendReachable flips to true when
-        // the backend is up, or BackendStatusMessage becomes non-null when it
-        // is down. Await the captured task rather than poll for either signal.
-        await viewModel.LastBackendStatusRefresh!;
-
-        Assert.True(viewModel.IsBackendReachable || viewModel.BackendStatusMessage is not null);
     }
 
     [Fact]

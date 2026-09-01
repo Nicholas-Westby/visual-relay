@@ -157,9 +157,7 @@ public partial class MainWindowViewModel
         });
     }
 
-    private bool CanFindTestCommand() => IsBackendReachable;
-
-    [RelayCommand(CanExecute = nameof(CanFindTestCommand))]
+    [RelayCommand]
     private async Task FindTestCommandAsync()
     {
         StatusText = "Asking the frontier model for the test command…";

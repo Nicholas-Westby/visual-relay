@@ -4,15 +4,16 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Shared test helpers for Swival* test files. Consolidates the <c>AlwaysReady</c>,
-/// <c>Invocation</c>, and <c>WriteExecutableAsync</c> helpers that were duplicated
-/// verbatim across six test files.
+/// Shared helpers for tests that drive a real stage command on disk.
+/// <para>
+/// These were consolidated out of six duplicated copies in the Swival runner's
+/// test files. The runner is gone; the helpers are not about it — writing an
+/// executable fixture and building an invocation are what any test that runs a
+/// command still needs.
+/// </para>
 /// </summary>
-internal static class SwivalTestHelpers
+internal static class StageTestHelpers
 {
-    public static Task<BackendReadiness> AlwaysReady(CancellationToken _) =>
-        Task.FromResult(new BackendReadiness(true, null));
-
     public static StageInvocation Invocation(string rootPath) =>
         new(
             RelayStages.All[0],

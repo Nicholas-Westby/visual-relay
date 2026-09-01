@@ -17,17 +17,6 @@ public static class LaunchCommand
             return nono;
         Gates.NonoGate.Provision(paths.Root);
 
-        // Best-effort backend start via the published VisualRelay.Backend tool
-        // (the C# successor to backend.sh; same shared lifecycle the app autostart
-        // runs). A fresh launch can run a task without a manual proxy step; if it
-        // fails the launch still proceeds and the in-app pre-flight probe surfaces
-        // the down backend. The lifecycle is shell-free and Windows-native, so this
-        // runs on every OS (it degrades cleanly when the litellm toolchain is absent).
-        var backendArgs = new List<string> { "run", "--project", paths.ToolProject("VisualRelay.Backend"), "--", "start" };
-        if (ProcessLauncher.Run(ProcessLauncher.Dotnet, backendArgs, paths.Root) != 0)
-            Console.Error.WriteLine(
-                "visual-relay: backend start failed; launching anyway (in-app probe will flag a down backend)");
-
         var runArgs = new List<string> { "run", "--project", paths.AppProject, "--" };
         runArgs.AddRange(args);
         return ProcessLauncher.Run(ProcessLauncher.Dotnet, runArgs, paths.Root);

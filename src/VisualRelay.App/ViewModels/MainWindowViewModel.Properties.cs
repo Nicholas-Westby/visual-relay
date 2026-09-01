@@ -55,14 +55,6 @@ public partial class MainWindowViewModel
         ? IsBusy ? $"Stops after {_runningTaskId ?? "current task"}" : "Paused before next task"
         : string.Empty;
     public bool IsPauseNoticeVisible => PauseRequested;
-    public IBrush BackendStatusBrush => IsBackendReachable ? BackendUpBrush : BackendDownBrush;
-    public string BackendStatusLabel => IsBackendReachable
-        ? $"backend: {new Uri(ModelBackend.BaseUrl).Authority}"
-        : "backend down";
-    public string BackendBannerText =>
-        string.IsNullOrWhiteSpace(BackendStatusMessage)
-            ? BackendReadinessProbe.NotReadyMessage()
-            : BackendStatusMessage;
     public bool IsViewingDifferentTaskDuringRun =>
         _runningTaskId is not null && SelectedTask is not null && !string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal);
     public string ViewingRunContextText => IsViewingDifferentTaskDuringRun ? $"Viewing {SelectedTask!.Id} · running {_runningTaskId}" : string.Empty;

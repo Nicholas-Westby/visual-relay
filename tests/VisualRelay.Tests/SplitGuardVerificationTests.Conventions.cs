@@ -143,17 +143,16 @@ public sealed partial class SplitGuardVerificationTests
         Assert.Empty(violations);
     }
 
-    /// <summary>After the split the shared helpers must live in SwivalTestHelpers.cs, not duplicated across Swival* test files.</summary>
+    /// <summary>After the split the shared helpers must live in StageTestHelpers.cs, not duplicated across Swival* test files.</summary>
     [Fact]
-    public void SwivalTestHelpers_ExistsAndContainsSharedMethods()
+    public void StageTestHelpers_ExistsAndContainsSharedMethods()
     {
-        var path = Path.Combine(TestsDir, "SwivalTestHelpers.cs");
-        Assert.True(File.Exists(path), "SwivalTestHelpers.cs must exist after the split");
+        var path = Path.Combine(TestsDir, "StageTestHelpers.cs");
+        Assert.True(File.Exists(path), "StageTestHelpers.cs must exist after the split");
 
         var content = File.ReadAllText(path);
         Assert.Contains("internal static", content, StringComparison.Ordinal);
         Assert.DoesNotContain("public sealed class", content, StringComparison.Ordinal);
-        Assert.Contains("AlwaysReady", content, StringComparison.Ordinal);
         Assert.Contains("Invocation", content, StringComparison.Ordinal);
         Assert.Contains("WriteExecutableAsync", content, StringComparison.Ordinal);
     }
@@ -190,8 +189,7 @@ public sealed partial class SplitGuardVerificationTests
             var content = File.ReadAllText(filePath);
 
             // These signature fragments only appear when the method is DEFINED
-            // (not called). After the split these definitions live in SwivalTestHelpers.
-            Assert.DoesNotContain("static Task<BackendReadiness> AlwaysReady", content, StringComparison.Ordinal);
+            // (not called). After the split these definitions live in StageTestHelpers.
             Assert.DoesNotContain("static StageInvocation Invocation(string", content, StringComparison.Ordinal);
             Assert.DoesNotContain("static async Task<string> WriteExecutableAsync", content, StringComparison.Ordinal);
         }

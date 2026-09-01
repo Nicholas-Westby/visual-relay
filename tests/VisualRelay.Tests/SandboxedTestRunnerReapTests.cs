@@ -38,7 +38,7 @@ public sealed class SandboxedTestRunnerReapTests
 
         if (PosixUnsupported) return;
         using var repo = TestRepository.Create();
-        var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
+        var wrapper = await StageTestHelpers.WriteExecutableAsync(
             repo.Root, "fake-nono-lingers",
             "#!/usr/bin/env perl\n" +
             "$| = 1;\n" +
@@ -82,7 +82,7 @@ public sealed class SandboxedTestRunnerReapTests
 
         if (PosixUnsupported) return;
         using var repo = TestRepository.Create();
-        var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
+        var wrapper = await StageTestHelpers.WriteExecutableAsync(
             repo.Root, "fake-nono-clean",
             "#!/usr/bin/env perl\n$| = 1;\n" +
             "print \"All green\\n\";\n" +
@@ -114,7 +114,7 @@ public sealed class SandboxedTestRunnerReapTests
 
         if (PosixUnsupported) return;
         using var repo = TestRepository.Create();
-        var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
+        var wrapper = await StageTestHelpers.WriteExecutableAsync(
             repo.Root, "fake-nono-silent",
             "#!/usr/bin/env perl\nexec('tail', '-f', '/dev/null');\n");
 
@@ -148,7 +148,7 @@ public sealed class SandboxedTestRunnerReapTests
             return;
 
         using var repo = TestRepository.Create();
-        var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
+        var wrapper = await StageTestHelpers.WriteExecutableAsync(
             repo.Root, "fake-nono-busy",
             "#!/usr/bin/env perl\nmy $end = time + 30;\nwhile (time < $end) { }\n");
 

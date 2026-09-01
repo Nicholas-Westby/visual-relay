@@ -41,7 +41,6 @@ public partial class App : Application
             window.DataContext = viewModel;
             desktop.MainWindow = window;
             _ = viewModel.LoadInitialAsync();
-            viewModel.StartBackendMonitoring();
             viewModel.StartBackgroundInspections();
             viewModel.StartElapsedTimer();
             viewModel.StartObsidianBridge();

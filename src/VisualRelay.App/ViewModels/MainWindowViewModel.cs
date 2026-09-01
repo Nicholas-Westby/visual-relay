@@ -14,9 +14,6 @@ namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {
-    private static readonly IBrush BackendUpBrush = Brush.Parse("#5AD47D");
-    private static readonly IBrush BackendDownBrush = Brush.Parse("#F36F63");
-
     private IFolderPicker _folderPicker;
     private IFilePicker _filePicker;
     private readonly List<RelayEvent> _allTaskEvents = [];
@@ -24,7 +21,6 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, List<RelayEvent>> _liveEventsByTask = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<TraceEntry>> _liveTraceEntriesByTask = new(StringComparer.Ordinal);
     private int? _selectedStageFilter;
-    private DispatcherTimer? _backendMonitor;
     private DispatcherTimer? _elapsedTimer;
     // Multi-task running state: _runningTaskIds tracks every concurrently-running
     // task; _runningTaskId is the "followed" task in the detail pane.
@@ -207,17 +203,6 @@ public partial class MainWindowViewModel : ViewModelBase
         new(new ProviderTestCommandCompleter(
             LiveProviderTransport.CreateDefault(), new SystemEnvironmentAccessor()).CompleteAsync);
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(BackendStatusBrush))]
-    [NotifyPropertyChangedFor(nameof(BackendStatusLabel))]
-    [NotifyCanExecuteChangedFor(nameof(StartBackendCommand))]
-    [NotifyCanExecuteChangedFor(nameof(FindTestCommandCommand))]
-    private bool _isBackendReachable;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(BackendBannerText))]
-    private string? _backendStatusMessage;
-
     // Banner: "Control API unavailable — port <N> in use by another process".
     // App.axaml.cs sets it from ControlServer.IsAvailable after Start().
     [ObservableProperty]
@@ -251,30 +236,6 @@ public partial class MainWindowViewModel : ViewModelBase
         // Populate key states so the key panel and HF gate are accurate from
         // the first moment the window is shown.
         await RefreshKeyStatesAsync();
-    }
-
-    // Reusable seam: probes the model backend once and updates the VM state.
-    // Safe to call from the UI thread (the probe never throws) and reusable by
-    // the later persistent top-bar indicator.
-    private async Task RefreshBackendStatusAsync()
-    {
-        var readiness = await BackendReadinessProbe.CheckAsync();
-        IsBackendReachable = readiness.IsReady;
-        BackendStatusMessage = readiness.Message;
-    }
-
-    // Starts a light-interval poll that keeps the top-bar status dot honest
-    // without blocking. Called ONLY from App startup (never the ctor or
-    // LoadInitialAsync) so unit tests spin no timer.
-    public void StartBackendMonitoring()
-    {
-        _backendMonitor?.Stop();
-        _backendMonitor = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(15)
-        };
-        _backendMonitor.Tick += (_, _) => _ = RefreshBackendStatusAsync();
-        _backendMonitor.Start();
     }
 
     // Starts a 1-second timer that refreshes every "elapsed while running" label

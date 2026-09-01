@@ -27,12 +27,6 @@ public sealed partial class ControlApi
             isBusy = vm.IsBusy,
             pauseRequested = vm.PauseRequested,
             statusText = vm.StatusText,
-            backend = new
-            {
-                reachable = vm.IsBackendReachable,
-                label = vm.BackendStatusLabel,
-                message = vm.BackendStatusMessage
-            },
             setupCheck = vm.SetupCheck is { } sc ? new
             {
                 command = sc.Command,

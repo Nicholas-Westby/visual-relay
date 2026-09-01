@@ -56,7 +56,7 @@ public sealed class DotnetTestFilesScriptTests
         try
         {
             // WriteExecutableAsync handles the (OS-guarded) chmod for us.
-            await SwivalTestHelpers.WriteExecutableAsync(bin, "dotnet", "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
+            await StageTestHelpers.WriteExecutableAsync(bin, "dotnet", "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
 
             var argv = new List<string> { script };
             argv.AddRange(args);

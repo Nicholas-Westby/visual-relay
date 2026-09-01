@@ -53,27 +53,16 @@ public partial class MainWindowViewModel
     /// </summary>
     internal Task? LastSandboxInspection { get; private set; }
 
-    /// <summary>
-    /// Captures the in-flight startup backend probe for the same reason as
-    /// <see cref="LastSandboxInspection"/>: the probe is an HTTP GET carrying
-    /// its own 2s timeout, so tests await the real operation rather than bet a
-    /// poll budget against it.
-    /// </summary>
-    internal Task? LastBackendStatusRefresh { get; private set; }
 
     /// <summary>
-    /// Fires background inspections (sandbox-path discovery and an initial
-    /// backend readiness probe) without blocking the UI. Called ONLY from
-    /// App startup (never the ctor or LoadInitialAsync) so unit tests spin
-    /// no subprocesses or sockets — exactly the same pattern as
-    /// <see cref="StartBackendMonitoring"/>. Both handles are kept rather than
-    /// discarded into <c>_</c> so tests can await them; nothing else changes
-    /// (both operations already swallow their own faults).
+    /// Fires the background sandbox-path discovery without blocking the UI.
+    /// Called ONLY from App startup (never the ctor or LoadInitialAsync) so unit
+    /// tests spin no subprocesses. The handle is kept rather than discarded into
+    /// <c>_</c> so tests can await it; the operation swallows its own faults.
     /// </summary>
     public void StartBackgroundInspections()
     {
         LastSandboxInspection = LoadSandboxPathsAsync();
-        LastBackendStatusRefresh = RefreshBackendStatusAsync();
     }
 
     /// <summary>

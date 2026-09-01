@@ -44,11 +44,8 @@ public sealed partial class ControlApiTests
         Assert.True(root.TryGetProperty("pauseRequested", out _));
         Assert.True(root.TryGetProperty("statusText", out _));
 
-        // backend block.
-        var backend = root.GetProperty("backend");
-        Assert.True(backend.TryGetProperty("reachable", out _));
-        Assert.True(backend.TryGetProperty("label", out _));
-        Assert.True(backend.TryGetProperty("message", out _));
+        // There is no backend block: the proxy it reported on is gone.
+        Assert.False(root.TryGetProperty("backend", out _));
 
         // selectedTask is null when nothing selected.
         Assert.Equal(JsonValueKind.Null, root.GetProperty("selectedTask").ValueKind);
@@ -69,7 +66,7 @@ public sealed partial class ControlApiTests
         string[] expected =
         [
             "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
-            "archive-toggle", "new-task", "follow-running", "start-backend",
+            "archive-toggle", "new-task", "follow-running",
             "edit", "select-task", "boost-turns", "skip-tests", "open-folder",
             "obsidian-scan", "obsidian-bridge"
         ];

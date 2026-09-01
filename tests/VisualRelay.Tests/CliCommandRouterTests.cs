@@ -19,7 +19,6 @@ public sealed class CliCommandRouterTests
     [InlineData("init")]
     [InlineData("check")]
     [InlineData("inspect")]
-    [InlineData("gen-backend-config")]
     [InlineData("guards")]
     [InlineData("install-hooks")]
     [InlineData("launch")]
@@ -33,6 +32,7 @@ public sealed class CliCommandRouterTests
     [InlineData("bogus")]
     [InlineData("")]
     [InlineData("sample-reset")]
+    [InlineData("gen-backend-config")]
     [InlineData("--help")]
     public void RejectsUnknownVerbs(string cmd)
     {

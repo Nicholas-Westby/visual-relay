@@ -64,7 +64,6 @@ public sealed partial class RunAllModesTests
     [InlineData("init")]
     [InlineData("check")]
     [InlineData("inspect")]
-    [InlineData("gen-backend-config")]
     [InlineData("guards")]
     [InlineData("install-hooks")]
     [InlineData("bump-version")]
@@ -76,14 +75,13 @@ public sealed partial class RunAllModesTests
     }
 
     [Fact]
-    public void KnownCommands_CountIsFifteen()
+    public void KnownCommands_AreAllRecognized()
     {
         // Every subcommand in the KnownCommands list must be recognized.
-        // There are exactly 15 entries (including the "run" alias).
         var expected = new[]
         {
             "launch", "run", "build", "test", "format", "screenshot",
-            "run-task", "init", "check", "inspect", "gen-backend-config",
+            "run-task", "init", "check", "inspect", "gen-sample",
             "guards", "install-hooks", "bump-version", "provision-mxc",
         };
 
@@ -106,7 +104,7 @@ public sealed partial class RunAllModesTests
         {
             "launch", "build", "test", "format", "screenshot", "run-task",
             "init", "install-hooks", "bump-version", "check", "inspect",
-            "guards", "gen-backend-config", "provision-mxc",
+            "guards", "provision-mxc",
         };
 
         foreach (var cmd in mustAppear)
@@ -216,23 +214,6 @@ public sealed partial class RunAllModesTests
         Assert.Contains("BuildAndRenderScreenshots", checkSource, StringComparison.Ordinal);
     }
 
-    // ── Backend lifecycle command enumeration ────────────────────────────
-
-    [Fact]
-    public void BackendLifecycle_HasAllCommands()
-    {
-        var paths = RepoPaths.Resolve();
-        var backendProgram = File.ReadAllText(
-            Path.Combine(paths.Root, "tools", "VisualRelay.Backend", "Program.cs"));
-
-        // The switch must dispatch start, stop, and status.
-        Assert.Contains("\"start\"", backendProgram, StringComparison.Ordinal);
-        Assert.Contains("\"stop\"", backendProgram, StringComparison.Ordinal);
-        Assert.Contains("\"status\"", backendProgram, StringComparison.Ordinal);
-        // Must have a default/usage fallback.
-        Assert.Contains("default:", backendProgram, StringComparison.Ordinal);
-    }
-
     // ── Nix flake architecture enumeration ───────────────────────────────
 
     [Fact]
@@ -264,16 +245,16 @@ public sealed partial class RunAllModesTests
     // ── Passthrough command enumeration ──────────────────────────────────
 
     [Fact]
-    public void PassthroughCommand_DispatchesAllThreeTools()
+    public void PassthroughCommand_DispatchesEveryForwardedTool()
     {
         var paths = RepoPaths.Resolve();
         var passthroughSource = File.ReadAllText(
             Path.Combine(paths.Root, "tools", "VisualRelay.Cli", "Commands",
                 "PassthroughCommand.cs"));
 
-        // The three passthrough tools must each have a named method.
+        // Each passthrough tool must have a named method.
         Assert.Contains("RunTask", passthroughSource, StringComparison.Ordinal);
-        Assert.Contains("GenBackendConfig", passthroughSource, StringComparison.Ordinal);
+        Assert.Contains("GenSample", passthroughSource, StringComparison.Ordinal);
         Assert.Contains("Guards", passthroughSource, StringComparison.Ordinal);
     }
 }

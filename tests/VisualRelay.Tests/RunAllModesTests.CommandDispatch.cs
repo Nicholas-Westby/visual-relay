@@ -38,7 +38,7 @@ public sealed partial class RunAllModesTests
         var knownCommands = new[]
         {
             "launch", "run", "build", "test", "format", "screenshot",
-            "run-task", "init", "check", "inspect", "gen-backend-config",
+            "run-task", "init", "check", "inspect",
             "guards", "install-hooks", "bump-version", "provision-mxc",
         };
 
@@ -76,28 +76,10 @@ public sealed partial class RunAllModesTests
         Assert.Contains("_ =>", guardsProgram, StringComparison.Ordinal);
     }
 
-    // ── Backend Program.cs dispatch coverage ─────────────────────────────
-
-    [Fact]
-    public void BackendProgramDispatch_CoversAllCommands()
-    {
-        var paths = RepoPaths.Resolve();
-        var backendProgram = File.ReadAllText(
-            Path.Combine(paths.Root, "tools", "VisualRelay.Backend", "Program.cs"));
-
-        var backendCommands = new[] { "start", "stop", "status" };
-
-        foreach (var cmd in backendCommands)
-            Assert.Contains($"\"{cmd}\"", backendProgram, StringComparison.Ordinal);
-
-        // Must have a default usage fallback.
-        Assert.Contains("default:", backendProgram, StringComparison.Ordinal);
-    }
-
     // ── Passthrough command method coverage ──────────────────────────────
 
     [Fact]
-    public void PassthroughCommand_DispatchesRunTask_GenBackendConfig_Guards()
+    public void PassthroughCommand_DispatchesRunTask_GenSample_Guards()
     {
         var paths = RepoPaths.Resolve();
         var passthroughSource = File.ReadAllText(
@@ -106,12 +88,12 @@ public sealed partial class RunAllModesTests
 
         // Each passthrough must have a method that forwards to the tool project.
         Assert.Contains("RunTask", passthroughSource, StringComparison.Ordinal);
-        Assert.Contains("GenBackendConfig", passthroughSource, StringComparison.Ordinal);
+        Assert.Contains("GenSample", passthroughSource, StringComparison.Ordinal);
         Assert.Contains("Guards", passthroughSource, StringComparison.Ordinal);
 
         // The forwarding helper must reference each tool project name.
         Assert.Contains("VisualRelay.RunTask", passthroughSource, StringComparison.Ordinal);
-        Assert.Contains("VisualRelay.GenBackendConfig", passthroughSource, StringComparison.Ordinal);
+        Assert.Contains("VisualRelay.SampleTasks", passthroughSource, StringComparison.Ordinal);
         Assert.Contains("VisualRelay.Guards", passthroughSource, StringComparison.Ordinal);
     }
 

@@ -40,7 +40,6 @@ public sealed partial class ControlApi(
         "archive-toggle" => viewModel.ToggleArchiveCommand,
         "new-task" => viewModel.OpenNewTaskDialogCommand,
         "follow-running" => viewModel.FollowRunningTaskCommand,
-        "start-backend" => viewModel.StartBackendCommand,
         "edit" => viewModel.EditSelectedTaskCommand,
         "rewrite-selected" => viewModel.RewriteSelectedTaskCommand,
         "cancel-rewrite" => viewModel.CancelRewriteSelectedCommand,

@@ -124,12 +124,14 @@ public sealed class Installer5ReleaseWorkflowTests
     }
 
     [Fact]
-    public void Workflow_PublishesGenBackendConfig()
+    public void Workflow_DoesNotPublishTheDeletedProxyTools()
     {
         var content = ReadWorkflow();
 
-        // Must publish the GenBackendConfig tool.
-        Assert.Contains("VisualRelay.GenBackendConfig", content, StringComparison.Ordinal);
+        // The proxy and its config generator are gone; publishing either would
+        // fail the release build on a project that no longer exists.
+        Assert.DoesNotContain("VisualRelay.GenBackendConfig", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("VisualRelay.Backend", content, StringComparison.Ordinal);
     }
 
     [Fact]
