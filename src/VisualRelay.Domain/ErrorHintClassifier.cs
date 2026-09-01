@@ -34,10 +34,10 @@ public static class ErrorHintClassifier
         "model/prompt issue, retry or try a stronger tier.";
 
     private const string MissingBinaryHint =
-        "Hint: A required tool (swival/nono) isn't installed or isn't on PATH on " +
-        "this machine — Visual Relay can't run tasks here. It's set up on the VM, " +
-        "not this host. Install swival (and nono) and retry. The sandbox " +
-        "permission advisories printed every run are noise, not the cause.";
+        "Hint: A tool the run needs (nono, or a binary the stage tried to exec) " +
+        "isn't installed or isn't on PATH on this machine — Visual Relay can't run " +
+        "tasks here. It's set up on the VM, not this host. Install it and retry. " +
+        "The sandbox permission advisories printed every run are noise, not the cause.";
 
     // Returns an actionable hint for a recognized failure signature, or null
     // when the error is unrecognized (so callers never show a misleading hint).
@@ -86,8 +86,8 @@ public static class ErrorHintClassifier
             return ConnectionHint;
         }
 
-        // Missing binary: nono sets up the sandbox fine, then can't exec swival
-        // because it isn't on PATH — surfaced as "cannot find binary path",
+        // Missing binary: nono sets up the sandbox fine, then can't exec the
+        // program the stage asked for — surfaced as "cannot find binary path",
         // "Command execution failed", a shell "command not found", or exit 127 at
         // process exit, or as the pre-flight "not on PATH" refusal. The fix is
         // installing the tool, not bypassing a sandbox-permission rule.

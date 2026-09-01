@@ -2,10 +2,10 @@ using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.Tests;
 
-// EnsureRunnableAsync tool-presence gate: when a required launch tool (swival,
-// plus nono when the sandbox is on) is not on PATH, the GUI must refuse up front
-// with a clear StatusText that names the real cause — and the message must match
-// the runner's MissingToolsMessage so both surfaces stay identical.
+// EnsureRunnableAsync tool-presence gate: when the required launch tool (nono,
+// the OS sandbox) is not on PATH, the GUI must refuse up front with a clear
+// StatusText that names the real cause — and the message must match the runner's
+// MissingToolsMessage so both surfaces stay identical.
 public sealed partial class MainWindowViewModelTests
 {
     [Fact]
@@ -28,8 +28,9 @@ public sealed partial class MainWindowViewModelTests
         var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
 
         Assert.False(runnable);
-        // Names the real cause and points at installing swival.
-        Assert.Contains("swival", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        // Names the real cause: the sandbox binary this host is missing.
+        Assert.Contains("nono", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("swival", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("PATH", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
         // The drifted hand-copy used to omit this sentence; both surfaces must now
         // carry the unified runner message (MissingToolsMessage).

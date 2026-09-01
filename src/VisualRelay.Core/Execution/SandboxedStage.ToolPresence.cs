@@ -80,5 +80,5 @@ public static partial class SandboxedStage
     internal static string MissingToolsMessage(IReadOnlyList<string> missing) =>
         $"{string.Join(" and ", missing)} is not installed or not on PATH on this machine — " +
         "Visual Relay can't run tasks here. It's set up on the VM, not this host. " +
-        "Install swival and retry.";
+        "Install it and retry.";
 }

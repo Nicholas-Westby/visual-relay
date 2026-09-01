@@ -94,16 +94,16 @@ public sealed class ErrorHintClassifierTests
     [Fact]
     public void HintFor_MissingBinary_SuggestsInstallingTheTool()
     {
-        // nono set up the sandbox fine, then could not exec swival because it
-        // isn't on PATH. The actionable fix is installing swival, not bypassing
-        // a sandbox-permission rule.
-        const string raw = "nono: Command execution failed: swival: cannot find binary path";
+        // nono set up the sandbox fine, then could not exec the program the stage
+        // asked for because it isn't on PATH. The actionable fix is installing
+        // that tool, not bypassing a sandbox-permission rule.
+        const string raw = "nono: Command execution failed: dotnet: cannot find binary path";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
         Assert.NotNull(hint);
         Assert.Contains("install", hint, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("swival", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nono", hint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -123,7 +123,7 @@ public sealed class ErrorHintClassifierTests
         // The fail-fast pre-flight refusal phrases the failure as "not on PATH";
         // the same actionable hint must fire there as at process exit.
         const string raw =
-            "swival is not installed or not on PATH on this machine — Visual Relay can't run tasks here.";
+            "nono is not installed or not on PATH on this machine — Visual Relay can't run tasks here.";
 
         var hint = ErrorHintClassifier.HintFor(raw);
 
