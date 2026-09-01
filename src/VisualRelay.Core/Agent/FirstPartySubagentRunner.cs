@@ -161,7 +161,13 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     {
         if (result.Outcome != AgentLoopOutcome.Success)
             return new SubagentResult(
-                result.Answer, null, false, result.Error ?? result.OutcomeName,
+                // The subprocess runner appended the hint at this same boundary.
+                // Replacing it dropped every call site, so a watchdog kill or a
+                // provider failure reached the driver as a bare line. Unrecognised
+                // text comes back untouched, so nothing downstream that matches on
+                // the raw reason changes meaning.
+                result.Answer, null, false,
+                ErrorHintClassifier.WithHint(result.Error ?? result.OutcomeName),
                 // A cancelled stage must not be escalated around: the driver
                 // owns that decision and the stage did not fail on its merits.
                 // Nor must a watchdog kill that names a host condition — a

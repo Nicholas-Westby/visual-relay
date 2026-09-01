@@ -116,6 +116,54 @@ public sealed class FirstPartySubagentRunnerFaultTests
         Assert.Equal(expectHardAbort, AgentWatchdog.IsHardAbort(outcome));
     }
 
+    /// <summary>
+    /// A recognised failure reaches the driver with its hint appended. The
+    /// subprocess runner wrapped its own failure reason in
+    /// <see cref="ErrorHintClassifier.WithHint"/> at exactly this boundary; the
+    /// in-process cutover dropped every one of those call sites, so the only
+    /// surviving callers pass the TARGET project's test and guard output. A
+    /// stage killed by the watchdog therefore reached the user as a bare line
+    /// with no guidance at all.
+    ///
+    /// <para>This pins the WIRING. That the watchdog's own wordings are
+    /// classified is pinned separately by
+    /// <c>ErrorHintClassifierTests.HintFor_WatchdogKill_ReturnsTimeoutHint</c>,
+    /// because forcing a real kill here would need a clock this harness does not
+    /// have.</para>
+    /// </summary>
+    [Fact]
+    public async Task ARecognisedFailure_CarriesItsHintToTheDriver()
+    {
+        using var repo = TestRepository.Create();
+        var reportFile = Path.Combine(repo.Root, "stage1-attempt1.report.json");
+        var fault = new HttpRequestException("Error code: 401 - invalid api_key");
+
+        var result = await Build(new ThrowingTransport(fault))
+            .RunAsync(Invocation(repo.Root, reportFile));
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("invalid api_key", result.Error, StringComparison.Ordinal);
+        Assert.Contains("Hint:", result.Error, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An unrecognised failure is never decorated. The raw text has to survive
+    /// verbatim, or the driver's own matching on it changes meaning.
+    /// </summary>
+    [Fact]
+    public async Task AnUnrecognisedFailure_IsLeftExactlyAsItWas()
+    {
+        using var repo = TestRepository.Create();
+        var reportFile = Path.Combine(repo.Root, "stage1-attempt1.report.json");
+        var fault = new HttpRequestException("something nobody has classified");
+
+        var result = await Build(new ThrowingTransport(fault))
+            .RunAsync(Invocation(repo.Root, reportFile));
+
+        Assert.NotNull(result.Error);
+        Assert.DoesNotContain("Hint:", result.Error, StringComparison.Ordinal);
+    }
+
     /// <summary>The transport failures a provider call can raise.</summary>
     /// <returns>One failure per row.</returns>
     public static TheoryData<Exception> TransportFaults() =>
