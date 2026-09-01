@@ -16,17 +16,17 @@
           pkgs = import nixpkgs { inherit system; };
           nonoPinned = pkgs.rustPlatform.buildRustPackage {
             pname = "nono";
-            version = "0.66.0";
+            version = "0.75.0";
 
             __darwinAllowLocalNetworking = true;
 
             src = pkgs.fetchFromGitHub {
               owner = "nolabs-ai";
               repo = "nono";
-              tag = "v0.66.0";
-              hash = "sha256-8Bol6B3c0pb25FG7214e6rXSKcACeOOQAd+c+1lblV4=";
+              tag = "v0.75.0";
+              hash = "sha256-4HrWe6RamlfXJ1hDIc+E80a+lDxuHWzeXmpkuRp0r7U=";
             };
-            cargoHash = "sha256-WqOiB+TylLsy44ZOwdGMwdKAmhqi8OXDqsKse67GOgs=";
+            cargoHash = "sha256-N6lyAQJeFm9Aa78hYW1vMQ+IBHUhxfqGKAb5TH3oyh4=";
 
             doCheck = false;
 
