@@ -51,7 +51,7 @@ public sealed partial class AgentTurnLoop
         private readonly List<int> _promptTokensPerCall = [];
 
         /// <summary>Each call's measured input tokens, in call order.</summary>
-        public IReadOnlyList<int> PromptTokensPerCall => _promptTokensPerCall;
+        private IReadOnlyList<int> PromptTokensPerCall => _promptTokensPerCall;
 
         /// <summary>Adds one call's measured usage to the running totals.</summary>
         /// <param name="usage">The usage the provider reported.</param>
