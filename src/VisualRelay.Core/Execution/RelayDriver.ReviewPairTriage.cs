@@ -27,8 +27,7 @@ public sealed partial class RelayDriver
         triageInvocation = triageInvocation with
         {
             Tier = "cheap",
-            MaxTurns = TriageMaxTurns,
-            MaxSelfEscalations = 0
+            MaxTurns = TriageMaxTurns
         };
 
         var result = await _dependencies.SubagentRunner.RunAsync(triageInvocation, cancellationToken);

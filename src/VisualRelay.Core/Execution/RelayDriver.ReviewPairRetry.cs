@@ -89,8 +89,7 @@ public sealed partial class RelayDriver
         {
             Tier = toTier,
             MaxTurns = toTurns,
-            AbsoluteCeilingMs = toCeilingMs,
-            MaxSelfEscalations = 0
+            AbsoluteCeilingMs = toCeilingMs
         };
 
         return await RunStageAsync(invocation, stage, taskDirectory, cancellationToken);

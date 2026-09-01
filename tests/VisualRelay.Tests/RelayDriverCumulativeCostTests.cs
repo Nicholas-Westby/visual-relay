@@ -6,8 +6,7 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// When a main-loop stage (1–9) escalates IN-PROCESS inside
-/// <see cref="SandboxedStage.RunAsync"/>, the escalated runs each write a
+/// When a main-loop stage (1–9) runs more than one attempt, each attempt writes a
 /// distinct <c>stage{n}-attempt{k}.report.json</c>. The driver emits a single
 /// <c>stage_done</c> for that stage, which must carry the turns + cost SUMMED
 /// across every attempt (so it matches the archived

@@ -27,13 +27,11 @@ public sealed record StageInvocation(
     // RelayConfig.BoostTurnsTaskIds): RunAsync's per-escalation turn DOUBLING is then
     // suppressed (turns stay flat at the already-10× MaxTurns) while the tier still
     // escalates. False (default) = the normal doubling ladder applies.
-    bool IsTurnBoosted = false,
     // Per-invocation cap on RunAsync's own internal tier+turn escalation. Default
     // int.MaxValue = escalation is governed solely by RelayConfig.MaxStageFailures.
     // The driver's fix-verify loop passes 0 because IT owns the (external, verify-red)
     // escalation across its iterations — so the inner RunAsync must not also escalate
     // (which would double-count the 3-run budget for that stage).
-    int MaxSelfEscalations = int.MaxValue,
     // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt
     // emits a "Protected paths" header line naming it as queue bookkeeping that is
     // never part of the task's diff. Null (default) omits the line.

@@ -83,29 +83,4 @@ public static partial class SandboxedStage
         return string.Join('\n', parts);
     }
 
-    private static string BuildCorrectivePrompt(StageInvocation invocation, string priorOutput, string? shapeError = null)
-    {
-        var problem = shapeError is not null
-            ? $"The previous completion had a valid fenced JSON block but it was rejected: {shapeError}. " +
-              "Reply with ONLY a corrected fenced JSON block — fix the issue, derive the values from the prior answer below. " +
-              "Do NOT redo the work or add any other text."
-            : "The previous completion was missing the required fenced JSON block. " +
-              "Reply with ONLY that block — derive it from the prior answer below. " +
-              "Do NOT redo the work or add any other text.";
-
-        var parts = new List<string>
-        {
-            $"# Relay stage {invocation.Stage.Number}: {invocation.Stage.Name} — CORRECTIVE RETRY",
-            $"Task: {invocation.TaskName}",
-            string.Empty,
-            problem,
-            string.Empty,
-            "## Expected contract",
-            invocation.Stage.OutputContract,
-            string.Empty,
-            "## Prior output",
-            priorOutput
-        };
-        return string.Join('\n', parts);
-    }
 }

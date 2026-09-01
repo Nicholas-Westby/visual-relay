@@ -89,9 +89,10 @@ public sealed partial class RelayDriver
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
                 input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand, verifyOutputPath: failingVerifyOutputPath);
-            // Pin this run's escalated tier + budget; MaxSelfEscalations=0 so the inner
-            // RunAsync does not also escalate (this loop owns the stage-10 run budget).
-            invocation = invocation with { Tier = tier, MaxTurns = turns, AbsoluteCeilingMs = ceilingMs, MaxSelfEscalations = 0 };
+            // Pin this run's escalated tier and budget: this loop owns the stage-10
+            // run budget. The runner walks its tier's model chain and never
+            // escalates tiers on its own, so nothing else has to say so.
+            invocation = invocation with { Tier = tier, MaxTurns = turns, AbsoluteCeilingMs = ceilingMs };
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
             if (cost is not null) { sessionCostUsd += cost.CostUsd; } else { unknownCostStageCount++; }
@@ -259,8 +260,8 @@ public sealed partial class RelayDriver
         // equality, mirroring NormalizeForComparison in RepoGuards.cs. Digits
         // adjacent to ASCII letters (e.g. "Page1") are left intact so different
         // failing-test names never normalize equal.
-        s = System.Text.RegularExpressions.Regex.Replace(s, @"(?<![A-Za-z])[0-9]+(?![A-Za-z])", "#");
-        return System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+        s = System.Text.RegularExpressions.Regex.Replace(s, "(?<![A-Za-z])[0-9]+(?![A-Za-z])", "#");
+        return System.Text.RegularExpressions.Regex.Replace(s, "\\s+", " ").Trim();
     }
 
 }

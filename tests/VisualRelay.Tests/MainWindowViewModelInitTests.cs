@@ -1,5 +1,4 @@
 using VisualRelay.App.ViewModels;
-using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
@@ -140,7 +139,7 @@ public sealed class MainWindowViewModelInitTests
         {
             RootPath = repo.Root,
         };
-        viewModel.InitValidationRunnerFactory = timeout =>
+        viewModel.InitValidationRunnerFactory = _ =>
             new StatusCaptureTestRunner(new TestRunResult(0, "green"),
                 () => capturedStatusText = viewModel.StatusText);
         await viewModel.LoadInitialAsync();

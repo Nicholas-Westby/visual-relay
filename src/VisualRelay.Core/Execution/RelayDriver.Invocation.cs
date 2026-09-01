@@ -47,7 +47,6 @@ public sealed partial class RelayDriver
             FullTestCommand: fullTestCommand,
             AbsoluteCeilingMs: ceilingMs,
             VerifyOutputPath: verifyOutputPath,
-            IsTurnBoosted: boosted,
             TasksDir: config.TasksDir);
     }
 

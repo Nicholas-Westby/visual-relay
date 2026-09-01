@@ -153,7 +153,6 @@ public sealed partial class SplitGuardVerificationTests
         var content = File.ReadAllText(path);
         Assert.Contains("internal static", content, StringComparison.Ordinal);
         Assert.DoesNotContain("public sealed class", content, StringComparison.Ordinal);
-        Assert.Contains("Invocation", content, StringComparison.Ordinal);
         Assert.Contains("WriteExecutableAsync", content, StringComparison.Ordinal);
     }
 

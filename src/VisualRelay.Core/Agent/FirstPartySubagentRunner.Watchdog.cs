@@ -5,7 +5,7 @@ namespace VisualRelay.Core.Agent;
 public sealed partial class FirstPartySubagentRunner
 {
     /// <summary>How often the stall clocks are checked.</summary>
-    private static readonly TimeSpan WatchdogTick = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// The stall windows configured for a tier, falling back to the flat value.
@@ -19,7 +19,7 @@ public sealed partial class FirstPartySubagentRunner
     /// they drive the in-process watchdog now rather than being dropped from the
     /// config and silently ignored on every repo that set them.
     /// </remarks>
-    internal static (TimeSpan FirstOutput, TimeSpan Inactivity, TimeSpan OutputSilence)
+    private static (TimeSpan FirstOutput, TimeSpan Inactivity, TimeSpan OutputSilence)
         ResolveStallWindows(RelayConfig config, string tier)
     {
         var firstOutput = config.FirstOutputTimeoutMsByTier.TryGetValue(tier, out var fo)
@@ -53,20 +53,22 @@ public sealed partial class FirstPartySubagentRunner
         Func<CancellationToken, Task<AgentLoopResult>> body,
         CancellationToken cancellationToken)
     {
-        using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var fired = AgentWatchdogOutcome.Disarmed;
 
         watchdog.Start();
-        using var timer = _timeProvider.CreateTimer(
+        var timer = _timeProvider.CreateTimer(
             _ =>
             {
                 var (outcome, _) = watchdog.Evaluate();
                 if (outcome == AgentWatchdogOutcome.Disarmed) return;
                 fired = outcome;
-                try { stall.Cancel(); }
-                catch (ObjectDisposedException) { /* the loop already finished */ }
+                // Safe: the finally awaits the timer's disposal, which waits for
+                // this callback, BEFORE disposing the source.
+                // ReSharper disable once AccessToDisposedClosure
+                stall.Cancel();
             },
-            null, WatchdogTick, WatchdogTick);
+            null, Tick, Tick);
 
         try
         {
@@ -79,6 +81,14 @@ public sealed partial class FirstPartySubagentRunner
                 string.Empty,
                 new AgentStats(),
                 $"the stage stalled: {Describe(fired)}");
+        }
+        finally
+        {
+            // Await the timer's disposal before the source it cancels goes away.
+            // Disposing the source first would let an in-flight tick call Cancel
+            // on a disposed object.
+            await timer.DisposeAsync().ConfigureAwait(false);
+            stall.Dispose();
         }
     }
 

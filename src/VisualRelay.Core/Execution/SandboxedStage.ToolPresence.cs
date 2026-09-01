@@ -47,7 +47,7 @@ public static partial class SandboxedStage
     /// <param name="pathext">PATHEXT, for Windows executable resolution.</param>
     /// <param name="windowsMode">The selected Windows sandbox mode.</param>
     /// <returns>The missing requirement names.</returns>
-    internal static IReadOnlyList<string> MissingRequiredTools(
+    private static IReadOnlyList<string> MissingRequiredTools(
         string path, string nonoBinary,
         bool isWindows, string? pathext, WindowsSandboxMode windowsMode)
     {

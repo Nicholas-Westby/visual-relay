@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using VisualRelay.Core.Execution;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -181,27 +180,4 @@ public sealed class ProcessCaptureGracefulStopTests
 
     // ── helpers ────────────────────────────────────────────────────
 
-    private static RelayConfig TestConfig() =>
-        new(
-            "llm-tasks",
-            "true",
-            "true",
-            [],
-            new Dictionary<string, string> { ["cheap"] = "cheap" },
-            true,
-            1,
-            1,
-            false,
-            true,
-            5_000,
-            300_000,
-            new Dictionary<string, int>
-            {
-                ["cheap"] = 90_000,
-                ["balanced"] = 120_000,
-                ["frontier"] = 660_000
-            },
-            660_000,
-            InactivityTimeoutMsByTier: null,
-            InactivityTimeoutMs: 600_000);
 }

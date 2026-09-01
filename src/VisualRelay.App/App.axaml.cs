@@ -48,7 +48,7 @@ public partial class App : Application
             // RestartBetweenTasks resume: if a fresh handoff sidecar is
             // present, reopen its recorded root path and auto-continue
             // the drain. Stale sidecars are discarded loudly.
-            TryAutoResumeFromHandoff(viewModel, window);
+            TryAutoResumeFromHandoff(viewModel);
 
             // Localhost HTTP control surface so an operator can drive the app
             // from curl exactly as if clicking its buttons (loopback-only;
@@ -88,7 +88,7 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    private static void TryAutoResumeFromHandoff(MainWindowViewModel viewModel, Window window)
+    private static void TryAutoResumeFromHandoff(MainWindowViewModel viewModel)
     {
         // Read the handoff from the current working directory first — the
         // relauncher spawns the new process with WorkingDirectory set to the

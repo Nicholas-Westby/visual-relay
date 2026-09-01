@@ -22,11 +22,8 @@ public sealed class ExtractFailureReasonConcurrentTests
         // - A "Test run … failed after … with 1 issue." summary near EOF
         // - A trailing JSON session epilogue
         // The real failure is in the MIDDLE of a 746-line concurrent log.
-        var lines = new List<string>();
-
         // Setup / banner lines
-        lines.Add("Build complete!");
-        lines.Add("Test run started…");
+        var lines = new List<string> { "Build complete!", "Test run started…" };
 
         // ~200 passing tests BEFORE the failure (mid-log)
         for (var i = 1; i <= 200; i++)

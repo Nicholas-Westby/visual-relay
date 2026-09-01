@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using VisualRelay.App.Services;

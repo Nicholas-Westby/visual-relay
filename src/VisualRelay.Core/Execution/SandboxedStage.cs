@@ -1,4 +1,3 @@
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
@@ -18,7 +17,7 @@ namespace VisualRelay.Core.Execution;
 public static partial class SandboxedStage
 {
     /// <summary>The sandbox binary every stage command is wrapped in.</summary>
-    internal const string NonoBinary = "nono";
+    private const string NonoBinary = "nono";
 
     /// <summary>
     /// Shared nono-prefix builder: Swival and verification callers produce

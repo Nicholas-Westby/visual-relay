@@ -87,7 +87,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     taskHash = pairState.TaskHash;
                     sessionCostUsd = pairState.SessionCostUsd;
                     unknownCostStageCount = pairState.UnknownCostStageCount;
-                    reviewPairHandled = true; fixSkipReason = pairState.FixSkipReason;
+                    reviewPairHandled = true; fixSkipReason = pairState.SkipReason;
                     continue;
                 }
                 // Skip Fix (9) when the review family left nothing to fix (see SkipStages); before stage_start so a skip never flickers Running.

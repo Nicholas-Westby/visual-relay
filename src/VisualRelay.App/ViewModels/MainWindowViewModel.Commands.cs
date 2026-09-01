@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Tasks;

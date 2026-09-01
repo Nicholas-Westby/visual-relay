@@ -55,6 +55,8 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     /// The first backoff step. Settable so a test can exercise the chain without
     /// waiting real seconds between hops.
     /// </param>
+    /// <param name="relayEvents">Where the stage-input artifact is announced.</param>
+    /// <param name="git">Git, for the stage-4 and stage-10 manifest check.</param>
     public FirstPartySubagentRunner(
         IProviderTransport transport,
         RelayConfig config,

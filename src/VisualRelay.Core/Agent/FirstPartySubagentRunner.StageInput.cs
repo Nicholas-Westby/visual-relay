@@ -1,6 +1,5 @@
 using System.Text;
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Agent;

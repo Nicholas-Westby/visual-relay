@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Text;
-using VisualRelay.Core.Costs;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -9,12 +7,12 @@ public sealed partial class RelayDriver
 {
     private const int TriageMaxTurns = 12;
 
-    private sealed record PairState(
+    private sealed record ReviewPairState(
         string PreviousSeal, string TaskHash, double SessionCostUsd,
-        int UnknownCostStageCount, RelayTaskOutcome? FlaggedOutcome, string? FixSkipReason);
+        int UnknownCostStageCount, RelayTaskOutcome? FlaggedOutcome, string? SkipReason);
 
     // Runs Review (stage 7) and Visual-review (stage 8) concurrently with triage-based routing.
-    private async Task<PairState> RunReviewPairAsync(
+    private async Task<ReviewPairState> RunReviewPairAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, RelayTaskInput input, StringBuilder ledger,
         List<string> seals, List<StageStatusEntry> statusEntries,
@@ -97,7 +95,7 @@ public sealed partial class RelayDriver
                             await PublishStageDoneAsync(rootPath, runId, taskId, reviewStage,
                                 TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
                                 cancellationToken, status: "Stopped");
-                            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, null);
+                            return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, null);
                         }
                         (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
                             visualStage, fastVisual, ledger, seals, statusEntries, manifest,
@@ -105,7 +103,7 @@ public sealed partial class RelayDriver
                         (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
                             reviewStage, retryResult, ledger, seals, statusEntries, manifest,
                             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
-                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(retryResult.Body, fastVisual.Body));
+                        return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(retryResult.Body, fastVisual.Body));
                     }
                     reviewResult = retryResult;
                 }
@@ -117,7 +115,7 @@ public sealed partial class RelayDriver
                 await PublishStageDoneAsync(rootPath, runId, taskId, visualStage,
                     TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
                     cancellationToken, status: "Stopped");
-                return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
+                return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
             }
             if (fastVisual.Check == "red")
             {
@@ -138,7 +136,7 @@ public sealed partial class RelayDriver
                         (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
                             reviewStage, reviewResult, ledger, seals, statusEntries, manifest,
                             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
-                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, retryResult.Body));
+                        return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, retryResult.Body));
                     }
                     fastVisual = retryResult;
                 }
@@ -150,7 +148,7 @@ public sealed partial class RelayDriver
                 await PublishStageDoneAsync(rootPath, runId, taskId, reviewStage,
                     TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
                     cancellationToken, status: "Stopped");
-                return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
+                return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
             }
 
             // Record visual first (it finished first), then review.
@@ -161,7 +159,7 @@ public sealed partial class RelayDriver
                 reviewStage, reviewResult, ledger, seals, statusEntries, manifest,
                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
 
-            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, fastVisual.Body));
+            return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, fastVisual.Body));
         }
 
         // Review finished first (common case).
@@ -197,13 +195,13 @@ public sealed partial class RelayDriver
                             var vReason = BuildReviewFlagReason("Visual-review", siblingResult, rootPath);
                             var vOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
                                 vReason, siblingResult.Body, statusEntries, cancellationToken);
-                            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, null);
+                            return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, null);
                         }
                         (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
                             visualStage, siblingResult, ledger, seals, statusEntries, manifest,
                             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
                     }
-                    return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(retryResult.Body, siblingResult?.Body));
+                    return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(retryResult.Body, siblingResult?.Body));
                 }
                 reviewResult = retryResult;
             }
@@ -221,7 +219,7 @@ public sealed partial class RelayDriver
                     TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
                     cancellationToken, status: "Stopped");
             }
-            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
+            return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
         }
 
         // Record review immediately — its stage_done fires now, not at the barrier.
@@ -252,7 +250,7 @@ public sealed partial class RelayDriver
                     (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
                         visualStage, retryResult, ledger, seals, statusEntries, manifest,
                         previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
-                    return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, retryResult.Body));
+                    return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, retryResult.Body));
                 }
                 visualResult = retryResult;
             }
@@ -260,7 +258,7 @@ public sealed partial class RelayDriver
             var reason = BuildReviewFlagReason("Visual-review", visualResult, rootPath);
             var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
                 reason, visualResult.Body, statusEntries, cancellationToken);
-            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
+            return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, null);
         }
 
         if (visualResult is not null)
@@ -285,7 +283,7 @@ public sealed partial class RelayDriver
                 unknownCostStageCount, cancellationToken);
         }
 
-        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, visualResult?.Body));
+        return new ReviewPairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, FixSkipReason(reviewResult.Body, visualResult?.Body));
     }
 
     // Triage, render, and visual-input helpers live in
