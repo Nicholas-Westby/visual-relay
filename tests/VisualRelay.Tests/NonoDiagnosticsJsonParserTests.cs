@@ -186,4 +186,42 @@ public sealed class NonoDiagnosticsJsonParserTests
         Assert.Equal("/tmp/foo", denials[0].Target);
         Assert.Equal("final line", stripped);
     }
+
+    // ── A brace inside a denial target ────────────────────────────────
+
+    /// <summary>
+    /// A denied path containing a closing brace must not cost us the whole
+    /// diagnostic. The brace walk was not string-aware, so a <c>}</c> inside a
+    /// target ended the block early, the truncated text failed to parse, and
+    /// every denial for that stage was dropped in silence. Sandbox denials name
+    /// shell commands, and braces in those are routine.
+    /// </summary>
+    [Fact]
+    public void TryExtractDenials_WithABraceInTheTarget_StillExtracts()
+    {
+        var json = "{\"denials\":[{\"operation\":\"file-write-create\",\"target\":\"/tmp/awk-}-out\"}]}";
+        var output = "some command output\n" + json;
+
+        var result = NonoDiagnosticsJsonParser.TryExtractDenials(output, out var stripped, out var denials);
+
+        Assert.True(result);
+        Assert.Single(denials);
+        Assert.Equal("/tmp/awk-}-out", denials[0].Target);
+        Assert.Equal("some command output\n", stripped);
+    }
+
+    /// <summary>An opening brace in a target is equally harmless.</summary>
+    [Fact]
+    public void TryExtractDenials_WithAnOpeningBraceInTheTarget_StillExtracts()
+    {
+        var json = "{\"denials\":[{\"operation\":\"exec\",\"target\":\"find . -exec rm {\"}]}";
+        var output = "log\n" + json;
+
+        var result = NonoDiagnosticsJsonParser.TryExtractDenials(output, out var stripped, out var denials);
+
+        Assert.True(result);
+        Assert.Single(denials);
+        Assert.Equal("find . -exec rm {", denials[0].Target);
+        Assert.Equal("log\n", stripped);
+    }
 }

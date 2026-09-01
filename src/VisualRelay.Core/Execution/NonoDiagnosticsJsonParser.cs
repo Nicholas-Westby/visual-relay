@@ -8,6 +8,12 @@ namespace VisualRelay.Core.Execution;
 /// <c>"denials"</c> in a captured output string, extracts the denial records,
 /// and strips the block from the output.  Absent, truncated, or malformed JSON
 /// never throws — the method returns <c>false</c> with the output unchanged.
+/// <para>
+/// The brace walk is STRING-AWARE.  It did not used to be, and a denial whose
+/// target held a brace ended the block early: the truncated text failed to
+/// parse and every denial for that stage was dropped in silence.  Denials name
+/// shell commands, and braces in those are routine.
+/// </para>
 /// </summary>
 internal static class NonoDiagnosticsJsonParser
 {
@@ -24,48 +30,79 @@ internal static class NonoDiagnosticsJsonParser
             return false;
         }
 
-        // Find the LAST balanced {…} block that contains "denials".
-        // Scan backwards from the end.
-        var span = output.AsSpan();
-        var lastOpen = -1;
-        for (var i = span.Length - 1; i >= 0; i--)
-        {
-            if (span[i] == '{')
-            {
-                // Try to find the matching close brace from this position.
-                var depth = 1;
-                var close = -1;
-                for (var j = i + 1; j < span.Length; j++)
-                {
-                    if (span[j] == '{') depth++;
-                    else if (span[j] == '}') depth--;
-                    if (depth == 0) { close = j; break; }
-                }
+        // One forward pass, tracking string state, then take the LAST block that
+        // names denials.  Scanning backwards from the end cannot know whether a
+        // brace sits inside a string, which is what made this lossy.
+        var blocks = TopLevelBlocks(output);
 
-                if (close >= 0)
-                {
-                    // Check if this block contains "denials".
-                    var block = span.Slice(i, close - i + 1);
-                    if (block.ToString().Contains("\"denials\"", StringComparison.Ordinal))
-                    {
-                        lastOpen = i;
-                        // Extract denials from this block.
-                        if (TryParseDenials(block, denials))
-                        {
-                            // Strip the JSON block from the output.
-                            stripped = output[..i] + output[(close + 1)..];
-                            return true;
-                        }
-                        // If parsing failed, fall through - don't strip.
-                        stripped = output;
-                        return false;
-                    }
-                }
+        for (var i = blocks.Count - 1; i >= 0; i--)
+        {
+            var (blockStart, blockEnd) = blocks[i];
+            var block = output.AsSpan(blockStart, blockEnd - blockStart + 1);
+            if (!block.Contains("\"denials\"", StringComparison.Ordinal)) continue;
+
+            if (TryParseDenials(block, denials))
+            {
+                stripped = output[..blockStart] + output[(blockEnd + 1)..];
+                return true;
             }
+
+            // This block is the one we wanted and it will not parse.  Do not
+            // fall back to an earlier one, and leave the output alone.
+            stripped = output;
+            return false;
         }
 
         stripped = output;
         return false;
+    }
+
+    /// <summary>
+    /// Every balanced top-level <c>{…}</c> span, in order, with braces inside
+    /// string literals ignored.
+    /// </summary>
+    private static List<(int Start, int End)> TopLevelBlocks(string text)
+    {
+        var blocks = new List<(int, int)>();
+        var depth = 0;
+        var start = -1;
+        var inString = false;
+        var escaped = false;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (inString)
+            {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"':
+                    inString = true;
+                    break;
+                case '{':
+                    if (depth == 0) start = i;
+                    depth++;
+                    break;
+                case '}' when depth > 0:
+                    depth--;
+                    if (depth == 0 && start >= 0)
+                    {
+                        blocks.Add((start, i));
+                        start = -1;
+                    }
+
+                    break;
+            }
+        }
+
+        return blocks;
     }
 
     private static bool TryParseDenials(ReadOnlySpan<char> jsonBlock, List<SandboxDenial> denials)

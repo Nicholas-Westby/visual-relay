@@ -321,8 +321,8 @@ and was not the contract. The reader then reported a missing key against text
 that plainly had it. The run stopped after 4 of 9 stages.
 
 It now scans FORWARD once, tracking string state, and prefers the last candidate
-that both parses and satisfies the contract. Two further paid runs of the exact
-task that failed both passed, in 337s and 316s.
+that both parses and satisfies the contract. Three further paid runs of the exact
+task that failed all passed, in 337s, 316s and 351s.
 
 This is the kind of defect no fixture would have produced, because writing the
 fixture requires already knowing that models put braces inside prose about code.
