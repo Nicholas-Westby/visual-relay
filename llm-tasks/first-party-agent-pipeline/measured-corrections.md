@@ -589,3 +589,64 @@ deleted after the runs to keep the VM's disk free — which the session's own
 instructions asked for. The logs carry attempt markers only on the subprocess
 arm, so the two are not comparable. Measuring it properly needs a fresh paid run
 with the reports retained.
+
+## Closing the audit's gaps
+
+Everything the audit found short has now been closed except one step, and the
+work turned up four more defects on the way.
+
+**Step 16, request goldens — done, and it earned its keep immediately.** Nine
+models by four shapes are goldened at
+`tests/VisualRelay.Tests/Goldens/request/<model>/<stage>.json`, refreshed with
+`VR_UPDATE_GOLDENS=1`. Two of the four shapes exist to capture what actually
+differs per provider: reasoning effort and required tool choice. The live half
+runs opt-in, POSTs each goldened body to the provider that will serve it, and
+abandons the stream after the first chunk.
+
+The first live run failed three of thirty-six. **DeepSeek rejects
+`tool_choice: required`** with "Thinking mode does not support this tool_choice".
+The capability catalog had it the other way round, and so did the spec, which
+calls the constraint Moonshot's and not DeepSeek's. The error is only reachable
+with thinking on — DeepSeek V4's default — so a probe with reasoning disabled
+would have said the opposite. Corrected, regoldened, and 36 of 36 now accepted.
+
+**Steps 17 and 18 — the LiteLLM template is deleted.** Ten guards were rewritten
+against the C# catalog with their negative controls kept, and the required
+golden set is now derived from the routable models, so adding a route without
+pricing or a golden fails the build. Two more defects surfaced:
+
+- `run_start` still advertised `http://127.0.0.1:4000` in every run log, and the
+  error hints told users to start a LiteLLM proxy. Nothing listens there.
+- A tier with **no backing key still resolved**, to a model whose key was
+  absent. The comment said why: so the proxy would boot with the model
+  definitions present and no api_key value. The proxy is gone and the claim was
+  never true of the request. Unbacked tiers are now omitted from routing, while
+  the settings panel still shows them so the user learns which key to set.
+
+**Steps 31 and 32 — the fault matrix is complete**, including `Retry-After`.
+That header was documented as never observed, which is not the same as never
+sent: a provider that names its window knows something the schedule cannot, and
+guessing over it is how a rate limit becomes a ban. It is now honoured exactly,
+on virtual time, with no jitter piled on top.
+
+**Steps 33 and 34** — the differential compares `stats` and outcome, not just
+tool calls, and the four golden reports that sat in Fixtures unread now drive
+both readers. The full-corpus sweep passes.
+
+**Step 35 — the matrix is complete.** The three missing Tier A rows exposed two
+real gaps: the prompt had **no manifest cap at all**, so a large repo pasted
+thousands of paths before the model read a line of code, and the default verify
+timeout was five minutes, which reaped the healthy six-minute suite that is the
+spec's own headline row. Both fixed.
+
+**Tier B, with a deviation.** The spec asks for cassette replay. These rows run
+against a scripted model instead, and the reason is the spec's own requirement
+that Tier B be free and deterministic: a cassette keys on exact request bytes,
+and a full pipeline's requests carry tool output — file contents, git state,
+paths — so a byte-for-byte replay is deterministic only until the repository
+shifts under it. The rows exercise Visual Relay's logic rather than model
+capability, which is precisely the case the spec says needs no live model.
+
+**Step 39 remains the one step not done.** Shadow mode needs both runners and
+one was deleted. It is foreclosed, not deferred, and no amount of further work
+here recovers it.

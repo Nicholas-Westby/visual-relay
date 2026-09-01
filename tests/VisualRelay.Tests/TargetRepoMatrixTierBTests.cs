@@ -164,7 +164,8 @@ public sealed class TargetRepoMatrixTierBTests
     /// </summary>
     /// <param name="repo">The repository under test.</param>
     /// <param name="config">Its loaded configuration.</param>
-    /// <returns>The task outcome.</returns>
+    /// <param name="manifestPath">A repo-relative file the manifest may name.</param>
+    /// <returns>The task outcome and the events the run published.</returns>
     private static async Task<(RelayTaskOutcome Outcome, InMemoryRelayEventSink Sink)>
         RunPipelineAsync(TestRepository repo, RelayConfig config, string manifestPath)
     {
