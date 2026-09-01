@@ -57,6 +57,7 @@ public sealed class ProviderRoutesTests
             Assert.False(string.IsNullOrWhiteSpace(route.UpstreamModel), $"{alias} has no upstream id");
             Assert.False(string.IsNullOrWhiteSpace(route.ApiKeyEnvVar), $"{alias} names no key");
             Assert.True(route.ContextWindow > 0, $"{alias} has no context window");
+            Assert.Equal(alias, route.Alias);
         }
     }
 

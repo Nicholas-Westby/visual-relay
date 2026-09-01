@@ -9,8 +9,8 @@ namespace VisualRelay.Tests;
 
 /// <summary>What replaying one recorded trace through the new loop produced.</summary>
 /// <param name="Expected">
-/// The tool calls the recorded model made, excluding the ones named in
-/// <see cref="TraceReplayHarness.NotPorted"/>.
+/// The tool calls the recorded model made, excluding those to tools the new
+/// set no longer offers.
 /// </param>
 /// <param name="Actual">The tool calls the new loop made.</param>
 /// <param name="Outcome">How the new loop finished.</param>
@@ -64,7 +64,7 @@ public static partial class TraceReplayHarness
     /// The fourteen tools the new set offers. Every other name the recorded runs
     /// used is treated as unported and excluded from the comparison.
     /// </summary>
-    public static readonly IReadOnlyList<string> PortedTools =
+    private static readonly IReadOnlyList<string> PortedTools =
     [
         "read_file", "read_multiple_files", "write_file", "edit_file", "delete_file",
         "list_files", "grep", "outline", "view_image",
@@ -90,7 +90,7 @@ public static partial class TraceReplayHarness
     /// </summary>
     /// <param name="name">The recorded tool name.</param>
     /// <returns>True when the new set still offers it.</returns>
-    public static bool IsPorted(string name) => PortedTools.Contains(name, StringComparer.Ordinal);
+    private static bool IsPorted(string name) => PortedTools.Contains(name, StringComparer.Ordinal);
 
     /// <summary>
     /// Replays one trace.
