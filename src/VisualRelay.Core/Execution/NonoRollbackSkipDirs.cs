@@ -2,15 +2,15 @@ namespace VisualRelay.Core.Execution;
 
 /// <summary>
 /// Computes the set of nono <c>--skip-dir &lt;name&gt;</c> basenames for the
-/// swival launch when the sandbox is enabled. <c>--skip-dir</c> excludes a
+/// agent launch when the sandbox is enabled. <c>--skip-dir</c> excludes a
 /// directory from nono's trust-scanning and rollback PREFLIGHT (which has a
-/// fixed ~2 GiB budget) WITHOUT removing swival's read/write access to it, so
+/// fixed ~2 GiB budget) WITHOUT removing the agent's read/write access to it, so
 /// rollback still protects everything else (the tracked source tree).
 ///
 /// The skip set is:
 ///   1. ALWAYS the VCS / VR-internal artifact dirs (<c>.git</c>, <c>.relay</c>,
-///      <c>.relay-scratch</c>, <c>.swival</c>) — never rollback-relevant, and
-///      some grow during a run.
+///      <c>.relay-scratch</c>) — never rollback-relevant, and some grow during
+///      a run.
 ///   2. PLUS each immediate child dir of the target root that BOTH contains
 ///      git-ignored content AND is on-disk &gt;= <see cref="RollbackSkipThresholdBytes"/>.
 ///
@@ -32,7 +32,7 @@ internal static class NonoRollbackSkipDirs
     /// rollback-relevant, and some (e.g. <c>.relay</c>) grow during a run.
     /// </summary>
     private static readonly IReadOnlyList<string> AlwaysSkip =
-        [".git", ".relay", ".relay-scratch", ".swival"];
+        [".git", ".relay", ".relay-scratch"];
 
     /// <summary>
     /// Compute the skip-dir names for <paramref name="rootPath"/>. Runs

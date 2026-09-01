@@ -143,7 +143,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCloneTests
 
     // ───────────────────────────────────────────────────────────────────
     // 8. VR-internal names stay EXCLUDED at any depth — the nested overlay
-    //    must never carry a nested .relay/.swival into the snapshot.
+    //    must never carry a nested .relay-scratch into the snapshot.
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -156,12 +156,12 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCloneTests
         try
         {
             InitRepo(root);
-            await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), ".swival/\nnode_modules/\n");
+            await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), ".relay-scratch/\nnode_modules/\n");
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
             Directory.CreateDirectory(Path.Combine(root, "packages", "app"));
             await File.WriteAllTextAsync(Path.Combine(root, "packages", "app", "index.ts"), "export {};");
-            Directory.CreateDirectory(Path.Combine(root, "packages", "app", ".swival"));
-            await File.WriteAllTextAsync(Path.Combine(root, "packages", "app", ".swival", "state.json"), "{}");
+            Directory.CreateDirectory(Path.Combine(root, "packages", "app", ".relay-scratch"));
+            await File.WriteAllTextAsync(Path.Combine(root, "packages", "app", ".relay-scratch", "state.json"), "{}");
             var nested = Path.Combine(root, "packages", "app", "node_modules", "dep");
             Directory.CreateDirectory(nested);
             await File.WriteAllTextAsync(Path.Combine(nested, "index.js"), "module.exports = 1;");
@@ -170,7 +170,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCloneTests
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-nestedvr", "run-nestedvr", CancellationToken.None, LowThresholdBytes);
 
-            Assert.False(Directory.Exists(Path.Combine(worktree, "packages", "app", ".swival")),
+            Assert.False(Directory.Exists(Path.Combine(worktree, "packages", "app", ".relay-scratch")),
                 "nested VR-internal dir must not be overlaid");
             Assert.True(File.Exists(Path.Combine(worktree, "packages", "app", "node_modules", "dep", "index.js")),
                 "nested dependency dir must still be overlaid");

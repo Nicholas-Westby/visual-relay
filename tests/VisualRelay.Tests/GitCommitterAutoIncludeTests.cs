@@ -136,8 +136,8 @@ public sealed class GitCommitterAutoIncludeTests
     [Fact]
     public async Task CommitAsync_ExcludesVisualRelayInternalArtifacts_EvenWhenNotGitignored()
     {
-        // On a consumer repo that does not gitignore .relay/ or .swival/, the run's
-        // own artifacts (reports, traces, scratch) surface as untracked. They must
+        // On a consumer repo that does not gitignore .relay/ or .relay-scratch/, the
+        // run's own artifacts (reports, traces, scratch) surface as untracked. They must
         // never be auto-committed into the user's task commit — only the deliberate
         // proof subset is force-added (via proofFiles), handled separately.
         var (sim, repo) = NewRepo();
@@ -153,7 +153,7 @@ public sealed class GitCommitterAutoIncludeTests
         Write(repo, "app.py", "updated");
         Write(repo, "tests/new-test.py", "# new test");
         Write(repo, ".relay/my-task/stage1-attempt1.report.json", "{}");
-        Write(repo, ".swival/cmd_output.txt", "trace");
+        Write(repo, ".relay-scratch/cmd_output.txt", "trace");
 
         var manifest = new[] { "app.py" };
 
@@ -173,7 +173,7 @@ public sealed class GitCommitterAutoIncludeTests
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("tests/new-test.py", committed);
         Assert.DoesNotContain(committed, p => p.StartsWith(".relay/", StringComparison.Ordinal));
-        Assert.DoesNotContain(committed, p => p.StartsWith(".swival/", StringComparison.Ordinal));
+        Assert.DoesNotContain(committed, p => p.StartsWith(".relay-scratch/", StringComparison.Ordinal));
     }
 
     [Fact]

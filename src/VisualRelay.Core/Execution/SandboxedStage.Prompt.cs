@@ -2,7 +2,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
-// Stage-prompt assembly for the swival subagent. Split out of ProcessRunners.Helpers.cs
+// Stage-prompt assembly for the subagent. Split out of ProcessRunners.Helpers.cs
 // so prompt construction (including the ## Verify output section) lives in one focused
 // place. TrimForTail (the tail-window helper these share with the diagnostics extractors)
 // stays in ProcessRunners.Helpers.cs.
@@ -54,7 +54,7 @@ public static partial class SandboxedStage
         if (!string.IsNullOrWhiteSpace(invocation.TasksDir))
         {
             // Right after "Working directory:" so every stage sees it before the task input.
-            parts.Insert(3, $"Protected paths (queue bookkeeping — never part of this task's diff): {invocation.TasksDir}/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.");
+            parts.Insert(3, $"Protected paths (queue bookkeeping — never part of this task's diff): {invocation.TasksDir}/, .relay/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.");
         }
         if (!string.IsNullOrWhiteSpace(invocation.TaskContext))
         {

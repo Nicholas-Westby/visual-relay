@@ -21,7 +21,7 @@ public sealed record WorktreeResetResult(
 internal static class WorktreeResetter
 {
     private static readonly string[] InternalArtifactPrefixes =
-        [".relay/", ".relay-scratch/", ".swival/"];
+        [".relay/", ".relay-scratch/"];
 
     /// <summary>
     /// Resets the worktree to HEAD after a flagged task, leaving the next task

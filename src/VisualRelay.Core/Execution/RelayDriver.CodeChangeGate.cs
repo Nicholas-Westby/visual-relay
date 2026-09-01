@@ -98,7 +98,7 @@ public sealed partial class RelayDriver
     // auto-committed — the same set the commit stage excludes (GitCommitter /
     // WorktreeFilter / WorktreeResetter). Matching it keeps the gate aligned with
     // what actually lands in a commit on repos that don't gitignore these dirs.
-    private static readonly string[] BookkeepingPrefixes = [".relay/", ".relay-scratch/", ".swival/"];
+    private static readonly string[] BookkeepingPrefixes = [".relay/", ".relay-scratch/"];
 
     // A path that a run may touch without producing code: VR-internal artifacts,
     // the task/spec dir, or the top-level VERSION stamp.

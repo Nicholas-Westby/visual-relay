@@ -9,7 +9,7 @@ internal static partial class GitCommitter
     // TODO: .relay-scratch/ entry is removable once the workspace-side cleanup
     // (RelayTaskRepository.ListAsync) has been deployed widely enough to purge
     // stale legacy dirs from the wild.
-    private static readonly string[] InternalArtifactPrefixes = [".relay/", ".relay-scratch/", ".swival/"];
+    private static readonly string[] InternalArtifactPrefixes = [".relay/", ".relay-scratch/"];
 
     /// <summary>
     /// Captures the set of untracked, non-ignored files at the start of a run.

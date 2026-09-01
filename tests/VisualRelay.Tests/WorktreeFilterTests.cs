@@ -161,17 +161,11 @@ public sealed partial class WorktreeFilterTests
         Directory.CreateDirectory(Path.GetDirectoryName(scratchPath)!);
         await File.WriteAllTextAsync(scratchPath, "scratch");
 
-        // And a .swival/ file.
-        var swivalPath = Path.Combine(repo.Root, ".swival", "cache");
-        Directory.CreateDirectory(Path.GetDirectoryName(swivalPath)!);
-        await File.WriteAllTextAsync(swivalPath, "cache");
-
         await WorktreeFilter.DiscardNonTestEditsAsync(
             repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(artifactPath), ".relay/ artifact should be preserved");
         Assert.True(File.Exists(scratchPath), ".relay-scratch/ artifact should be preserved");
-        Assert.True(File.Exists(swivalPath), ".swival/ artifact should be preserved");
     }
 
     // ═══════════════════════════════════════════════════════════════

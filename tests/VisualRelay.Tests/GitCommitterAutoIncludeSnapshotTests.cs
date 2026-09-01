@@ -131,7 +131,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
     [Fact]
     public async Task FindUncommittedAuthoredFilesAsync_ExcludesInternalArtifacts()
     {
-        // Internal artifacts (.relay/, .swival/) must be ignored even when
+        // Internal artifacts (.relay/, .relay-scratch/) must be ignored even when
         // they appear as new untracked files — same as the auto-include pass.
         var (sim, repo) = NewRepo();
         using var _ = repo;

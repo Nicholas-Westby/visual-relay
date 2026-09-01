@@ -18,7 +18,7 @@ internal sealed record WorktreeFilterResult(
 internal static partial class WorktreeFilter
 {
     private static readonly string[] InternalArtifactPrefixes =
-        [".relay/", ".relay-scratch/", ".swival/"];
+        [".relay/", ".relay-scratch/"];
 
     /// <summary>
     /// Normalize a repo-relative path: strip leading <c>+</c>, replace <c>\</c>

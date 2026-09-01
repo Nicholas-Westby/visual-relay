@@ -6,7 +6,7 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Tests for <see cref="NonoRollbackSkipDirs"/> — the computation of nono
 /// <c>--skip-dir</c> names that keep the rollback PREFLIGHT under nono's fixed
-/// budget on large target repos without removing swival's read/write access.
+/// budget on large target repos without removing the agent's read/write access.
 /// </summary>
 public sealed class NonoRollbackSkipDirsTests
 {
@@ -24,7 +24,6 @@ public sealed class NonoRollbackSkipDirsTests
         Assert.Contains(".git", result);
         Assert.Contains(".relay", result);
         Assert.Contains(".relay-scratch", result);
-        Assert.Contains(".swival", result);
     }
 
     [Fact]
@@ -165,7 +164,6 @@ public sealed class NonoRollbackSkipDirsTests
             Assert.Contains(".git", result);
             Assert.Contains(".relay", result);
             Assert.Contains(".relay-scratch", result);
-            Assert.Contains(".swival", result);
 
             // gitignored + large → included.
             Assert.Contains("big", result);

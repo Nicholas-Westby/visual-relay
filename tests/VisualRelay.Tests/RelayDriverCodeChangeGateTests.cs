@@ -98,14 +98,14 @@ public sealed class RelayDriverCodeChangeGateTests
             "# Do the work\n\n## Deliverables\n- Create the tokens module\n");
         var (sim, _) = SeedGit(repo);
 
-        // The only thing the run leaves behind is VR-internal swival scratch — a
-        // general target repo does not gitignore .swival/, so it shows up as
+        // The only thing the run leaves behind is VR-internal scratch — a general
+        // target repo does not gitignore .relay-scratch/, so it shows up as
         // untracked. It must be treated as bookkeeping, not as produced code.
         var runner = new GateScenarioRunner("[]", "[]",
             writeAtStage6: inv =>
             {
-                Directory.CreateDirectory(Path.Combine(inv.TargetRoot, ".swival"));
-                File.WriteAllText(Path.Combine(inv.TargetRoot, ".swival", "cmd_output.txt"), "scratch");
+                Directory.CreateDirectory(Path.Combine(inv.TargetRoot, ".relay-scratch"));
+                File.WriteAllText(Path.Combine(inv.TargetRoot, ".relay-scratch", "cmd_output.txt"), "scratch");
             });
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
