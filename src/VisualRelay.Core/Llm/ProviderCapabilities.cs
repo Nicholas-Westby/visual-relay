@@ -42,9 +42,17 @@ public static class ProviderCapabilityCatalog
         new Dictionary<string, ProviderCapabilities>(StringComparer.OrdinalIgnoreCase)
         {
             // reasoning_effort: "none" is accepted and clears reasoning_content.
+            //
+            // Required tool choice is NOT accepted. Measured 2026-09-01 against
+            // all three V4 routes: the request comes back 400 with "Thinking mode
+            // does not support this tool_choice". This was recorded the other way
+            // round — the spec calls the constraint Moonshot's and not DeepSeek's
+            // — and the error is only reachable with thinking on, which is
+            // DeepSeek V4's default, so a probe with reasoning disabled would
+            // have said the opposite.
             ["DeepSeek"] = new(
                 CanDisableReasoning: true,
-                SupportsRequiredToolChoiceWhileThinking: true,
+                SupportsRequiredToolChoiceWhileThinking: false,
                 ReasoningEffortValues: ["none", "low", "medium", "high"]),
 
             // Always-thinking. Its own 400 names the accepted set.

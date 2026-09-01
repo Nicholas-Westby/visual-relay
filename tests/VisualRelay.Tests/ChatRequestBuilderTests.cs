@@ -131,14 +131,33 @@ public sealed class ChatRequestBuilderTests
         Assert.False(message.TryGetProperty("reasoning_content", out _));
     }
 
-    /// <summary>DeepSeek accepts required tool choice, so the parameter is sent.</summary>
+    /// <summary>
+    /// Z.AI accepts required tool choice while thinking, so the parameter is
+    /// sent. It is the only one of the four that does, confirmed live against
+    /// the goldened body on 2026-09-01.
+    /// </summary>
     [Fact]
     public void RequiredToolChoice_IsSentWhereAccepted()
     {
         var body = Build([new ChatMessage("user", "add 2 and 2")],
-            new ChatRequestOptions("deepseek-v4-pro", RequireToolCall: true), DeepSeek, [Tool()]);
+            new ChatRequestOptions("glm-5.3-flash", RequireToolCall: true), Zai, [Tool()]);
 
         Assert.Equal("required", body.GetProperty("tool_choice").GetString());
+    }
+
+    /// <summary>
+    /// DeepSeek rejects it too, which was recorded the other way round. Its own
+    /// 400 reads "Thinking mode does not support this tool_choice", and thinking
+    /// is V4's default — so a probe with reasoning off would have said the
+    /// opposite.
+    /// </summary>
+    [Fact]
+    public void RequiredToolChoice_IsWithheldFromDeepSeekToo()
+    {
+        var body = Build([new ChatMessage("user", "add 2 and 2")],
+            new ChatRequestOptions("deepseek-v4-pro", RequireToolCall: true), DeepSeek, [Tool()]);
+
+        Assert.False(body.TryGetProperty("tool_choice", out _));
     }
 
     /// <summary>
