@@ -27,7 +27,7 @@ public sealed partial class RelayDriver
         int? TestExitCode)
     {
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public IReadOnlyList<SandboxDenial>? BootstrapDenials { get; init; }
+        public IReadOnlyList<SandboxDenial>? BootstrapDenials { get; private init; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyList<SandboxDenial>? GuardDenials { get; init; }

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using VisualRelay.Guards;
 
@@ -252,9 +253,29 @@ public sealed partial class NixDevShellGcRootTests
         }
         catch (OperationCanceledException)
         {
-            try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch (Exception) { }
+            // The 15s watchdog fired: kill the wedged bash tree on a best-effort basis and
+            // let the cancellation propagate so the test still fails loudly. Only the races
+            // inherent to killing something that may already be gone are swallowed — the
+            // process exiting between the check and the kill (InvalidOperationException),
+            // the OS refusing the kill (Win32Exception), or part of the tree outliving it
+            // (AggregateException). None of those may mask the timeout being reported.
+            try
+            {
+                if (process is { HasExited: false }) process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { }
+            catch (Win32Exception) { }
+            catch (AggregateException) { }
             throw;
         }
-        finally { try { File.Delete(script); } catch (Exception) { } }
+        finally
+        {
+            // Best-effort cleanup of the temp script. A file the OS still holds open or has
+            // already reaped is a disposable-temp-dir problem, not a test failure, so those
+            // two are swallowed rather than allowed to overwrite the real test outcome.
+            try { File.Delete(script); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 }

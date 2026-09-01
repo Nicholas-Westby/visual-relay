@@ -17,7 +17,7 @@ public static class AuditRenderer
             Console.WriteLine("Audit complete: no findings.");
             Console.WriteLine();
             Console.WriteLine("  rules: 4");
-            Console.WriteLine(string.Format("  runtime: {0:F1}s", elapsed.TotalSeconds));
+            Console.WriteLine($"  runtime: {elapsed.TotalSeconds:F1}s");
             return;
         }
 
@@ -28,13 +28,21 @@ public static class AuditRenderer
 
         foreach (var group in grouped)
         {
-            Console.WriteLine(string.Format("--- {0} ({1} finding(s)) ---", group.Key, group.Count()));
+            Console.WriteLine($"--- {group.Key} ({group.Count()} finding(s)) ---");
 
             foreach (var f in group)
             {
-                Console.WriteLine(string.Format("{0}:{1}: {2}: {3}", f.Path, f.Line, f.RuleId, f.Message));
-                Console.WriteLine(string.Format("  explanation: {0}", f.Explanation));
-                Console.WriteLine(string.Format("  direction: {0}", f.Direction));
+                Console.WriteLine($"{f.Path}:{f.Line}: {f.RuleId}: {f.Message}");
+
+                // The offending line itself, which every sibling guard runner
+                // prints (see SyncOverAsyncGuardRunner). It was plumbed all the
+                // way into Finding and then dropped here, so a reader had a
+                // location and a rule name but never the code that tripped it.
+                if (!string.IsNullOrWhiteSpace(f.Snippet))
+                    Console.WriteLine($"  snippet: {f.Snippet.Trim()}");
+
+                Console.WriteLine($"  explanation: {f.Explanation}");
+                Console.WriteLine($"  direction: {f.Direction}");
                 Console.WriteLine();
             }
         }
@@ -49,16 +57,16 @@ public static class AuditRenderer
             counts[f.RuleId] = c + 1;
         }
 
-        Console.WriteLine(string.Format("  {0,-26} {1,8}", "rule", "findings"));
-        Console.WriteLine(string.Format("  {0} {1}", new string('-', 26), new string('-', 8)));
+        Console.WriteLine($"  {"rule",-26} {"findings",8}");
+        Console.WriteLine($"  {new string('-', 26)} {new string('-', 8)}");
         foreach (var ruleId in ruleOrder)
         {
             if (counts.TryGetValue(ruleId, out var count))
-                Console.WriteLine(string.Format("  {0,-26} {1,8}", ruleId, count));
+                Console.WriteLine($"  {ruleId,-26} {count,8}");
         }
-        Console.WriteLine(string.Format("  {0} {1}", new string('-', 26), new string('-', 8)));
-        Console.WriteLine(string.Format("  {0,-26} {1,8}", "total", findings.Count));
+        Console.WriteLine($"  {new string('-', 26)} {new string('-', 8)}");
+        Console.WriteLine($"  {"total",-26} {findings.Count,8}");
         Console.WriteLine();
-        Console.WriteLine(string.Format("  runtime: {0:F1}s", elapsed.TotalSeconds));
+        Console.WriteLine($"  runtime: {elapsed.TotalSeconds:F1}s");
     }
 }

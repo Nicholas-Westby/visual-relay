@@ -39,7 +39,7 @@ public sealed partial class RelayQueueController
     /// </summary>
     private bool TryRestartBetweenTasks(
         RunAllMode mode, RelayTaskOutcome outcome, string taskId,
-        string drainRunId, int pendingCount, List<RelayTaskOutcome> results)
+        string drainRunId, int pendingCount)
     {
         if (mode != RunAllMode.RestartBetweenTasks
             || outcome.Status != RelayTaskOutcomeStatus.Committed)

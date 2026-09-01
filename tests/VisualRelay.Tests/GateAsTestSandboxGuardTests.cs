@@ -4,9 +4,10 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// The enforcing gate-as-test sandbox guard (a VR-specific sibling of
-/// <see cref="RealBuildSubprocessGuardTests"/>). The matcher
-/// (<see cref="GateAsTestSandboxGuard.FindViolations"/>) is pure: it Roslyn-parses
-/// each source and flags a test that invokes a shell-out dev-gate entry point
+/// <see cref="RealBuildSubprocessGuardTests"/>). The source-string matcher
+/// (<see cref="GateAsTestSandboxGuard.FindViolations(IEnumerable{ValueTuple{string, string}})"/>)
+/// is pure: it Roslyn-parses each source and flags a test that invokes a
+/// shell-out dev-gate entry point
 /// — <c>…Gate.Run(…)</c>, e.g. <c>InspectCodeGate.Run(paths)</c> — without the
 /// <c>VR_RUN_NONO_INTEGRATION</c> opt-in skip-guard. Such a gate-as-test re-runs a
 /// whole dev gate end-to-end inside the test suite; under the verify's nono
@@ -23,14 +24,13 @@ namespace VisualRelay.Tests;
 /// one well-known marker. This file is self-exempt by filename because it carries
 /// the gate-call fixtures.
 /// </summary>
-public sealed class GateAsTestSandboxGuardTests
+/// <param name="trees">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>. Taken as a primary-constructor parameter so
+/// the class carries no field-assigning constructor of its own.
+/// </param>
+public sealed class GateAsTestSandboxGuardTests(CachedSyntaxTreesFixture trees)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public GateAsTestSandboxGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
     /// <summary>Gate bites: an unguarded <c>InspectCodeGate.Run(paths)</c> is reported.</summary>
     [Fact]
     public void UnguardedGateRun_IsReported()
@@ -252,11 +252,11 @@ public sealed class GateAsTestSandboxGuardTests
     [Fact]
     public void AllTestProjectCsFiles_AreGateAsTestSandboxSafe()
     {
-        var trees = _trees.AllTrees
+        var testProjectTrees = trees.AllTrees
             .Where(t => t.RelativePath.StartsWith("tests/VisualRelay.Tests/", StringComparison.Ordinal))
             .ToList();
 
-        var violations = GateAsTestSandboxGuard.FindViolations(trees);
+        var violations = GateAsTestSandboxGuard.FindViolations(testProjectTrees);
 
         Assert.True(violations.Count == 0,
             "gate-as-test guard found un-skip-guarded shell-out gate-as-tests in the test suite " +

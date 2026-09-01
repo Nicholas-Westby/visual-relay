@@ -82,11 +82,11 @@ public sealed class ShellScriptSizeGuardTests
     [Fact]
     public void BootstrapPath_At100_Passes_At101_Violates()
     {
-        var at100 = new (string, string[])[] { ("visual-relay", ShellScript(100)) };
+        var at100 = new[] { ("visual-relay", ShellScript(100)) };
         var v100 = ShellSizeGuard.FindViolations(at100, ShellSizeGuard.DefaultLimit);
         Assert.Empty(v100);
 
-        var at101 = new (string, string[])[] { ("visual-relay", ShellScript(101)) };
+        var at101 = new[] { ("visual-relay", ShellScript(101)) };
         var v101 = ShellSizeGuard.FindViolations(at101, ShellSizeGuard.DefaultLimit);
         var violation = Assert.Single(v101);
         Assert.Equal("visual-relay", violation.Path);
@@ -101,7 +101,7 @@ public sealed class ShellScriptSizeGuardTests
     [Fact]
     public void NestedBootstrapPath_UsesGeneralLimit()
     {
-        var files = new (string, string[])[] { ("sub/visual-relay", ShellScript(25)) };
+        var files = new[] { ("sub/visual-relay", ShellScript(25)) };
         var violations = ShellSizeGuard.FindViolations(files, ShellSizeGuard.DefaultLimit);
         var violation = Assert.Single(violations);
         Assert.Equal("sub/visual-relay", violation.Path);

@@ -5,25 +5,24 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// The enforcing sync-over-async guard-as-test (the house idiom mirrored from
 /// <see cref="RealSleepGuardTests"/>). The matcher
-/// (<see cref="SyncOverAsyncGuard.FindViolations"/>) is pure: it Roslyn-parses each
-/// source and flags blocking <c>.Result</c>, <c>.GetAwaiter().GetResult()</c>, or
-/// <c>.Wait()</c> calls inside <c>[Fact]</c>/<c>[AvaloniaFact]</c>/<c>[Theory]</c>/
-/// <c>[AvaloniaTheory]</c> test method bodies — the classic sync-over-async deadlock
-/// on the single-threaded Avalonia headless dispatcher.
+/// (<see cref="SyncOverAsyncGuard.FindViolations(IEnumerable{ValueTuple{string, string}})"/>)
+/// is pure: it Roslyn-parses each source and flags blocking <c>.Result</c>,
+/// <c>.GetAwaiter().GetResult()</c>, or <c>.Wait()</c> calls inside <c>[Fact]</c>/
+/// <c>[AvaloniaFact]</c>/<c>[Theory]</c>/<c>[AvaloniaTheory]</c> test method bodies — the
+/// classic sync-over-async deadlock on the single-threaded Avalonia headless dispatcher.
 ///
 /// This file carries the matcher's behavioural facts plus the live enumeration gate.
 /// It is self-exempt by filename in <see cref="SyncOverAsyncGuard"/> because it
 /// contains sync-over-async fixtures; that exemption is exactly why the live gate can
 /// scan the test project without tripping on these strings.
 /// </summary>
-public sealed class SyncOverAsyncGuardTests
+/// <param name="treesFixture">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the live enumeration gate below scans.
+/// </param>
+public sealed class SyncOverAsyncGuardTests(CachedSyntaxTreesFixture treesFixture)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
 
-    public SyncOverAsyncGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
     /// <summary>
     /// A <c>.Result</c> member access on a Task-shaped receiver (an <c>…Async()</c>
     /// invocation) inside an <c>[AvaloniaFact]</c> test method body is reported as a
@@ -189,7 +188,7 @@ public sealed class SyncOverAsyncGuardTests
     [Fact]
     public void AllTestProjectCsFiles_HaveNoSyncOverAsync()
     {
-        var trees = _trees.AllTrees
+        var trees = treesFixture.AllTrees
             .Where(t => t.RelativePath.StartsWith("tests/VisualRelay.Tests/", StringComparison.Ordinal))
             .ToList();
 

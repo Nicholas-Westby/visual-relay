@@ -8,26 +8,14 @@ namespace VisualRelay.Tests;
 /// prove that every git probe in a driver run flows through the injected invoker
 /// rather than a private <c>new GitInvoker()</c> fallback.
 /// </summary>
-public sealed class RecordingGitInvoker : IGitInvoker
+/// <param name="inner">The invoker every recorded call is forwarded to.</param>
+public sealed class RecordingGitInvoker(IGitInvoker inner) : IGitInvoker
 {
-    private readonly IGitInvoker _inner;
     private readonly List<string[]> _calls = [];
-
-    public RecordingGitInvoker(IGitInvoker inner)
-    {
-        _inner = inner;
-    }
-
-    /// <summary>Every argument vector recorded, in call order.</summary>
-    public IReadOnlyList<string[]> Calls => _calls;
 
     /// <summary>True when any recorded call's argument vector contains every element of <paramref name="args"/>.</summary>
     public bool RecordedCall(string[] args) =>
         _calls.Any(c => args.All(a => c.Contains(a, StringComparer.Ordinal)));
-
-    /// <summary>Count of recorded calls whose argument vector contains every element of <paramref name="args"/>.</summary>
-    public int CallCount(string[] args) =>
-        _calls.Count(c => args.All(a => c.Contains(a, StringComparer.Ordinal)));
 
     public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
         string rootPath,
@@ -38,9 +26,13 @@ public sealed class RecordingGitInvoker : IGitInvoker
         CancellationToken killToken = default,
         Action<string>? onActivity = null)
     {
+        // Materialize once and forward the materialized array: `arguments` may be
+        // a lazy sequence, so enumerating it here for the recording AND again in
+        // the inner invoker would repeat its side effects — or hand the inner
+        // invoker an already-drained iterator and lose the git arguments entirely.
         var args = arguments.ToArray();
         _calls.Add(args);
-        return await _inner.RunAsync(rootPath, arguments, cancellationToken,
+        return await inner.RunAsync(rootPath, args, cancellationToken,
             timeout, environment, killToken, onActivity);
     }
 }

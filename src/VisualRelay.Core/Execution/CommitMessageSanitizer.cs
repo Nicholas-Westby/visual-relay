@@ -67,23 +67,6 @@ internal static class CommitMessageSanitizer
     }
 
     /// <summary>
-    /// Same pipeline as <see cref="TrySanitizeSubject"/> but uses
-    /// <see cref="SanitizeSubjectWithEllipsis"/> so overlong subjects are visibly
-    /// truncated with a <c>…</c> marker instead of being rejected.
-    /// </summary>
-    internal static string? TrySanitizeSubjectWithEllipsis(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return null;
-        }
-
-        var lines = raw.Trim().Split('\n');
-        var subject = SanitizeSubjectWithEllipsis(lines[0]);
-        return subject is not null && HasConventionalPrefix(subject) ? subject : null;
-    }
-
-    /// <summary>
     /// Same pipeline as <see cref="TrySanitizeMessage"/> but uses
     /// <see cref="SanitizeSubjectWithEllipsis"/> so overlong subjects are visibly
     /// truncated with a <c>…</c> marker instead of being rejected. Body bullets
@@ -98,7 +81,7 @@ internal static class CommitMessageSanitizer
 
         var lines = raw.Trim().Split('\n');
         var subject = SanitizeSubjectWithEllipsis(lines[0]);
-        if (subject is null || !HasConventionalPrefix(subject))
+        if (!HasConventionalPrefix(subject))
         {
             return null;
         }
@@ -138,7 +121,7 @@ internal static class CommitMessageSanitizer
     /// truncated version is cut at the last word boundary within the budget (minus
     /// one char for the ellipsis) so the marker is never dropped mid-word.
     /// </summary>
-    private static string? SanitizeSubjectWithEllipsis(string subject)
+    private static string SanitizeSubjectWithEllipsis(string subject)
     {
         var clean = StripTrailingPeriods(subject.Replace(CommitRules.EmDash, '-').TrimEnd());
         clean = LowercaseAfterPrefix(clean);

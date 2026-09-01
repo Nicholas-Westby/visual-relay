@@ -37,7 +37,11 @@ internal static partial class GitSimCommands
             return GitSimResult.Code(1, "error: Merging is not possible because you have unmerged files.\n");
 
         var indexTreeSha = TreeBuilder.BuildTreeFromIndex(store, index);
-        if (store.TryGetCommit(headSha, out var headCommit)
+        // Explicitly nullable: an unborn or unknown HEAD has no commit, and the
+        // merge below falls back to the index tree. Leaving it to flow analysis
+        // reads as a non-null value that is then conditionally accessed.
+        var headCommit = store.TryGetCommit(headSha, out var found) ? found : null;
+        if (headCommit is not null
             && !string.Equals(headCommit.TreeSha, indexTreeSha, StringComparison.Ordinal))
             return GitSimResult.Code(1, "error: Your local changes would be overwritten by merge.\n");
 

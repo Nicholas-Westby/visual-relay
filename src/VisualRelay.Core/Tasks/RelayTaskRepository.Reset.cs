@@ -4,7 +4,7 @@ public sealed partial class RelayTaskRepository
 {
     /// <summary>
     /// Archives the live run-state directory for a flagged task by renaming
-    /// .relay/<taskId>/ → .relay/<taskId>.reset-&lt;utc-stamp&gt;/. This removes the
+    /// .relay/&lt;taskId&gt;/ → .relay/&lt;taskId&gt;.reset-&lt;utc-stamp&gt;/. This removes the
     /// NEEDS-REVIEW marker, stage state, logs, and flagged-work bundle from the
     /// live path atomically while preserving everything on disk for post-mortem.
     /// If the run directory doesn't exist, it's a no-op.

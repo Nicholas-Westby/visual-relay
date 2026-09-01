@@ -11,15 +11,12 @@ namespace VisualRelay.Tests;
 ///
 /// <para>Tests that mutate the repo (RelayDriver commits, archives tasks,
 /// edits files) call <see cref="Clone"/> to get their own disposable copy.
-/// The seed directory is never written to after <see cref="InitializeAsync"/>.
+/// The seed directory is never written to after <see cref="IAsyncLifetime.InitializeAsync"/>.
 /// </para>
 /// </summary>
 public sealed partial class PipelineTestFixture : IAsyncLifetime
 {
     private string _seedRoot = null!;
-
-    /// <summary>The seed directory root (read-only after initialization).</summary>
-    public string SeedRoot => _seedRoot;
 
     /// <summary>
     /// Creates a disposable copy of the seed directory with a fresh GitSim

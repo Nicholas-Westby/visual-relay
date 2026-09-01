@@ -15,7 +15,7 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Test seam: builds the sandboxed runner used by "Create task to fix".
-    /// Production builds a real <see cref="SwivalSubagentRunner"/>; tests inject a
+    /// Production builds a real <see cref="FirstPartySubagentRunner"/>; tests inject a
     /// fake so the fix-task-author path can be exercised without a live subagent.
     /// </summary>
     internal Func<RelayConfig, ISubagentRunner>? FixTaskRunnerFactory { get; set; }

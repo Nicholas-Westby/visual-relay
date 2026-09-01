@@ -23,14 +23,12 @@ namespace VisualRelay.Tests;
 /// run-cap), so the synthesized-dead-field tests below are what prove the guard has
 /// teeth.</para>
 /// </summary>
-public sealed partial class DeadConfigFieldGuardTests
+/// <param name="trees">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the live-tree gate below scans.
+/// </param>
+public sealed partial class DeadConfigFieldGuardTests(CachedSyntaxTreesFixture trees)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public DeadConfigFieldGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
     // A minimal config record + self-default loader, mirroring RelayConfig /
     // RelayConfigLoader, with two knobs: MaxTurns (given a real consumer below) and
     // DeadKnob (consumed nowhere).
@@ -171,10 +169,10 @@ public sealed partial class DeadConfigFieldGuardTests
     public void LiveTree_HasNoDeadConfigFields()
     {
         // Candidates from src/ (the config record + loader); consumers from src/ + tools/.
-        var candidateTrees = _trees.AllTrees
+        var candidateTrees = trees.AllTrees
             .Where(t => t.RelativePath.StartsWith("src/", StringComparison.Ordinal))
             .ToList();
-        var consumerTrees = _trees.AllTrees
+        var consumerTrees = trees.AllTrees
             .Where(t => t.RelativePath.StartsWith("src/", StringComparison.Ordinal)
                         || t.RelativePath.StartsWith("tools/", StringComparison.Ordinal))
             .ToList();

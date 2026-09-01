@@ -155,9 +155,10 @@ internal static partial class ProcessCapture
 
         try
         {
-            // killRegistration Dispose() blocks until in-flight callback returns;
-            // GracefulStopThenKillAsync guards disposed process via SafeHasExited.
-            using var killRegistration = killToken.CanBeCanceled
+            // killRegistration DisposeAsync() completes only once an in-flight
+            // callback has returned; GracefulStopThenKillAsync guards the disposed
+            // process via SafeHasExited.
+            await using var killRegistration = killToken.CanBeCanceled
                 ? killToken.Register(() => { _ = GracefulStopThenKillAsync(process, stageGroupId, tp); })
                 : default;
 

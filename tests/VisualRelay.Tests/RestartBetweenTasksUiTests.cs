@@ -1,10 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
-using Avalonia.Headless;
 using Avalonia.Media;
-using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views.Controls;
@@ -261,7 +257,7 @@ public sealed class RestartBetweenTasksUiTests
     /// non-transparent Background and return it as a #RRGGBB hex string.
     /// Falls back to the top-bar background #101218.
     /// </summary>
-    private static string ResolveAncestorBackground(Avalonia.Visual leaf)
+    private static string ResolveAncestorBackground(Visual leaf)
     {
         for (var el = leaf.GetVisualParent(); el is not null; el = el.GetVisualParent())
         {

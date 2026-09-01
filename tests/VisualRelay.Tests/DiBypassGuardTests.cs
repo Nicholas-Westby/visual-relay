@@ -10,15 +10,13 @@ namespace VisualRelay.Tests;
 /// <c>RelayDriverDependencies</c>. This is the <c>EarlyImplementationDetector</c>
 /// bug shape: an injection seam silently bypassed.
 /// </summary>
-public sealed class DiBypassGuardTests
+/// <param name="trees">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>. Taken as a primary-constructor parameter so
+/// the class carries no field-assigning constructor of its own.
+/// </param>
+public sealed class DiBypassGuardTests(CachedSyntaxTreesFixture trees)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public DiBypassGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
-
     /// <summary>
     /// The canonical EarlyImplementationDetector shape: an optional IGitInvoker
     /// parameter defaulting to new GitInvoker() via ??, and a call site in a
@@ -190,7 +188,7 @@ public sealed class DiBypassGuardTests
     [Fact]
     public void AllTrees_CompleteWithoutThrowing()
     {
-        var violations = DiBypassGuard.FindViolations(_trees.AllTrees);
+        var violations = DiBypassGuard.FindViolations(trees.AllTrees);
 
         Assert.NotNull(violations);
     }

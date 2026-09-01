@@ -1,7 +1,5 @@
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.Text;
 
 namespace VisualRelay.Guards;
 
@@ -18,9 +16,9 @@ namespace VisualRelay.Guards;
 ///         <see cref="RealSleepGuard"/>'s self-exempt/re-integration-exempt files.</item>
 ///   <item><b>Suppression inventory:</b> scans every source's text lines for
 ///         <c>// vr-allow-sleep:</c> markers (with or without a reason) and reports
-///         them via <see cref="FindSuppressions"/> so stale exemptions get
-///         re-reviewed instead of living forever. Each entry includes the file,
-///         line, and the reason text after the colon.</item>
+///         them via <see cref="FindSuppressions(IEnumerable{ValueTuple{string, string}})"/>
+///         so stale exemptions get re-reviewed instead of living forever. Each
+///         entry includes the file, line, and the reason text after the colon.</item>
 /// </list>
 ///
 /// <para>Self-exempts the matcher's own fixture carriers AND everything
@@ -54,8 +52,6 @@ public static class RealWaitsGuard
         "FdLeakTests.cs",
         "WindowsExecutionTests.cs",
     ];
-
-    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);
 
     private static bool IsExempt(string fileName) =>
         SelfExemptFileNames.Contains(fileName)

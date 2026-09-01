@@ -165,7 +165,7 @@ public static class TestRealGitGuard
             // Check the first argument: "git" literal or a variable that resolves to "git".
             var firstArg = creation.ArgumentList?.Arguments.FirstOrDefault()?.Expression;
             if (firstArg is LiteralExpressionSyntax lit
-                && lit.Kind() == Microsoft.CodeAnalysis.CSharp.SyntaxKind.StringLiteralExpression
+                && lit.Kind() == SyntaxKind.StringLiteralExpression
                 && lit.Token.ValueText == "git")
             {
                 var line = LineOf(text, creation.SpanStart);

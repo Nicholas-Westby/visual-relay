@@ -13,7 +13,11 @@ namespace VisualRelay.Tests;
 /// <para>The live-tree test asserts zero violations in the migrated repo tree. The
 /// inline-snippet tests below prove the matcher has teeth against both patterns.</para>
 /// </summary>
-public sealed class TestRealGitGuardTests
+/// <param name="treesFixture">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the live gate below scans.
+/// </param>
+public sealed class TestRealGitGuardTests(CachedSyntaxTreesFixture treesFixture)
 {
     /// <summary>
     /// Teeth: <c>new GitInvoker()</c> in a test file is flagged.
@@ -149,13 +153,6 @@ public sealed class TestRealGitGuardTests
 
     // ── Live-tree test ─────────────────────────────────────────────────────
 
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public TestRealGitGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
-
     /// <summary>
     /// The live enforcing gate: every non-exempt file under
     /// <c>tests/VisualRelay.Tests/</c> must have zero <c>new GitInvoker(</c>
@@ -166,7 +163,7 @@ public sealed class TestRealGitGuardTests
     [Fact]
     public void LiveTree_HasNoRealGitInDefaultSuite()
     {
-        var trees = _trees.AllTrees
+        var trees = treesFixture.AllTrees
             .Where(t => t.RelativePath.StartsWith("tests/", StringComparison.Ordinal))
             .ToList();
 

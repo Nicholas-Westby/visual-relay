@@ -6,10 +6,13 @@ public sealed partial class PipelineTestFixture
 {
     /// <summary>
     /// Writes the standard pipeline shape into <paramref name="root"/> and
-    /// seeds a GitSim repo with one commit, returning the seed commit sha.
-    /// The caller must already have created the directory.
+    /// seeds a GitSim repo with one commit. The caller must already have
+    /// created the directory. The seed sha is deliberately not returned: the
+    /// only caller is <see cref="IAsyncLifetime.InitializeAsync"/> below, and
+    /// <see cref="Clone"/> re-inits and re-commits at the clone root, so no
+    /// test can observe the seed commit's sha.
     /// </summary>
-    internal static string SeedStandard(string root, GitSimEngine sim)
+    private static void SeedStandard(string root, GitSimEngine sim)
     {
         // Standard config: single test command, archiveOnDone:true.
         Directory.CreateDirectory(Path.Combine(root, ".relay"));
@@ -40,6 +43,6 @@ public sealed partial class PipelineTestFixture
         // Init GitSim, stage everything, commit.
         sim.InitRepo(root);
         sim.Git(root, "add", "-A").GetAwaiter().GetResult();
-        return sim.Commit(root, "chore: seed repo");
+        sim.Commit(root, "chore: seed repo");
     }
 }

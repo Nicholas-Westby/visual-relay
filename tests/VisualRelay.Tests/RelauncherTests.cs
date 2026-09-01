@@ -1,5 +1,8 @@
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
+// Aliased because the type and its namespace share the name 'Relauncher' (same
+// idiom as the GitSimEngine alias used elsewhere in the suite).
+using RelauncherTool = VisualRelay.Relauncher.Relauncher;
 
 namespace VisualRelay.Tests;
 
@@ -76,7 +79,7 @@ public sealed class RelauncherTests
         Assert.True(File.Exists(handoffPath));
 
         var time = new ManualTimeProvider();
-        var task = VisualRelay.Relauncher.Relauncher.RunAsync(repo.Root, timeProvider: time);
+        var task = RelauncherTool.RunAsync(repo.Root, timeProvider: time);
 
         // Simulate the app consuming the handoff: delete the sidecar, then
         // advance virtual time so the relauncher's polling loop wakes up
@@ -117,7 +120,7 @@ public sealed class RelauncherTests
         Assert.True(File.Exists(handoffPath));
 
         var time = new ManualTimeProvider();
-        var exitCode = await VisualRelay.Relauncher.Relauncher.RunAsync(
+        var exitCode = await RelauncherTool.RunAsync(
             repo.Root, timeProvider: time);
 
         Assert.NotEqual(0, exitCode);

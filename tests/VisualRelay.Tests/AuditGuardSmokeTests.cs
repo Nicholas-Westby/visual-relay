@@ -8,14 +8,12 @@ namespace VisualRelay.Tests;
 /// without throwing. No count assertions — findings are informational and
 /// must not turn the suite red.
 /// </summary>
-public sealed class AuditGuardSmokeTests
+/// <param name="treesFixture">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the four audit matchers below run over.
+/// </param>
+public sealed class AuditGuardSmokeTests(CachedSyntaxTreesFixture treesFixture)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public AuditGuardSmokeTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
 
     /// <summary>
     /// All four audit matchers run over the full tree and complete without
@@ -24,7 +22,7 @@ public sealed class AuditGuardSmokeTests
     [Fact]
     public void AllFourMatchers_OverAllTrees_CompleteWithoutThrowing()
     {
-        var trees = _trees.AllTrees;
+        var trees = treesFixture.AllTrees;
 
         var retryViolations = RetryDelayLoopsGuard.FindViolations(trees);
         Assert.NotNull(retryViolations);

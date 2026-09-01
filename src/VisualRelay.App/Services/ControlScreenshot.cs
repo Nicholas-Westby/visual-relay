@@ -12,14 +12,18 @@ public sealed partial class ControlApi
     /// is ALSO written there and the resolved path is returned so the server can
     /// surface it via the X-Screenshot-Path header.
     /// </summary>
-    public Task<(byte[] Png, string? WrittenPath)> CaptureScreenshotAsync(string? path)
+    public Task<(byte[]? Png, string? WrittenPath)> CaptureScreenshotAsync(string? path)
     {
+        // Nullable, and honestly so. This used to promise a non-null array and
+        // then return null! on the no-window path, which told the compiler the
+        // caller's null check could never fire — the one check standing between
+        // a headless run and an NRE on the request thread.
         if (window is null)
-            return Task.FromResult<(byte[], string?)>((null!, null));
+            return Task.FromResult<(byte[]?, string?)>((null, null));
         return Dispatcher.UIThread.InvokeAsync(() => CaptureOnUiThread(path)).GetTask();
     }
 
-    private (byte[] Png, string? WrittenPath) CaptureOnUiThread(string? path)
+    private (byte[]? Png, string? WrittenPath) CaptureOnUiThread(string? path)
     {
         var pixelSize = ResolvePixelSize();
         // Match the window's render scaling so the capture is crisp on HiDPI.

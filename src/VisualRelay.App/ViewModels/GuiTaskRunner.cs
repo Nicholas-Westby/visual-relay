@@ -8,7 +8,7 @@ namespace VisualRelay.App.ViewModels;
 
 /// <summary>
 /// Thin <see cref="IRelayTaskRunner"/> that creates a fresh driver per
-/// execute call. Each call gets its own <see cref="SwivalSubagentRunner"/>
+/// execute call. Each call gets its own <see cref="FirstPartySubagentRunner"/>
 /// wired to a <see cref="CompositeRelayEventSink"/> so both driver and
 /// subagent trace events land in run.log.
 /// </summary>

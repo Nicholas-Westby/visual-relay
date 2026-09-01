@@ -91,7 +91,7 @@ public static class RetryDelayLoopsGuard
 
         foreach (var loop in root.DescendantNodes().OfType<StatementSyntax>())
         {
-            StatementSyntax? body;
+            StatementSyntax body;
             int loopKeywordPosition;
 
             switch (loop)
@@ -107,9 +107,6 @@ public static class RetryDelayLoopsGuard
                 default:
                     continue;
             }
-
-            if (body is null)
-                continue;
 
             var hasDelay = HasDelayCall(body);
             var hasGitOrProcessInvocation = HasGitOrProcessInvocation(body);
@@ -194,8 +191,7 @@ public static class RetryDelayLoopsGuard
         if (loop is ForStatementSyntax forStmt)
         {
             // Look for `int attempt = 1; attempt <= 3; attempt++` — extract the bound.
-            if (forStmt.Condition is BinaryExpressionSyntax cond
-                && cond.Right is LiteralExpressionSyntax lit)
+            if (forStmt.Condition is BinaryExpressionSyntax { Right: LiteralExpressionSyntax lit })
             {
                 constants.Add($"maxAttempts={lit.Token.ValueText}");
             }
@@ -203,8 +199,7 @@ public static class RetryDelayLoopsGuard
 
         if (loop is WhileStatementSyntax whileStmt)
         {
-            if (whileStmt.Condition is BinaryExpressionSyntax cond
-                && cond.Right is LiteralExpressionSyntax lit)
+            if (whileStmt.Condition is BinaryExpressionSyntax { Right: LiteralExpressionSyntax lit })
             {
                 constants.Add($"bound={lit.Token.ValueText}");
             }
@@ -213,9 +208,11 @@ public static class RetryDelayLoopsGuard
         // Find delay durations in the body.
         foreach (var inv in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
-            if (inv.Expression is MemberAccessExpressionSyntax ma
-                && ma.Name.Identifier.Text is "Delay" or "Sleep"
-                && inv.ArgumentList.Arguments.Count > 0)
+            if (inv is
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Delay" or "Sleep" },
+                    ArgumentList.Arguments.Count: > 0,
+                })
             {
                 var firstArg = inv.ArgumentList.Arguments[0].Expression;
                 if (firstArg is LiteralExpressionSyntax litArg)

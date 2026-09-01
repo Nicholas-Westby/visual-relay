@@ -129,9 +129,6 @@ public static class TestClockInjectionGuard
 
     private static bool HasTimeProviderArgument(InvocationExpressionSyntax invocation)
     {
-        if (invocation.ArgumentList is null)
-            return true; // No argument list — can't be a real CommitAsync call
-
         foreach (var arg in invocation.ArgumentList.Arguments)
         {
             if (arg.NameColon?.Name.Identifier.Text == "timeProvider")

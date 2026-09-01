@@ -192,6 +192,11 @@ public sealed class RelayQueueControllerRestartRbtHoldTests
 
         // Alpha was not run.
         Assert.DoesNotContain("alpha", runner1.TasksRun);
+        // The drain's own report is the second half of that fact: a held task
+        // contributes no outcome at all, while beta's commit does — so cycle 1
+        // is provably a real drain that skipped alpha, not an empty one.
+        Assert.DoesNotContain(results1, r => r.TaskId == "alpha");
+        Assert.Contains(results1, r => r is { TaskId: "beta", Status: RelayTaskOutcomeStatus.Committed });
 
         // ── Simulate task-10 Reset: delete NEEDS-REVIEW, re-add as Pending ──
         var reviewPath = Path.Combine(repo.Root, ".relay", "alpha", "NEEDS-REVIEW");
@@ -217,5 +222,8 @@ public sealed class RelayQueueControllerRestartRbtHoldTests
 
         // Alpha runs in cycle 2 (it was reset to pending).
         Assert.Contains("alpha", runner2.TasksRun);
+        // And it runs to completion: the reset task appears in the drain's results
+        // as Committed, not merely as a runner invocation.
+        Assert.Contains(results2, r => r is { TaskId: "alpha", Status: RelayTaskOutcomeStatus.Committed });
     }
 }

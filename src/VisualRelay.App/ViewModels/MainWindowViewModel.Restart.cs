@@ -12,7 +12,7 @@ public partial class MainWindowViewModel
     /// the app the same way it was started. After spawning, shuts down the
     /// current instance so the relauncher can take over.
     /// </summary>
-    internal static async Task TriggerRestartAndShutdownAsync(RestartHandoff handoff)
+    private static async Task TriggerRestartAndShutdownAsync(RestartHandoff handoff)
     {
         var pid = Environment.ProcessId;
         var relaunchArgs = BuildRelaunchArgs(pid, handoff.RootPath);

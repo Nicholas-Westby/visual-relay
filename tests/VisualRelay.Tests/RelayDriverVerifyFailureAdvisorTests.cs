@@ -51,7 +51,7 @@ public sealed class RelayDriverVerifyFailureAdvisorTests
     [Fact]
     public async Task VerifyFixLoop_IdenticalTreeHashDifferentText_FiresTreeTrigger()
     {
-        const string MochaNotFound = "sh: line 1: mocha: command not found\n";
+        const string mochaNotFound = "sh: line 1: mocha: command not found\n";
         using var repo = TestRepository.Create();
         repo.WriteConfig("npm test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);
         repo.WriteTask("tree-trigger", "# Tree trigger\n");
@@ -67,8 +67,8 @@ public sealed class RelayDriverVerifyFailureAdvisorTests
             new TestRunResult(1, "Failed BarTest"),                         // fv-1 retry
             new TestRunResult(1, "Failed BazTest"),                         // fv-2 gate
             new TestRunResult(1, "Failed BazTest"),                         // fv-2 retry
-            new TestRunResult(1, MochaNotFound),                            // fv-3 gate
-            new TestRunResult(1, MochaNotFound));                           // fv-3 retry
+            new TestRunResult(1, mochaNotFound),                            // fv-3 gate
+            new TestRunResult(1, mochaNotFound));                           // fv-3 retry
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
             RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
@@ -130,7 +130,7 @@ public sealed class RelayDriverVerifyFailureAdvisorTests
     [Fact]
     public async Task VerifyFixLoop_DifferentFailuresDifferentTrees_NoAdvisory()
     {
-        const string MochaNotFound = "sh: line 1: mocha: command not found\n";
+        const string mochaNotFound = "sh: line 1: mocha: command not found\n";
         using var repo = TestRepository.Create();
         repo.WriteConfig("npm test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);
         repo.WriteTask("no-advisory", "# No advisory\n");
@@ -146,8 +146,8 @@ public sealed class RelayDriverVerifyFailureAdvisorTests
             new TestRunResult(1, "Failed BetaTest"),                        // fv-1 retry
             new TestRunResult(1, "Failed GammaTest"),                       // fv-2 gate
             new TestRunResult(1, "Failed GammaTest"),                       // fv-2 retry
-            new TestRunResult(1, MochaNotFound),                            // fv-3 gate
-            new TestRunResult(1, MochaNotFound));                           // fv-3 retry
+            new TestRunResult(1, mochaNotFound),                            // fv-3 gate
+            new TestRunResult(1, mochaNotFound));                           // fv-3 retry
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
             RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),

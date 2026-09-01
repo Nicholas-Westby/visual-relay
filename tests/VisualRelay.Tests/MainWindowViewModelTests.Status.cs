@@ -106,7 +106,7 @@ public sealed partial class MainWindowViewModelTests
         // LoadInitialAsync's initial task selection) preserves "Running" status.
         typeof(MainWindowViewModel)
             .GetField("_runningTaskIds", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .SetValue(viewModel, new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal) { taskId });
+            .SetValue(viewModel, new HashSet<string>(StringComparer.Ordinal) { taskId });
         await viewModel.LoadInitialAsync();
         await (viewModel.LastSelectionLoad ?? Task.CompletedTask);
         viewModel.SelectedTask = viewModel.Tasks.First(t => t.Id == taskId);

@@ -14,7 +14,7 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Test seam: builds the sandboxed runner used by "Rewrite with AI".
-    /// Production builds a real <see cref="SwivalSubagentRunner"/>; tests inject a
+    /// Production builds a real <see cref="FirstPartySubagentRunner"/>; tests inject a
     /// fake so the rewrite path can be exercised without a live nono/swival.
     /// </summary>
     internal Func<RelayConfig, ISubagentRunner>? RewriteRunnerFactory { get; set; }

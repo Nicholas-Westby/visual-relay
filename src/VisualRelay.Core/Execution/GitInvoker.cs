@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Threading;
 
 namespace VisualRelay.Core.Execution;
 
@@ -12,7 +11,7 @@ namespace VisualRelay.Core.Execution;
 /// </summary>
 public sealed class GitInvoker : IGitInvoker
 {
-    private static readonly Lazy<string> _cachedGitBinary = new(() =>
+    private static readonly Lazy<string> CachedGitBinary = new(() =>
     {
         Interlocked.Increment(ref _probeCount);
         return ResolveGitBinary();
@@ -122,7 +121,7 @@ public sealed class GitInvoker : IGitInvoker
             if (_gitBinary is not null)
                 return _gitBinary;
 
-            _gitBinary = _cachedGitBinary.Value;
+            _gitBinary = CachedGitBinary.Value;
 
             // When the pinned binary lives outside /nix/store — i.e. the
             // system git at /usr/bin/git — strip DEVELOPER_DIR / SDKROOT

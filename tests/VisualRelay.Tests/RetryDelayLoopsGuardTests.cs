@@ -9,15 +9,13 @@ namespace VisualRelay.Tests;
 /// <c>RunAsync</c>, or process types. This is the <c>RunGitAsync</c> bug shape:
 /// retrying failures that can never succeed.
 /// </summary>
-public sealed class RetryDelayLoopsGuardTests
+/// <param name="trees">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>. Taken as a primary-constructor parameter so
+/// the class carries no field-assigning constructor of its own.
+/// </param>
+public sealed class RetryDelayLoopsGuardTests(CachedSyntaxTreesFixture trees)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public RetryDelayLoopsGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
-
     /// <summary>
     /// The canonical RunGitAsync shape: a for-loop with Task.Delay backoff AND
     /// a gitInvoker.RunAsync invocation inside. Must be reported.
@@ -215,7 +213,7 @@ public sealed class RetryDelayLoopsGuardTests
     [Fact]
     public void AllTrees_CompleteWithoutThrowing()
     {
-        var violations = RetryDelayLoopsGuard.FindViolations(_trees.AllTrees);
+        var violations = RetryDelayLoopsGuard.FindViolations(trees.AllTrees);
 
         Assert.NotNull(violations);
     }

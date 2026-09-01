@@ -12,7 +12,7 @@ public sealed class RelayQueueControllerDrainTests
     /// the NEEDS-REVIEW marker written, and subsequent tasks must still
     /// be processed.
     ///
-    /// Although <see cref="RelayQueueController.WriteNeedsReviewMarker"/> is
+    /// Although <see cref="RelayQueueController.WriteNeedsReviewMarkerAsync"/> is
     /// private and the class is sealed, this integration test exercises the
     /// full planning-phase flag path — proving the drain does not abort when
     /// a task flags during planning.
@@ -122,7 +122,7 @@ public sealed class RelayQueueControllerDrainTests
     /// A subagent runner that flags at a given stage AND creates
     /// <c>.relay/{taskId}/NEEDS-REVIEW</c> as a <em>directory</em> in the
     /// worktree.  <c>CopyArtifactsBack</c> faithfully reproduces this
-    /// directory in the main repo, so when <c>WriteNeedsReviewMarker</c>
+    /// directory in the main repo, so when <c>WriteNeedsReviewMarkerAsync</c>
     /// later calls <c>File.WriteAllText</c> on the same path it throws
     /// because NEEDS-REVIEW is a directory, not a file.
     /// </summary>
@@ -155,11 +155,11 @@ public sealed class RelayQueueControllerDrainTests
     }
 
     /// <summary>
-    /// When <see cref="RelayQueueController.WriteNeedsReviewMarker"/> throws
+    /// When <see cref="RelayQueueController.WriteNeedsReviewMarkerAsync"/> throws
     /// an <c>IOException</c> during the planning phase (e.g. because
     /// <c>.relay/{taskId}/NEEDS-REVIEW</c> is a directory, not a file), the
-    /// drain must continue.  The phase-2 guard (line 251) already wraps the
-    /// call; this test proves the phase-1 guard added in Bug 3 works.
+    /// drain must continue.  The phase-2 guard already wraps the call; this test
+    /// proves the phase-1 guard added in Bug 3 works.
     /// </summary>
     [Fact]
     public async Task DrainAsync_PlanningPhase_WriteNeedsReviewMarkerIOException_ContinuesDrain()

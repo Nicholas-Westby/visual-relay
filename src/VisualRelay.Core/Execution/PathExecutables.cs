@@ -61,9 +61,9 @@ public static class PathExecutables
     /// <summary>
     /// True when <paramref name="path"/> names a runnable file: a present file on
     /// Windows, an execute-bit file on Unix. The one shared predicate for "is this
-    /// file executable" used by PATH resolution and the backend venv probe.
+    /// file executable" behind PATH resolution.
     /// </summary>
-    public static bool IsExecutableFile(string path)
+    private static bool IsExecutableFile(string path)
     {
         if (!File.Exists(path))
             return false;

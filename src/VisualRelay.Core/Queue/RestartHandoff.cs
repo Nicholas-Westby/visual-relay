@@ -104,6 +104,4 @@ public sealed record RestartHandoff(
 }
 
 [JsonSerializable(typeof(RestartHandoff))]
-internal sealed partial class RestartHandoffJsonContext : JsonSerializerContext
-{
-}
+internal sealed partial class RestartHandoffJsonContext : JsonSerializerContext;

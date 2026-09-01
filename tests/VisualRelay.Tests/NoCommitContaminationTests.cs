@@ -18,11 +18,11 @@ public sealed partial class NoCommitContaminationTests
     public static IEnumerable<object[]> NoCommitContaminationData()
     {
         // Data row 0: PlanThenExecute — task-a first, task-b second
-        yield return new object[] { "task-a", "task-b", "chore: seed repo", NoCommitContaminationTestCase.PlanThenExecute };
+        yield return ["task-a", "task-b", "chore: seed repo", NoCommitContaminationTestCase.PlanThenExecute];
         // Data row 1: FirstCommitDoesNotIncludeUntracked — second first, first second (reversed order)
-        yield return new object[] { "second", "first", "chore: seed", NoCommitContaminationTestCase.FirstCommitDoesNotIncludeUntracked };
+        yield return ["second", "first", "chore: seed", NoCommitContaminationTestCase.FirstCommitDoesNotIncludeUntracked];
         // Data row 2: ManifestAuthority — mixed first, clean second
-        yield return new object[] { "mixed", "clean", "seed", NoCommitContaminationTestCase.ManifestAuthority };
+        yield return ["mixed", "clean", "seed", NoCommitContaminationTestCase.ManifestAuthority];
     }
 
     /// <summary>

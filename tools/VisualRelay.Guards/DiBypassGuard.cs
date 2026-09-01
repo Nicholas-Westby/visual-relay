@@ -104,7 +104,7 @@ public static class DiBypassGuard
                 {
                     var p = parameters[i];
                     // Must be an optional parameter with a null default.
-                    if (p.Default is null || p.Default.Value is null)
+                    if (p.Default is null)
                         continue;
                     if (p.Default.Value is not LiteralExpressionSyntax lit || lit.Kind() != SyntaxKind.NullLiteralExpression)
                         continue;

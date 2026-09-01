@@ -1,4 +1,3 @@
-using System.Xml.Linq;
 using VisualRelay.Guards;
 
 namespace VisualRelay.Tests;
@@ -9,15 +8,13 @@ namespace VisualRelay.Tests;
 /// that every <c>TimeProvider?</c>-typed parameter defaults to <c>null</c>,
 /// and that no <c>src/</c> csproj references a time-testing package.
 /// </summary>
-public sealed class FakeClockGuardTests
+/// <param name="trees">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>. Taken as a primary-constructor parameter so
+/// the class carries no field-assigning constructor of its own.
+/// </param>
+public sealed class FakeClockGuardTests(CachedSyntaxTreesFixture trees)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public FakeClockGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
-
     /// <summary>
     /// A <c>ManualTimeProvider</c> identifier in a source snippet is flagged.
     /// </summary>
@@ -136,12 +133,12 @@ public sealed class FakeClockGuardTests
     [Fact]
     public void LiveTree_HasNoFakeClocksInProduction()
     {
-        var trees = _trees.AllTrees
+        var productionTrees = trees.AllTrees
             .Where(t => t.RelativePath.StartsWith("src/", StringComparison.Ordinal)
                         || t.RelativePath.StartsWith("tools/", StringComparison.Ordinal))
             .ToList();
 
-        var violations = FakeClockGuard.FindViolations(trees);
+        var violations = FakeClockGuard.FindViolations(productionTrees);
 
         // Rule (c): scan src/*.csproj files for time-testing package references.
         var root = RepoSetup.Root;

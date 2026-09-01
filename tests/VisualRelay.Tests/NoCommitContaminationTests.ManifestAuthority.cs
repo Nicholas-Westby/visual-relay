@@ -7,6 +7,4 @@ namespace VisualRelay.Tests;
 /// (SplitGuardVerificationTests.Conventions.cs requires companion files to declare a
 /// public sealed partial class without a redundant Collection attribute).
 /// </summary>
-public sealed partial class NoCommitContaminationTests
-{
-}
+public sealed partial class NoCommitContaminationTests;

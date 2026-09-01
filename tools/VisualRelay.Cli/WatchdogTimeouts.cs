@@ -9,9 +9,6 @@ namespace VisualRelay.Cli;
 /// </summary>
 public static class WatchdogTimeouts
 {
-    public static TimeSpan ForTest() =>
-        ForTest(serial: false);
-
     /// <summary>
     /// <paramref name="serial"/> selects the default timeout: 1800s in serial
     /// mode (one collection at a time), 60s otherwise. The

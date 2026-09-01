@@ -50,6 +50,11 @@ public sealed class WorktreeResetterTests
 
         var actual = await File.ReadAllTextAsync(filePath);
         Assert.Equal("original", actual);
+        // The tracked revert runs before the pre-run-snapshot check, so it lands even
+        // though this repo has none — and the untracked sweep then bails out untouched.
+        Assert.True(result.SnapshotMissing);
+        Assert.Empty(result.Removed);
+        Assert.Empty(result.Failed);
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -5,19 +5,23 @@ using VisualRelay.GitSim;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayDriverGitCommitTests
+/// <summary>
+/// End-to-end git-commit behaviour of <see cref="RelayDriver"/> against a real
+/// seeded repo: a green task produces a genuine relay commit, an agent commit made
+/// mid-run is rejected by the hook, gitignored proof files and manifest-directory
+/// deletions still reach the commit, and commit-message selection falls back
+/// correctly (later candidate, legacy string, slug) when a candidate is unusable.
+/// </summary>
+/// <param name="fixture">
+/// The assembly-wide seeded-pipeline fixture, registered in
+/// <c>TestModuleInitializer.cs</c>; each test clones it for an isolated repo.
+/// </param>
+public sealed class RelayDriverGitCommitTests(PipelineTestFixture fixture)
 {
-    private readonly PipelineTestFixture _fixture;
-
-    public RelayDriverGitCommitTests(PipelineTestFixture fixture)
-    {
-        _fixture = fixture;
-    }
-
     [Fact]
     public async Task RunTaskAsync_WhenGitCommitEnabled_CreatesARealRelayCommit()
     {
-        using var clone = _fixture.Clone();
+        using var clone = fixture.Clone();
         var sim = clone.Sim;
 
         var runner = new EditingSubagentRunner();
@@ -148,7 +152,7 @@ public sealed class RelayDriverGitCommitTests
     [Fact]
     public async Task RunTaskAsync_CommitMsgHookRejectsFileNames_FallsBackToLaterCandidate()
     {
-        using var clone = _fixture.Clone();
+        using var clone = fixture.Clone();
         var sim = clone.Sim;
 
         // Install a commit-msg hook that rejects subjects containing "foo.cs".
@@ -173,7 +177,7 @@ public sealed class RelayDriverGitCommitTests
     [Fact]
     public async Task RunTaskAsync_LegacyCommitMessageString_StillCommits()
     {
-        using var clone = _fixture.Clone();
+        using var clone = fixture.Clone();
         var sim = clone.Sim;
 
         var runner = new LegacyCommitMessageRunner();
@@ -191,7 +195,7 @@ public sealed class RelayDriverGitCommitTests
     [Fact]
     public async Task RunTaskAsync_MissingCommitMessages_CommitsViaSlugFallback()
     {
-        using var clone = _fixture.Clone();
+        using var clone = fixture.Clone();
         var sim = clone.Sim;
 
         var runner = new NoCommitMessageRunner();

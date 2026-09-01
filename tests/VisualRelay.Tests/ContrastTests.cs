@@ -20,19 +20,19 @@ public sealed class ContrastTests
     internal const double AaNormal = 4.5;
 
     /// <summary>Border.panel background from VisualRelayTheme.axaml.</summary>
-    internal const string PanelBackground = "#12151B";
+    private const string PanelBackground = "#12151B";
 
     // ---- WCAG contrast helper --------------------------------------------
 
     /// <summary>sRGB 8-bit channel to its linear-light component (WCAG formula).</summary>
-    internal static double Linearize(int channel)
+    private static double Linearize(int channel)
     {
         var c = channel / 255.0;
         return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
     }
 
     /// <summary>Relative luminance of a #RRGGBB colour per WCAG 2.x.</summary>
-    internal static double RelativeLuminance(string hex)
+    private static double RelativeLuminance(string hex)
     {
         var (r, g, b) = ParseRgb(hex);
         return (0.2126 * Linearize(r)) + (0.7152 * Linearize(g)) + (0.0722 * Linearize(b));
@@ -47,7 +47,7 @@ public sealed class ContrastTests
         return (hi + 0.05) / (lo + 0.05);
     }
 
-    internal static (int R, int G, int B) ParseRgb(string hex)
+    private static (int R, int G, int B) ParseRgb(string hex)
     {
         var h = hex.TrimStart('#');
         return (

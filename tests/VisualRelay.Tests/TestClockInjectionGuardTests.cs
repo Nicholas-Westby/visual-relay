@@ -8,14 +8,12 @@ namespace VisualRelay.Tests;
 /// <c>tests/VisualRelay.Tests/</c> that omit the <c>timeProvider:</c> named
 /// argument — a slip that lets the call silently use real wall-clock time.
 /// </summary>
-public sealed class TestClockInjectionGuardTests
+/// <param name="treesFixture">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the live-tree gate below scans.
+/// </param>
+public sealed class TestClockInjectionGuardTests(CachedSyntaxTreesFixture treesFixture)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public TestClockInjectionGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
 
     // ── Inline-snippet unit tests ──────────────────────────────────────────
 
@@ -123,7 +121,7 @@ public sealed class TestClockInjectionGuardTests
     [Fact]
     public void LiveTree_HasNoMissingTimeProvider()
     {
-        var trees = _trees.AllTrees
+        var trees = treesFixture.AllTrees
             .Where(t => t.RelativePath.StartsWith("tests/", StringComparison.Ordinal))
             .ToList();
 

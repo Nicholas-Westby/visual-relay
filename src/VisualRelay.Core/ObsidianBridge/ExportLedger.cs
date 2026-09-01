@@ -9,14 +9,10 @@ public enum SeedDecision { FullBackfill, SealOnly, Skip }
 /// exported to the Obsidian vault. Stored at <c>&lt;RepoDir&gt;/.vr-export-ledger.json</c>
 /// with atomic temp-file + rename writes so the file is never partial.
 /// </summary>
-public sealed class ExportLedger
+/// <param name="repoDir">The repository whose export ledger this is.</param>
+public sealed class ExportLedger(string repoDir)
 {
-    private readonly string _ledgerPath;
-
-    public ExportLedger(string repoDir)
-    {
-        _ledgerPath = Path.Combine(repoDir, ".vr-export-ledger.json");
-    }
+    private readonly string _ledgerPath = Path.Combine(repoDir, ".vr-export-ledger.json");
 
     /// <summary>
     /// Returns true when <paramref name="taskId"/> has already been recorded.

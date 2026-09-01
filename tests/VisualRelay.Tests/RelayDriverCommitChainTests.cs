@@ -49,7 +49,8 @@ public sealed class RelayDriverCommitChainTests
     /// Regression: the sanitizer used to silently word-chop overlong candidates,
     /// so the mangled first candidate always won and shadowed shorter intact
     /// candidates. Now an overlong candidate must be rejected so the chain falls
-    /// through to the next fitting candidate.
+    /// through to the next fitting candidate — and the rejection must surface as
+    /// an advisory, so a dropped subject is never silent.
     /// </summary>
     [Fact]
     public void BuildCommitChain_OverlongFirstFittingSecond_UsesSecondIntact()
@@ -64,13 +65,19 @@ public sealed class RelayDriverCommitChainTests
         // The second (fitting) candidate must be the first entry in the chain,
         // NOT a truncated version of the overlong one.
         Assert.Equal(fitting, chain[0]);
+
+        // The rejected candidate is reported, not silently dropped: exactly one
+        // advisory, naming the truncation that produced the safety-net entry.
+        var advisory = Assert.Single(advisories);
+        Assert.Contains("overlong commit subject truncated with ellipsis", advisory,
+            StringComparison.Ordinal);
     }
 
     /// <summary>
     /// When every candidate overflows, the chain must still be non-empty:
     /// an ellipsis-truncated safety-net subject sits before the generic
     /// <c>chore(relay): test-task</c> fallback so the worst case is at least
-    /// recognizable.
+    /// recognizable. Every truncation is reported as its own advisory.
     /// </summary>
     [Fact]
     public void BuildCommitChain_AllOverlong_YieldsEllipsisSafetyNetBeforeFallback()
@@ -92,5 +99,11 @@ public sealed class RelayDriverCommitChainTests
 
         // The ellipsis entry sits before the fallback (not last, which is generic).
         Assert.NotEqual(ellipsisEntry, chain[^1]);
+
+        // One advisory per truncated candidate — both rejections are reported.
+        Assert.Equal(2, advisories.Count);
+        Assert.All(advisories, a =>
+            Assert.Contains("overlong commit subject truncated with ellipsis", a,
+                StringComparison.Ordinal));
     }
 }

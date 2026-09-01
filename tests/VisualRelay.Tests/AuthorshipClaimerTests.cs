@@ -1,5 +1,4 @@
 using VisualRelay.Core.Authorship;
-using VisualRelay.Core.Execution;
 using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;

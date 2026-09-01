@@ -13,15 +13,11 @@ public sealed class RelayDriverCommitGateFlagTests
     /// failure without needing a real filesystem race.
     /// All other calls pass through.
     /// </summary>
-    private sealed class PostCommitFlagTriggeringGitInvoker : IGitInvoker
+    /// <param name="inner">The real engine every call is forwarded to.</param>
+    private sealed class PostCommitFlagTriggeringGitInvoker(GitSimEngine inner) : IGitInvoker
     {
-        private readonly GitSimEngine _inner;
         private bool _commitHappened;
         private bool _alreadyInjected;
-
-        public PostCommitFlagTriggeringGitInvoker(GitSimEngine inner) => _inner = inner;
-
-        public GitSimEngine Inner => _inner;
 
         public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
             string rootPath,
@@ -42,7 +38,7 @@ public sealed class RelayDriverCommitGateFlagTests
                 && args.Contains("ls-files") && args.Contains("--others"))
             {
                 _alreadyInjected = true;
-                var normal = await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);
+                var normal = await inner.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
                 var injectedPath = "src/uncommitted-file.cs";
                 var output = string.IsNullOrWhiteSpace(normal.Output)
                     ? injectedPath
@@ -53,7 +49,7 @@ public sealed class RelayDriverCommitGateFlagTests
             if (args.Contains("commit") && args.Contains("-m"))
                 _commitHappened = true;
 
-            return await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);
+            return await inner.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
         }
     }
 

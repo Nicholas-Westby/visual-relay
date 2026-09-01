@@ -275,7 +275,7 @@ public sealed partial class RelayQueueController
                     // RestartBetweenTasks: after a committed task, write handoff
                     // and stop the drain; flagged tasks continue in-process.
                     if (TryRestartBetweenTasks(mode, outcome, task.Id, drainRunId,
-                            queue.Count, results))
+                            queue.Count))
                         return results;
 
                     if (circuitBreaker.ShouldHalt(RootPath, outcome))

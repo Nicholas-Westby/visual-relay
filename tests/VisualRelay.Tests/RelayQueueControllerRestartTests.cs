@@ -25,8 +25,10 @@ public sealed class RelayQueueControllerRestartTests
             new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Committed, "hash-b", "sha-b", null));
 
         RestartHandoff? capturedHandoff = null;
-        var controller = new RelayQueueController(repo.Root, runner);
-        controller.OnRestartRequested = h => capturedHandoff = h;
+        var controller = new RelayQueueController(repo.Root, runner)
+        {
+            OnRestartRequested = h => capturedHandoff = h,
+        };
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync(mode: RunAllMode.RestartBetweenTasks);
@@ -64,8 +66,10 @@ public sealed class RelayQueueControllerRestartTests
             new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Committed, "hash-b", "sha-b", null));
 
         RestartHandoff? capturedHandoff = null;
-        var controller = new RelayQueueController(repo.Root, runner);
-        controller.OnRestartRequested = h => capturedHandoff = h;
+        var controller = new RelayQueueController(repo.Root, runner)
+        {
+            OnRestartRequested = h => capturedHandoff = h,
+        };
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync(mode: RunAllMode.RestartBetweenTasks);
@@ -100,13 +104,23 @@ public sealed class RelayQueueControllerRestartTests
             pendingCount: 1);
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "restart-handoff.json")));
 
+        // …and it must be a READABLE handoff for that prior drain, not merely a file
+        // on disk: an unparseable sidecar is ignored rather than resumed, which would
+        // make the "handoff was consumed" assertion below pass vacuously.
+        var writtenHandoff = RestartHandoff.Read(repo.Root);
+        Assert.NotNull(writtenHandoff);
+        Assert.Equal(priorHandoff.DrainId, writtenHandoff.DrainId);
+        Assert.Equal(priorHandoff.CommitSha, writtenHandoff.CommitSha);
+
         // The only task flags — zero committed outcomes this cycle.
         var runner = new ScriptedOutcomeTaskRunner(
             new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null, "failed"));
 
         var restartRequested = false;
-        var controller = new RelayQueueController(repo.Root, runner);
-        controller.OnRestartRequested = _ => restartRequested = true;
+        var controller = new RelayQueueController(repo.Root, runner)
+        {
+            OnRestartRequested = _ => restartRequested = true,
+        };
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync(mode: RunAllMode.RestartBetweenTasks);

@@ -10,15 +10,13 @@ namespace VisualRelay.Tests;
 /// <see cref="RealSleepGuard"/>'s slow-integration exemption list.
 /// Explains per finding which hermetic double to prefer.
 /// </summary>
-public sealed class TestSideEffectsGuardTests
+/// <param name="trees">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>. Taken as a primary-constructor parameter so
+/// the class carries no field-assigning constructor of its own.
+/// </param>
+public sealed class TestSideEffectsGuardTests(CachedSyntaxTreesFixture trees)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public TestSideEffectsGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
-
     /// <summary>
     /// <c>new GitInvoker()</c> in a test file path is reported.
     /// </summary>
@@ -140,7 +138,7 @@ public sealed class TestSideEffectsGuardTests
     [Fact]
     public void AllTrees_CompleteWithoutThrowing()
     {
-        var violations = TestSideEffectsGuard.FindViolations(_trees.AllTrees);
+        var violations = TestSideEffectsGuard.FindViolations(trees.AllTrees);
 
         Assert.NotNull(violations);
     }

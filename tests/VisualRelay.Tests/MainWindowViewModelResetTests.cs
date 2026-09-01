@@ -231,11 +231,13 @@ public sealed class MainWindowViewModelResetTests
         Assert.True(controller.Tasks.Single(t => t.Id == "task-b").NeedsReview);
         // After task-a completes: reset task-b mid-drain, evict from seen set.
         // Drain loop processes in-queue task-b next; run dir gone → stage 1 restart.
+        // Capture the path, not the `using` fixture the outer scope disposes.
+        var repoRoot = repo.Root;
         runner.AfterRun = () =>
         {
             if (runner.TasksRun is ["task-a"])
             {
-                new RelayTaskRepository(repo.Root).ResetTask("task-b");
+                new RelayTaskRepository(repoRoot).ResetTask("task-b");
                 controller.RemoveFromSeen("task-b");
             }
         };

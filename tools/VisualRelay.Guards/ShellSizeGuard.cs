@@ -19,7 +19,7 @@ public static class ShellSizeGuard
     /// The exact repo-relative path that qualifies for <see cref="BootstrapLimit"/>.
     /// Comparison is ordinal (<c>sub/visual-relay</c> does not match).
     /// </summary>
-    public const string BootstrapPath = "visual-relay";
+    private const string BootstrapPath = "visual-relay";
 
     /// <summary>The environment variable that overrides <see cref="DefaultLimit"/>.</summary>
     private const string LimitEnvVar = "VISUAL_RELAY_SHELL_LINE_LIMIT";

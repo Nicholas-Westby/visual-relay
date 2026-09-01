@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -73,7 +74,18 @@ internal sealed class GitObjectStore
 
     public bool TryGetBlob(string sha, out GitBlob blob) => _blobs.TryGetValue(sha, out blob!);
     public bool TryGetTree(string sha, out GitTree tree) => _trees.TryGetValue(sha, out tree!);
-    public bool TryGetCommit(string sha, out GitCommit commit) => _commits.TryGetValue(sha, out commit!);
+    /// <summary>Looks up a commit by sha.</summary>
+    /// <param name="sha">The commit sha.</param>
+    /// <param name="commit">The commit, when found.</param>
+    /// <returns>True when the sha names a commit this store holds.</returns>
+    /// <remarks>
+    /// The out parameter is annotated rather than suppressed with <c>!</c>. It
+    /// used to claim non-null unconditionally, which told the compiler a miss
+    /// could not yield null — so a caller that short-circuits on the false
+    /// branch looked like it was dereferencing a value that always exists.
+    /// </remarks>
+    public bool TryGetCommit(string sha, [MaybeNullWhen(false)] out GitCommit commit) =>
+        _commits.TryGetValue(sha, out commit);
 
     public bool IsCommit(string sha) => _commits.ContainsKey(sha);
     public bool IsTree(string sha) => _trees.ContainsKey(sha);

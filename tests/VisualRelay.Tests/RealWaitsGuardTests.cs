@@ -4,19 +4,18 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Unit tests for <see cref="RealWaitsGuard"/> — delegates to
-/// <see cref="RealSleepGuard.FindViolations"/> across all three roots (src,
-/// tests, tools), PLUS inventories every <c>// vr-allow-sleep: &lt;reason&gt;</c>
-/// suppression with its reason so stale exemptions get re-reviewed.
+/// <see cref="RealSleepGuard.FindViolations(IEnumerable{ValueTuple{string, string}})"/>
+/// across all three roots (src, tests, tools), PLUS inventories every
+/// <c>// vr-allow-sleep: &lt;reason&gt;</c> suppression with its reason so stale
+/// exemptions get re-reviewed.
 /// </summary>
-public sealed class RealWaitsGuardTests
+/// <param name="trees">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>. Taken as a primary-constructor parameter so
+/// the class carries no field-assigning constructor of its own.
+/// </param>
+public sealed class RealWaitsGuardTests(CachedSyntaxTreesFixture trees)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public RealWaitsGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
-
     /// <summary>
     /// A Thread.Sleep in a non-exempt file is found by the delegated RealSleepGuard
     /// and shows up as a real-waits violation.
@@ -119,8 +118,8 @@ public sealed class RealWaitsGuardTests
     [Fact]
     public void AllTrees_CompleteWithoutThrowing()
     {
-        var violations = RealWaitsGuard.FindViolations(_trees.AllTrees);
-        var suppressions = RealWaitsGuard.FindSuppressions(_trees.AllTrees);
+        var violations = RealWaitsGuard.FindViolations(trees.AllTrees);
+        var suppressions = RealWaitsGuard.FindSuppressions(trees.AllTrees);
 
         Assert.NotNull(violations);
         Assert.NotNull(suppressions);

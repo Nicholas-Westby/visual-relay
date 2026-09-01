@@ -144,7 +144,7 @@ public static class RealGitFallbackGuard
     {
         null => false,
         IdentifierNameSyntax id => id.Identifier.Text is "IGitInvoker",
-        NullableTypeSyntax n => n.ElementType is IdentifierNameSyntax id && id.Identifier.Text is "IGitInvoker",
+        NullableTypeSyntax { ElementType: IdentifierNameSyntax { Identifier.Text: "IGitInvoker" } } => true,
         QualifiedNameSyntax qn => qn.Right.Identifier.Text is "IGitInvoker",
         _ => false,
     };

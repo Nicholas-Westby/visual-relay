@@ -3,8 +3,8 @@ namespace VisualRelay.Guards;
 /// <summary>
 /// CLI runner for <see cref="SyncOverAsyncGuard"/>: walks
 /// <c>tests/VisualRelay.Tests/**/*.cs</c> (excluding bin/obj), calls
-/// <see cref="SyncOverAsyncGuard.FindViolations"/>, prints violations to stderr,
-/// and exits 1 when any are found.
+/// <see cref="SyncOverAsyncGuard.FindViolations(IEnumerable{ValueTuple{string, string}})"/>,
+/// prints violations to stderr, and exits 1 when any are found.
 /// </summary>
 public static class SyncOverAsyncGuardRunner
 {

@@ -5,9 +5,9 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// The enforcing real-sleep guard-as-test (the house idiom mirrored from
 /// <see cref="ShellScriptSizeGuardTests"/>). The matcher
-/// (<see cref="RealSleepGuard.FindViolations"/>) is pure: it Roslyn-parses each
-/// source and flags real sleeps — shell <c>sleep N</c> embedded in string literals,
-/// the <c>("sleep","30")</c> argv form, every <c>Thread.Sleep</c>, and every
+/// (<see cref="RealSleepGuard.FindViolations(IEnumerable{ValueTuple{string, string}})"/>)
+/// is pure: it Roslyn-parses each source and flags real sleeps — shell <c>sleep N</c>
+/// embedded in string literals, the <c>("sleep","30")</c> argv form, every <c>Thread.Sleep</c>, and every
 /// <c>Task.Delay</c> lacking a TimeProvider argument — while string-literal-token scoping
 /// makes doc-comment / identifier false positives impossible by construction.
 ///
@@ -20,14 +20,12 @@ namespace VisualRelay.Tests;
 /// contains sleep fixtures; that exemption is exactly why the live gate can scan
 /// the test project without tripping on these strings.
 /// </summary>
-public sealed class RealSleepGuardTests
+/// <param name="treesFixture">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the live sleep-free gate below scans.
+/// </param>
+public sealed class RealSleepGuardTests(CachedSyntaxTreesFixture treesFixture)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public RealSleepGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
     /// <summary>
     /// Gate bites: a shell <c>sleep 30</c> sitting in a C# string literal is reported.
     /// This is the core build-failing behaviour — a real sleep in the source is found.
@@ -233,7 +231,7 @@ public sealed class RealSleepGuardTests
     [Fact]
     public void AllTestProjectCsFiles_AreSleepFree()
     {
-        var trees = _trees.AllTrees
+        var trees = treesFixture.AllTrees
             .Where(t => t.RelativePath.StartsWith("tests/VisualRelay.Tests/", StringComparison.Ordinal))
             .ToList();
 

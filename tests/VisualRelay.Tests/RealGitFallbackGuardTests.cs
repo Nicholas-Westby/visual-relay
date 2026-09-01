@@ -15,14 +15,12 @@ namespace VisualRelay.Tests;
 /// violations in <c>src/VisualRelay.Core/Execution</c>. The inline-snippet tests
 /// below prove the matcher has teeth against both patterns.</para>
 /// </summary>
-public sealed class RealGitFallbackGuardTests
+/// <param name="treesFixture">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the live-tree gate below scans.
+/// </param>
+public sealed class RealGitFallbackGuardTests(CachedSyntaxTreesFixture treesFixture)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
-
-    public RealGitFallbackGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
 
     // ── Inline-snippet unit tests ──────────────────────────────────────────
 
@@ -153,7 +151,7 @@ public sealed class RealGitFallbackGuardTests
     [Fact]
     public void LiveTree_HasNoRealGitFallbacks()
     {
-        var trees = _trees.AllTrees
+        var trees = treesFixture.AllTrees
             .Where(t => t.RelativePath.StartsWith("src/", StringComparison.Ordinal))
             .ToList();
 

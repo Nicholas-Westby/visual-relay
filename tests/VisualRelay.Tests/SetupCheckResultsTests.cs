@@ -249,8 +249,8 @@ public sealed class SetupCheckResultsTests
     {
         var denials = new List<SandboxDenial> { new("file-write-create", "/Volumes/Tera/.TemporaryItems/NSIRD_swift-build_abc"), new("file-read", "/tmp/other") };
         var checks = new RelayDriver.SetupCheckResults(BootstrapCheck: null, BootstrapCommand: null, BootstrapOutput: null, GuardCheck: "red", GuardCommand: "swift build", GuardOutput: "sandbox denial", NewGuardProbeCheck: null, NewGuardProbeOutput: null, TestCheck: "green", TestCommand: "swift test", TestExitCode: 0) { GuardDenials = denials };
-        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true };
-        var json = System.Text.Json.JsonSerializer.Serialize(checks, opts);
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
+        var json = JsonSerializer.Serialize(checks, opts);
         Assert.Contains("guardDenials", json);
         Assert.Contains("file-write-create", json);
         Assert.Contains("/Volumes/Tera/.TemporaryItems/NSIRD_swift-build_abc", json);
@@ -262,8 +262,8 @@ public sealed class SetupCheckResultsTests
     public void Serialization_NoDenials_OmitsDenialFields()
     {
         var checks = new RelayDriver.SetupCheckResults(BootstrapCheck: "green", BootstrapCommand: "nix develop", BootstrapOutput: null, GuardCheck: "green", GuardCommand: null, GuardOutput: null, NewGuardProbeCheck: null, NewGuardProbeOutput: null, TestCheck: "green", TestCommand: "bun test", TestExitCode: 0);
-        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true };
-        var json = System.Text.Json.JsonSerializer.Serialize(checks, opts);
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
+        var json = JsonSerializer.Serialize(checks, opts);
         Assert.DoesNotContain("Denials", json);
         Assert.DoesNotContain("sandbox denial", json);
     }

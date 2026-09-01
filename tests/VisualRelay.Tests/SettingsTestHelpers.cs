@@ -118,7 +118,7 @@ internal static class SettingsTestHelpers
 
     /// <summary>
     /// Finds the <c>LitTierItems</c> <see cref="ItemsControl"/> by walking the
-    /// visual descendants of <paramref name="root"/>. <see cref="Control.FindControl{T}"/>
+    /// visual descendants of <paramref name="root"/>. <see cref="ControlExtensions.FindControl{T}"/>
     /// cannot cross into the <c>LiveTiersSettings</c> user control's name scope,
     /// so the Live Tiers lookups use this walker instead.
     /// </summary>

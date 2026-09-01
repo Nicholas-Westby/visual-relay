@@ -5,8 +5,8 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// The enforcing build-subprocess guard-as-test (the house idiom mirrored from
 /// <see cref="RealSleepGuardTests"/>). The matcher
-/// (<see cref="RealBuildSubprocessGuard.FindViolations"/>) is pure: it
-/// Roslyn-parses each source and flags a test that launches a REAL heavy build
+/// (<see cref="RealBuildSubprocessGuard.FindViolations(IEnumerable{ValueTuple{string, string}})"/>)
+/// is pure: it Roslyn-parses each source and flags a test that launches a REAL heavy build
 /// subprocess — <c>dotnet build|publish|run</c>, <c>cargo build</c>,
 /// <c>npm install</c>, … — without a timeout, a skip-gate, or a suppression.
 /// Such a child can wedge under the verify's nono sandbox (a macOS <c>dotnet</c>
@@ -20,14 +20,13 @@ namespace VisualRelay.Tests;
 /// because it carries the spawn fixtures; that exemption is exactly why the live
 /// gate can scan the test project without tripping on these strings.
 /// </summary>
-public sealed class RealBuildSubprocessGuardTests
+/// <param name="treesFixture">
+/// The assembly-wide parsed-tree fixture, registered in
+/// <c>TestModuleInitializer.cs</c>, that the live enforcing gate below scans.
+/// </param>
+public sealed class RealBuildSubprocessGuardTests(CachedSyntaxTreesFixture treesFixture)
 {
-    private readonly CachedSyntaxTreesFixture _trees;
 
-    public RealBuildSubprocessGuardTests(CachedSyntaxTreesFixture trees)
-    {
-        _trees = trees;
-    }
     /// <summary>
     /// Gate bites: an unbounded <c>dotnet build</c> launched via a
     /// <c>ProcessStartInfo</c> initializer (the PackagingTool shape) is reported.
@@ -271,7 +270,7 @@ public sealed class RealBuildSubprocessGuardTests
     [Fact]
     public void AllTestProjectCsFiles_AreSandboxBuildSafe()
     {
-        var trees = _trees.AllTrees
+        var trees = treesFixture.AllTrees
             .Where(t => t.RelativePath.StartsWith("tests/VisualRelay.Tests/", StringComparison.Ordinal))
             .ToList();
 

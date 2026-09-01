@@ -118,34 +118,30 @@ public static class TestSideEffectsGuard
             switch (node)
             {
                 // new GitInvoker()
-                case ObjectCreationExpressionSyntax creation
-                    when creation.Type is IdentifierNameSyntax id
-                         && id.Identifier.Text == "GitInvoker":
+                case ObjectCreationExpressionSyntax
+                { Type: IdentifierNameSyntax { Identifier.Text: "GitInvoker" } } creation:
                     Report(creation.SpanStart, "new GitInvoker()",
                         "prefer NullGitInvoker (returns exit-128) or GitSim (in-memory IGitInvoker)");
                     break;
 
                 // Process.Start(...)
-                case InvocationExpressionSyntax inv
-                    when inv.Expression is MemberAccessExpressionSyntax ma
-                         && RightmostIdentifier(ma.Expression) == "Process"
+                case InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax ma } inv
+                    when RightmostIdentifier(ma.Expression) == "Process"
                          && ma.Name.Identifier.Text == "Start":
                     Report(inv.SpanStart, "Process.Start(...)",
                         "prefer ScriptedTestRunner or an in-process equivalent");
                     break;
 
                 // new ProcessStartInfo(...)
-                case ObjectCreationExpressionSyntax creation
-                    when creation.Type is IdentifierNameSyntax psiId
-                         && psiId.Identifier.Text == "ProcessStartInfo":
+                case ObjectCreationExpressionSyntax
+                { Type: IdentifierNameSyntax { Identifier.Text: "ProcessStartInfo" } } creation:
                     Report(creation.SpanStart, "new ProcessStartInfo(...)",
                         "prefer ScriptedTestRunner or an in-process equivalent");
                     break;
 
                 // Environment.SetEnvironmentVariable
-                case InvocationExpressionSyntax inv
-                    when inv.Expression is MemberAccessExpressionSyntax envMa
-                         && RightmostIdentifier(envMa.Expression) == "Environment"
+                case InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax envMa } inv
+                    when RightmostIdentifier(envMa.Expression) == "Environment"
                          && envMa.Name.Identifier.Text == "SetEnvironmentVariable":
                     Report(inv.SpanStart, "Environment.SetEnvironmentVariable(...)",
                         "prefer DictionaryEnvironmentAccessor (in-memory IEnvironmentAccessor)");

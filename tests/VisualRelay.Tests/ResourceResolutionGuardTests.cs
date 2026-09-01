@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using Avalonia;
-using Avalonia.Headless;
 
 namespace VisualRelay.Tests;
 
@@ -55,7 +54,7 @@ public sealed class ResourceResolutionGuardTests
         if (unresolved.Count > 0)
         {
             Assert.Fail(
-                $"Unresolvable DynamicResource keys found:\n" +
+                "Unresolvable DynamicResource keys found:\n" +
                 string.Join("\n", unresolved.Select(u =>
                     $"  {Path.GetFileName(u.File)}:{u.Line} → '{u.Key}'")));
         }

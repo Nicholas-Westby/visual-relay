@@ -19,7 +19,6 @@ public sealed partial class RelayDriver
         RelayTaskItem? task,
         RelayTaskInput input,
         string rootPath,
-        string tasksDir,
         string runId,
         string taskId,
         string taskDirectory,

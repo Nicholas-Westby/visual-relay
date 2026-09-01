@@ -1,6 +1,4 @@
 using VisualRelay.Core.CommitLint;
-using VisualRelay.Core.Execution;
-using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 

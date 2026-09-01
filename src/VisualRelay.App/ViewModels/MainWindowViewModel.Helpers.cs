@@ -56,7 +56,7 @@ public partial class MainWindowViewModel
         }
 
         ApplyStageEventToBoard(relayEvent);
-        if (relayEvent.EventName == "flagged" && relayEvent.StageNumber is 7 or 8)
+        if (relayEvent is { EventName: "flagged", StageNumber: 7 or 8 })
         {
             var sib = Stages.FirstOrDefault(s => s.Number == (relayEvent.StageNumber == 7 ? 8 : 7));
             if (sib is { Status: "Running" }) sib.Status = "Stopped";
