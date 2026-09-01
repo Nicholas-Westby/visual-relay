@@ -103,26 +103,38 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
         };
 
         AgentLoopResult? last = null;
-        foreach (var route in chain)
+        KillSignature? kill = null;
+        var hardAbort = false;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var route in chain)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            last = await RunOnRouteAsync(route, conversation, invocation, events, cancellationToken)
-                .ConfigureAwait(false);
+                (last, kill, hardAbort) = await RunOnRouteAsync(
+                    route, conversation, invocation, events, cancellationToken).ConfigureAwait(false);
 
-            // A hop is worth taking only for a fault of this route. An exhausted
-            // turn budget or a cancelled stage would repeat identically on the
-            // next model, and a success is done.
-            if (last.Outcome != AgentLoopOutcome.Error) break;
+                // A hop is worth taking only for a fault of this route. An exhausted
+                // turn budget or a cancelled stage would repeat identically on the
+                // next model, and a success is done.
+                if (last.Outcome != AgentLoopOutcome.Error) break;
 
-            if (!ReferenceEquals(route, chain[^1]))
-                events.Publish(new AgentEvent(
-                    AgentEventKind.Retry, _timeProvider.GetUtcNow(), last.Stats.Turns,
-                    Text: last.Error, Detail: "falling through to the next model in the chain"));
+                if (!ReferenceEquals(route, chain[^1]))
+                    events.Publish(new AgentEvent(
+                        AgentEventKind.Retry, _timeProvider.GetUtcNow(), last.Stats.Turns,
+                        Text: last.Error, Detail: "falling through to the next model in the chain"));
+            }
         }
-
-        await WriteReportAsync(invocation, last!, events, cancellationToken).ConfigureAwait(false);
-        return await ToSubagentResultAsync(invocation, last!, cancellationToken).ConfigureAwait(false);
+        finally
+        {
+            // A killed stage is the case where the report matters most, so it is
+            // written on the way out however the loop ended — including the
+            // cancellation that used to throw straight past this.
+            if (last is not null)
+                await WriteReportAsync(invocation, last, events).ConfigureAwait(false);
+        }
+        return await ToSubagentResultAsync(invocation, last!, kill, hardAbort, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -144,14 +156,19 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
     }
 
     private async Task<SubagentResult> ToSubagentResultAsync(
-        StageInvocation invocation, AgentLoopResult result, CancellationToken cancellationToken)
+        StageInvocation invocation, AgentLoopResult result, KillSignature? kill, bool hardAbort,
+        CancellationToken cancellationToken)
     {
         if (result.Outcome != AgentLoopOutcome.Success)
             return new SubagentResult(
                 result.Answer, null, false, result.Error ?? result.OutcomeName,
                 // A cancelled stage must not be escalated around: the driver
                 // owns that decision and the stage did not fail on its merits.
-                HardAbort: result.Outcome == AgentLoopOutcome.Cancelled);
+                // Nor must a watchdog kill that names a host condition — a
+                // ceiling, an output-silence kill or a wedge would hit the same
+                // wall on a dearer tier, so the driver flags instead of retrying.
+                HardAbort: result.Outcome == AgentLoopOutcome.Cancelled || hardAbort,
+                Kill: kill);
 
         var contract = StageContractReader.Read(result.Answer, invocation.Stage.OutputContract);
         if (!contract.Succeeded || contract.Json is not { } json)

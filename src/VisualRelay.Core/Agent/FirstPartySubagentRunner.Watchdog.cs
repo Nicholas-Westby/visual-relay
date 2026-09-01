@@ -42,27 +42,34 @@ public sealed partial class FirstPartySubagentRunner
     /// <param name="watchdog">The armed watchdog.</param>
     /// <param name="body">The loop to supervise.</param>
     /// <param name="cancellationToken">The caller's token.</param>
-    /// <returns>The loop's result, or a stalled result when the watchdog fired.</returns>
+    /// <returns>
+    /// The loop's result, and the kill signature when a clock fired. The driver
+    /// branches on that signature to decide flag-immediately versus
+    /// escalate-and-retry, so discarding it makes a ceiling kill look like an
+    /// ordinary failure a dearer tier could fix.
+    /// </returns>
     /// <remarks>
     /// A stall is the absence of events, so it cannot be noticed by an event
     /// sink alone — something has to look at the clock while nothing happens.
     /// That is what this timer is for.
     /// </remarks>
-    private async Task<AgentLoopResult> SuperviseAsync(
+    private async Task<(AgentLoopResult Result, KillSignature? Kill, bool HardAbort)> SuperviseAsync(
         AgentWatchdog watchdog,
         Func<CancellationToken, Task<AgentLoopResult>> body,
         CancellationToken cancellationToken)
     {
         var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var fired = AgentWatchdogOutcome.Disarmed;
+        KillSignature? kill = null;
 
         watchdog.Start();
         var timer = _timeProvider.CreateTimer(
             _ =>
             {
-                var (outcome, _) = watchdog.Evaluate();
+                var (outcome, signature) = watchdog.Evaluate();
                 if (outcome == AgentWatchdogOutcome.Disarmed) return;
                 fired = outcome;
+                kill = signature;
                 // Safe: the finally awaits the timer's disposal, which waits for
                 // this callback, BEFORE disposing the source.
                 // ReSharper disable once AccessToDisposedClosure
@@ -72,15 +79,21 @@ public sealed partial class FirstPartySubagentRunner
 
         try
         {
-            return await body(stall.Token).ConfigureAwait(false);
+            return (await body(stall.Token).ConfigureAwait(false), null, false);
         }
         catch (OperationCanceledException) when (fired != AgentWatchdogOutcome.Disarmed)
         {
-            return new AgentLoopResult(
-                AgentLoopOutcome.Error,
-                string.Empty,
-                new AgentStats(),
-                $"the stage stalled: {Describe(fired)}");
+            return (
+                new AgentLoopResult(
+                    AgentLoopOutcome.Error,
+                    string.Empty,
+                    new AgentStats(),
+                    $"the stage stalled: {Describe(fired)}"),
+                kill,
+                // A plain stall CAN be the model, so it stays escalatable. A
+                // ceiling, an output-silence kill and a wedge are host
+                // conditions a dearer tier would hit identically.
+                AgentWatchdog.IsHardAbort(fired));
         }
         finally
         {

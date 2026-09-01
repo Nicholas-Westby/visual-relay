@@ -51,8 +51,7 @@ public static class ToolArgumentRepair
         if (node is not JsonObject obj)
             return new ToolArgumentRepairResult(null, "arguments must be a JSON object");
 
-        if (schema is not null && CoerceTypes(obj, schema, repairs) is false)
-            return new ToolArgumentRepairResult(null, "arguments could not be coerced to the schema");
+        if (schema is not null) CoerceTypes(obj, schema, repairs);
 
         return new ToolArgumentRepairResult(
             obj, repairs.Count == 0 ? null : string.Join("; ", repairs));
@@ -109,11 +108,16 @@ public static class ToolArgumentRepair
 
     /// <summary>
     /// Coerces primitives the model got the wrong way round: a number sent as a
-    /// string, or a boolean sent as "true". Anything less obvious is left alone.
+    /// string, or a boolean sent as "true". Anything less obvious is left alone,
+    /// so this never rejects — the caller used to branch on a false it could
+    /// never receive.
     /// </summary>
-    private static bool CoerceTypes(JsonObject arguments, JsonNode schema, List<string> repairs)
+    /// <param name="arguments">The arguments to repair in place.</param>
+    /// <param name="schema">The tool's parameter schema.</param>
+    /// <param name="repairs">Where each repair is recorded.</param>
+    private static void CoerceTypes(JsonObject arguments, JsonNode schema, List<string> repairs)
     {
-        if (schema["properties"] is not JsonObject properties) return true;
+        if (schema["properties"] is not JsonObject properties) return;
 
         foreach (var (name, definition) in properties)
         {
@@ -133,7 +137,5 @@ public static class ToolArgumentRepair
                 repairs.Add($"coerced '{name}' from string to boolean");
             }
         }
-
-        return true;
     }
 }

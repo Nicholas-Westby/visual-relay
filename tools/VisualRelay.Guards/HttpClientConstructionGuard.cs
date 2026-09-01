@@ -65,7 +65,6 @@ public static class HttpClientConstructionGuard
         // 2026-08-31: probes the LOCAL model backend (127.0.0.1 LiteLLM proxy) for
         // readiness, not a provider. Migrating it needs a non-provider transport
         // seam that does not exist yet; out of scope for this step.
-        ["BackendReadinessProbe.cs"] = "TEMPORARY 2026-08-31 — loopback readiness probe of the local model backend",
         // 2026-08-31: one-off installer download of the mxc archive. Not an LLM
         // call, already gated behind an injectable download delegate in tests.
         ["MxcInstaller.cs"] = "TEMPORARY 2026-08-31 — one-off installer download, injectable delegate in tests",

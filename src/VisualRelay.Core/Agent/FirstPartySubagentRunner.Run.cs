@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using VisualRelay.Core.Agent.Tools;
 using VisualRelay.Core.Llm;
 using VisualRelay.Core.Llm.Routing;
@@ -13,7 +14,7 @@ public sealed partial class FirstPartySubagentRunner
     private const int RetriesPerRoute = 1;
 
     /// <summary>Runs one stage against one model in the tier's chain.</summary>
-    private async Task<AgentLoopResult> RunOnRouteAsync(
+    private async Task<(AgentLoopResult Result, KillSignature? Kill, bool HardAbort)> RunOnRouteAsync(
         ProviderRoute route,
         IReadOnlyList<ChatMessage> conversation,
         StageInvocation invocation,
@@ -52,11 +53,26 @@ public sealed partial class FirstPartySubagentRunner
             ContextWindow: route.ContextWindow,
             RetryBackoffBase: _retryBackoffBase);
 
-        return await SuperviseAsync(
-            watchdog,
-            token => loop.RunAsync(
-                conversation, options, new ToolContext(invocation.TargetRoot, budget), token),
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await SuperviseAsync(
+                watchdog,
+                token => loop.RunAsync(
+                    conversation, options, new ToolContext(invocation.TargetRoot, budget), token),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or SocketException)
+        {
+            // A reset connection is a fault of THIS route, so it becomes an
+            // ordinary error the chain can hop past. Letting it escape skipped
+            // the report write and took the stage down with no evidence.
+            return (
+                new AgentLoopResult(
+                    AgentLoopOutcome.Error, string.Empty, new AgentStats(),
+                    $"the connection to {route.Alias} failed: {ex.Message}"),
+                null,
+                false);
+        }
     }
 
     /// <summary>
@@ -64,9 +80,18 @@ public sealed partial class FirstPartySubagentRunner
     /// down with it: the result is already in hand, and losing the report is
     /// better than losing the work.
     /// </summary>
+    /// <param name="invocation">The stage being reported on.</param>
+    /// <param name="result">What the loop produced.</param>
+    /// <param name="events">Where a write failure is announced.</param>
+    /// <remarks>
+    /// The write is deliberately NOT cancellable. It used to take the stage's
+    /// own token, so cancelling a stage cancelled the write of the report
+    /// describing it — losing exactly the evidence a killed stage most needs,
+    /// and throwing a <see cref="TaskCanceledException"/> the catch below did
+    /// not cover.
+    /// </remarks>
     private async Task WriteReportAsync(
-        StageInvocation invocation, AgentLoopResult result, IAgentEventSink events,
-        CancellationToken cancellationToken)
+        StageInvocation invocation, AgentLoopResult result, IAgentEventSink events)
     {
         if (string.IsNullOrWhiteSpace(invocation.ReportFile)) return;
 
@@ -74,10 +99,11 @@ public sealed partial class FirstPartySubagentRunner
         {
             var report = AgentReportWriter.Build(
                 result, invocation.Tier, invocation.TaskInput, _timeProvider.GetUtcNow());
-            await AgentReportWriter.WriteAsync(invocation.ReportFile, report, cancellationToken)
+            await AgentReportWriter.WriteAsync(invocation.ReportFile, report, CancellationToken.None)
                 .ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException or System.Security.SecurityException)
         {
             events.Publish(new AgentEvent(
                 AgentEventKind.TurnFinished, _timeProvider.GetUtcNow(), result.Stats.Turns,
