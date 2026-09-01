@@ -55,12 +55,12 @@ public sealed partial class LauncherVerbReferenceTests
         var problems = new List<string>();
 
         foreach (var file in Sources())
-        foreach (Match match in Invocation().Matches(File.ReadAllText(file)))
-        {
-            var verb = match.Groups[1].Value;
-            if (!CommandRouter.IsKnown(verb))
-                problems.Add($"{Path.GetFileName(file)} invokes './visual-relay {verb}'");
-        }
+            foreach (Match match in Invocation().Matches(File.ReadAllText(file)))
+            {
+                var verb = match.Groups[1].Value;
+                if (!CommandRouter.IsKnown(verb))
+                    problems.Add($"{Path.GetFileName(file)} invokes './visual-relay {verb}'");
+            }
 
         Assert.True(problems.Count == 0,
             "these callers name a verb the launcher rejects:\n" + string.Join("\n", problems));
