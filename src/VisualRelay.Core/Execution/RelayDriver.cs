@@ -33,7 +33,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
             await NonoProfileEnsurer.EnsureAsync(_dependencies.EnvironmentAccessor, cancellationToken);
-            _ = await CommandGuardEnsurer.EnsureAsync(rootPath, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);
             var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);

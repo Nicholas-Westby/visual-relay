@@ -14,8 +14,8 @@ namespace VisualRelay.Core.Agent.Tools;
 /// bypassed the middleware entirely (89 uninspected calls in this repo's history).
 /// Calling <see cref="CommandGuardDecider"/> directly closes both holes: the policy
 /// now applies in every repository, to every command tool, with no subprocess.</para>
-/// <para>The policy itself is unchanged — the same decider the
-/// <c>VisualRelay.CommandGuard</c> binary wraps, fed the same payload shape, so
+/// <para>The policy itself is unchanged. The standalone binary that used to wrap
+/// this decider has been deleted along with the subprocess that fed it, so
 /// <c>--no-verify</c> is stripped unconditionally, <c>-n</c> and a combined short
 /// flag's <c>n</c> are stripped only inside a <c>git commit</c>, and a malformed
 /// payload fails open for non-git and fails CLOSED for a git commit.</para>
