@@ -260,16 +260,6 @@ public sealed class NonoWhyOracleTests
             UseShellExecute = false
         };
 
-        // These are oracle assertions against the REAL nono install, and vr-guard
-        // extends the `swival` base profile that lives in the user's real nono
-        // config dir. TestModuleInitializer redirects the process-wide
-        // XDG_CONFIG_HOME to an empty temp dir for VR's own hermeticity, and the
-        // child would inherit it: since 0.75.0 nono honors that variable when the
-        // directory exists, so the inherited value hides swival and every profile
-        // resolves to "base profile 'swival' not found". Drop the override for this
-        // child only, so nono falls back to $HOME/.config as production does.
-        psi.Environment.Remove("XDG_CONFIG_HOME");
-
         try
         {
             using var proc = Process.Start(psi)!;
