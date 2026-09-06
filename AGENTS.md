@@ -75,7 +75,23 @@ Endpoints:
 - `GET /health` — liveness, `{ "status": "ok", "app": "Visual Relay" }`.
 - `GET /state` — JSON snapshot: `rootPath`, `isBusy`, `pauseRequested`, `statusText`,
   `selectedTask`, `tasks[]`, `stages[]`, and a `commands` map giving each
-  command's `enabled` flag (mirrors which buttons are clickable).
+  command's `enabled` flag (mirrors which buttons are clickable). It also answers
+  "is it stuck?", "what is it doing right now?", "did the drain halt?" and "what has
+  it cost?" — no file reading required:
+  - `nowUtc` — server time the snapshot was built. `lastActivityUtc` — when the app
+    last handled ANY relay event (null until the first one arrives). A large
+    `nowUtc` − `lastActivityUtc` gap while `isBusy` is true means wedged, not working.
+  - `lastEvent` — `{utc, level, name, taskId, stage, tier, message}` for that event, or
+    null. `message` is the event's human text clipped to 240 characters, so a trace
+    event never dumps whole model output into the response.
+  - `runningTasks[]` — `{taskId, stageNumber, stageName, tier}` for every concurrently
+    executing task (`stageNumber`/`stageName`/`tier` null between stages); empty when idle.
+  - `sessionCostUsd` — cumulative USD accrued since launch, 0 before the first priced
+    stage completes.
+  - `drainHalted` / `haltReason` — the drain circuit breaker's halt marker and its
+    reason (clipped to 500 characters); false/null when no root is open or no marker exists.
+  - every `tasks[]` entry, and `selectedTask`, also carries `reviewReason`, `costUsd`,
+    `durationSeconds`, `completedStageCount`, `settledStageCount`, `pipelineStageCount`.
 - `POST /command/{name}` — invokes the same command the button binds. A **disabled**
   command is refused with `409` (never executed); unknown names return `404`. Async run
   commands are fire-and-forget (like a click) — poll `/state` to follow progress. Names:
@@ -84,10 +100,17 @@ Endpoints:
   and the pre-commit hook; the placeholder is upgraded to the real test command
   automatically once the project gains a toolchain), `run-all`, `run-selected`,
   `resume`, `refresh`, `pause-toggle`, `archive-toggle`,
-  `new-task`, `follow-running`, `edit`, plus property actions
+  `new-task`, `follow-running`, `edit`, `rewrite-selected`, `cancel-rewrite`,
+  `revert-rewrite`, `mark-done`, `reset-selected`, plus property actions
   `open-folder` (body `{"path":"<dir>"}` — the programmatic Browse: point the app at a
   project), `select-task` (body `{"id":"<taskId>"}`),
-  `boost-turns` (body `{"value":true|false}`).
+  `boost-turns` (body `{"value":true|false}`), `skip-tests` (body `{"value":true|false}`),
+  `obsidian-scan`, `obsidian-bridge` (body `{"value":true|false}` or `{"path":"<vault>"}`),
+  `select-activity-tab` and `select-detail-tab` (body `{"name":"<tab header>"}` or
+  `{"index":<n>}`).
+  The destructive commands — `mark-done`, `rewrite-selected`, `reset-selected` — mirror the
+  GUI confirm modal: each needs `{"confirm":true}` (else `409`, no-op) and is awaited to
+  completion, so `{"ok":true}` means the effect took.
 - `GET /screenshot[?path=/abs/file.png]` — renders the live window to PNG (`image/png`);
   with `?path=` it also writes the file and returns the location in `X-Screenshot-Path`.
 
