@@ -65,7 +65,7 @@ public sealed partial class ControlApiTests
             {
                 ["kind"] = "AssistantText",
                 ["title"] = "assistant",
-                ["content"] = new string('x', 5_000)
+                ["content"] = new('x', 5_000)
             });
         RelayEventTestDispatch.Dispatch(vm, trace);
 
