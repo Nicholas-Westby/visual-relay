@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using VisualRelay.Core.Queue;
+using VisualRelay.Domain;
 
 namespace VisualRelay.App.Services;
 
@@ -22,6 +23,7 @@ public sealed partial class ControlApi
         return new
         {
             instanceId,
+            nowUtc = DateTimeOffset.UtcNow,
             rootPath = vm.RootPath,
             showArchive = vm.ShowArchive,
             isBusy = vm.IsBusy,
@@ -39,13 +41,21 @@ public sealed partial class ControlApi
                 capturedUtc = sc.CapturedUtc,
                 hint = sc.Hint
             } : null,
-            selectedTask = BuildSelectedTask(),
-            tasks = vm.Tasks.Select(t => new
+            // Activity: what the app is doing right now, and when it last did
+            // anything at all. nowUtc minus lastActivityUtc while isBusy is the
+            // caller's stuck detector.
+            lastActivityUtc = vm.LastActivityUtc,
+            lastEvent = BuildLastEvent(),
+            runningTasks = vm.RunningTasks().Select(t => new
             {
-                id = t.Id,
-                stateLabel = t.StateLabel,
-                needsReview = t.NeedsReview
+                taskId = t.TaskId,
+                stageNumber = t.StageNumber,
+                stageName = t.StageName,
+                tier = t.Tier
             }).ToArray(),
+            sessionCostUsd = vm.SessionCostUsd,
+            selectedTask = BuildSelectedTask(),
+            tasks = vm.Tasks.Select(t => BuildTask(t.Task)).ToArray(),
             stages = vm.Stages.Select(s => new
             {
                 number = s.Number,
@@ -73,16 +83,59 @@ public sealed partial class ControlApi
             return null;
         }
 
+        // The same per-task projection every tasks[] entry gets, plus the two
+        // fields only the selected task has.
+        var entry = BuildTask(selected.Task);
+        entry["metricLabel"] = viewModel.SelectedTaskMetricLabel;
+        entry["error"] = viewModel.SelectedTaskError;
+        return entry;
+    }
+
+    /// <summary>
+    /// Projects one task row: identity and review state plus the run metrics the
+    /// record already carries (cost, duration, stage counts), so a caller can
+    /// account for a queue without opening any task's files.
+    /// </summary>
+    private static Dictionary<string, object?> BuildTask(RelayTaskItem task) =>
+        new(StringComparer.Ordinal)
+        {
+            ["id"] = task.Id,
+            ["stateLabel"] = task.StateLabel,
+            ["needsReview"] = task.NeedsReview,
+            ["reviewReason"] = string.IsNullOrEmpty(task.ReviewReason) ? null : task.ReviewReason,
+            ["costUsd"] = task.CostUsd,
+            ["durationSeconds"] = task.DurationSeconds,
+            ["completedStageCount"] = task.CompletedStageCount,
+            ["settledStageCount"] = task.SettledStageCount,
+            ["pipelineStageCount"] = task.PipelineStageCount
+        };
+
+    /// <summary>
+    /// The most recent relay event, or null before the first one. The human text
+    /// is clipped so a trace event never dumps whole model output into /state.
+    /// </summary>
+    private object? BuildLastEvent()
+    {
+        if (viewModel.LastRelayEvent is not { } last)
+        {
+            return null;
+        }
+
         return new
         {
-            id = selected.Id,
-            stateLabel = selected.StateLabel,
-            needsReview = selected.NeedsReview,
-            reviewReason = string.IsNullOrEmpty(selected.ReviewReason) ? null : selected.ReviewReason,
-            metricLabel = viewModel.SelectedTaskMetricLabel,
-            error = viewModel.SelectedTaskError
+            utc = last.Timestamp.ToUniversalTime(),
+            level = last.Level,
+            name = last.EventName,
+            taskId = last.TaskId,
+            stage = last.StageNumber,
+            tier = last.Tier,
+            message = Clip(last.DetailLine, 240)
         };
     }
+
+    /// <summary>Truncates to <paramref name="max"/> characters; null stays null.</summary>
+    private static string? Clip(string? text, int max) =>
+        string.IsNullOrEmpty(text) || text.Length <= max ? text : text[..max];
 
     private Dictionary<string, object> BuildCommandsMap()
     {

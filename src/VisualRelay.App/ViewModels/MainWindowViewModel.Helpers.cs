@@ -12,6 +12,8 @@ public partial class MainWindowViewModel
 {
     private void HandleRelayEvent(RelayEvent relayEvent)
     {
+        // Before any filtering: EVERY event is activity, including ones dropped below.
+        RecordActivity(relayEvent);
         if (relayEvent.TaskId is { } taskId)
         {
             EventsFor(taskId).Insert(0, relayEvent);
@@ -294,5 +296,4 @@ public partial class MainWindowViewModel
 
     private bool IsInSelectedStage(TraceEntry entry) =>
         _selectedStageFilter is null || entry.StageNumber == _selectedStageFilter;
-
 }
