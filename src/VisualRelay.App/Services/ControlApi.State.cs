@@ -20,6 +20,7 @@ public sealed partial class ControlApi
     private object BuildStateSnapshot(string? instanceId = null)
     {
         var vm = viewModel;
+        var haltReason = DrainCircuitBreaker.ReadHaltReason(vm.RootPath);
         return new
         {
             instanceId,
@@ -54,6 +55,8 @@ public sealed partial class ControlApi
                 tier = t.Tier
             }).ToArray(),
             sessionCostUsd = vm.SessionCostUsd,
+            drainHalted = haltReason is not null,
+            haltReason = Clip(haltReason, 500),
             selectedTask = BuildSelectedTask(),
             tasks = vm.Tasks.Select(t => BuildTask(t.Task)).ToArray(),
             stages = vm.Stages.Select(s => new

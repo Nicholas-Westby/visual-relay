@@ -9,8 +9,9 @@ namespace VisualRelay.Tests;
 /// Contract tests for the observability fields an orchestrator polls on
 /// <c>GET /state</c>: the server clock, the last relay event and when it
 /// arrived (the stuck detector), the live running-task roster, the session
-/// cost, and the per-task metrics every task entry carries. Each drives the
-/// real view model on the headless dispatcher — no relay run is started.
+/// cost, the drain-halt marker, and the per-task metrics every task entry
+/// carries. Each drives the real view model on the headless dispatcher — no
+/// relay run is started.
 /// </summary>
 public sealed partial class ControlApiTests
 {
@@ -29,6 +30,8 @@ public sealed partial class ControlApiTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("lastEvent").ValueKind);
         Assert.Equal(0, root.GetProperty("runningTasks").GetArrayLength());
         Assert.Equal(0d, root.GetProperty("sessionCostUsd").GetDouble());
+        Assert.False(root.GetProperty("drainHalted").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("haltReason").ValueKind);
     }
 
     [AvaloniaFact]
@@ -147,6 +150,25 @@ public sealed partial class ControlApiTests
         using var doc = JsonDocument.Parse(await api.BuildStateJsonAsync());
 
         Assert.Equal(0.75, doc.RootElement.GetProperty("sessionCostUsd").GetDouble(), 6);
+    }
+
+    [AvaloniaFact]
+    public async Task BuildStateJson_DrainHalted_ReportsTheMarkerReason()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        File.WriteAllText(
+            Path.Combine(repo.Root, ".relay", "DRAIN-HALTED"),
+            "commit gate rejected consecutive tasks\nlast task alpha\n");
+        var api = NewApi(out var vm);
+        vm.RootPath = repo.Root;
+
+        using var doc = JsonDocument.Parse(await api.BuildStateJsonAsync());
+
+        Assert.True(doc.RootElement.GetProperty("drainHalted").GetBoolean());
+        Assert.Equal(
+            "commit gate rejected consecutive tasks\nlast task alpha",
+            doc.RootElement.GetProperty("haltReason").GetString());
     }
 
     [AvaloniaFact]

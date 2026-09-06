@@ -17,6 +17,29 @@ public sealed class DrainCircuitBreaker
         File.Delete(Path.Combine(rootPath, ".relay", HaltMarker));
     }
 
+    /// <summary>
+    /// Reads the halt marker's reason — the file's trimmed content — or null when
+    /// the root is unset, the marker is absent, or it cannot be read. Lets an
+    /// observer report a halted drain without knowing where the marker lives.
+    /// </summary>
+    public static string? ReadHaltReason(string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var path = Path.Combine(rootPath, ".relay", HaltMarker);
+            return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public bool ShouldHalt(string rootPath, RelayTaskOutcome outcome)
     {
         HaltMessage = null;
