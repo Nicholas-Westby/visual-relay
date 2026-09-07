@@ -30,12 +30,14 @@ public partial class MainWindowViewModel
         {
             var result = await ProjectBootstrapper.BootstrapAsync(RootPath, new GitInvoker());
             var gitNote = result.GitInitialized ? "initialized git repo; " : string.Empty;
+            const string configNote = " Config written to .relay/config.json and left uncommitted.";
             SetupCheck = result.SetupCheck;
             StatusText = result.HookWarning
                 ?? (result.UsedPlaceholderTestCommand
                     ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
                       + "scaffolds the project; the real test command is adopted automatically once a toolchain appears."
-                    : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.");
+                      + configNote
+                    : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.{configNote}");
         }
         catch (Exception ex)
         {

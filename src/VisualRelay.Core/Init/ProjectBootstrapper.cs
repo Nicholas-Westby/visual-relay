@@ -97,18 +97,18 @@ public static class ProjectBootstrapper
         var configPath = RelayConfigWriter.Write(rootPath, command);
 
         // 3. Ensure a git repository with a HEAD commit (worktrees + commit stage need it).
-        //    A brand-new repo's initial commit includes the .relay config written above.
+        //    A brand-new repo gets an EMPTY initial commit — never the config above.
         var gitInitialized = await GitBootstrapper.EnsureRepositoryAsync(rootPath, gi, cancellationToken);
 
         // 4. Install the pre-commit authority hook now that a real repo exists.
         var hook = await HookInstaller.InstallAsync(rootPath, cancellationToken, gi);
 
-        // 5. Commit the .relay config files init wrote so they're tracked from the start.
-        var commitCheck = await SetupCommitHelper.TryCommitSetupFilesAsync(rootPath, gi, cancellationToken);
-
+        // The config is left uncommitted on purpose: bootstrap is a setup step, not
+        // an author, and whether Visual Relay's config belongs in the repo's history
+        // is the operator's call.
         return new ProjectBootstrapResult(
             gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath,
-            commitCheck ?? setupCheck);
+            setupCheck);
     }
 
     /// <summary>

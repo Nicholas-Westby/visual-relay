@@ -97,10 +97,11 @@ Endpoints:
 - `POST /command/{name}` — invokes the same command the button binds. A **disabled**
   command is refused with `409` (never executed); unknown names return `404`. Async run
   commands are fire-and-forget (like a click) — poll `/state` to follow progress. Names:
-  `bootstrap` (greenfield setup — git init + a HEAD commit when missing, a runnable
+  `bootstrap` (greenfield setup — git init + an EMPTY HEAD commit when missing, a runnable
   `.relay/config.json` with a placeholder test command when no toolchain is detected,
-  and the pre-commit hook; the placeholder is upgraded to the real test command
-  automatically once the project gains a toolchain), `run-all`, `run-selected`,
+  and the pre-commit hook; the config is written but never committed, and the placeholder
+  is upgraded to the real test command automatically once the project gains a
+  toolchain), `run-all`, `run-selected`,
   `resume`, `refresh`, `pause-toggle`, `archive-toggle`,
   `new-task`, `follow-running`, `edit`, `rewrite-selected`, `cancel-rewrite`,
   `revert-rewrite`, `mark-done`, `reset-selected`, plus property actions

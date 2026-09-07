@@ -38,6 +38,25 @@ public sealed class ProjectBootstrapperTests
     }
 
     [Fact]
+    public async Task BootstrapAsync_EstablishedRepo_WritesTheConfigWithoutCommittingIt()
+    {
+        // Bootstrap is a setup step, not an author: it leaves the operator's
+        // history alone and the config uncommitted for them to decide about.
+        var (repo, sim) = CreateSimRepo();
+        sim.InitRepo(repo.Root);
+        sim.Seed(repo.Root, "src/app.cs", "code");
+        var head = sim.Commit(repo.Root, "chore: seed repo");
+
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
+
+        Assert.False(result.GitInitialized);
+        Assert.Equal(head, sim.Head(repo.Root));
+        var tracked = (await sim.RunAsync(repo.Root, ["ls-files", "--", ".relay"], CancellationToken.None)).Output;
+        Assert.Equal(string.Empty, tracked.Trim());
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
+    [Fact]
     public async Task BootstrapAsync_PlaceholderCommand_IsTriviallyGreenOnThisMachine()
     {
         using var repo = TestRepository.Create();

@@ -25,5 +25,6 @@ var commandNote = result.UsedPlaceholderTestCommand
     : $"testCmd validated: {result.TestCommand}.";
 
 Console.WriteLine($"Wrote {result.ConfigPath};{gitNote} {commandNote}");
+Console.WriteLine("Left uncommitted: commit .relay/config.json yourself if you want it in the repo.");
 
 return 0;

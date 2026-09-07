@@ -58,8 +58,8 @@ public static class GitBootstrapper
         }
 
         // An empty initial commit guarantees HEAD resolves so worktrees can be
-        // created. The .relay config files are committed later by the setup-commit
-        // helper so they land with a distinct, meaningful message.
+        // created. It stays empty: Visual Relay never commits the .relay config it
+        // wrote, so the operator's first real commit is their own.
         var commit = await gi.RunAsync(
             rootPath,
             ["commit", "--allow-empty", "-m", "chore: initialize repository (visual-relay bootstrap)"],
