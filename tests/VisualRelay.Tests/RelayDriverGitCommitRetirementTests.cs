@@ -236,7 +236,7 @@ public sealed class RelayDriverGitCommitRetirementTests
     }
 
     [Fact]
-    public async Task RunTaskAsync_SkipTestsPruneLandsInCommit()
+    public async Task RunTaskAsync_SkipTestsPruneStaysOutOfTheCommit()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", [], archiveOnDone: false);

@@ -52,7 +52,7 @@ public sealed record SetupCheckDiagnostic(
     /// tail-truncated output. Overwrites per attempt — this is a diagnostic
     /// scratch file, not history. Returns the absolute path or null on failure.
     /// </summary>
-    public static string? WriteArtifact(
+    private static string? WriteArtifact(
         string rootPath,
         string command,
         string cwd,

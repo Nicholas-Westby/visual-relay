@@ -30,8 +30,8 @@ public sealed class RelayConfigLoaderRetiredKeysTests
     {
         // The setting is gone, not merely ignored: nothing under .relay/ is ever
         // staged, so there is no longer a choice to offer.
-        Assert.DoesNotContain(
-            typeof(RelayConfig).GetProperties(),
-            p => p.Name == "CommitProofArtifacts");
+        var propertyNames = typeof(RelayConfig).GetProperties().Select(property => property.Name);
+
+        Assert.DoesNotContain("CommitProofArtifacts", propertyNames);
     }
 }
