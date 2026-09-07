@@ -217,7 +217,7 @@ internal sealed class TriageDeclineSubagentRunner : ISubagentRunner
 /// for the specified <paramref name="flagAtStage"/>, simulating a stage that
 /// produces no valid JSON.
 /// </summary>
-internal sealed class FlagStageSubagentRunner(int flagAtStage) : ISubagentRunner
+internal sealed class FlagStageSubagentRunner(int flagAtStage, string error = "invalid result") : ISubagentRunner
 {
     private readonly ScriptedSubagentRunner _inner = new();
 
@@ -229,7 +229,7 @@ internal sealed class FlagStageSubagentRunner(int flagAtStage) : ISubagentRunner
         if (invocation.Stage.Number == flagAtStage)
         {
             Directory.CreateDirectory(invocation.TraceDirectory);
-            return new SubagentResult(RawText: string.Empty, Json: null, IsValid: false, Error: "invalid result");
+            return new SubagentResult(RawText: string.Empty, Json: null, IsValid: false, Error: error);
         }
         return await _inner.RunAsync(invocation, cancellationToken);
     }

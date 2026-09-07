@@ -12,15 +12,19 @@ namespace VisualRelay.Core.Execution;
 public sealed partial class RelayDriver
 {
     /// <summary>
-    /// Builds an enriched flag reason for a review-pair stage that was watchdog-killed.
+    /// Builds an enriched flag reason for a review-pair stage that failed.
     /// When <paramref name="result"/> carries a <see cref="KillSignature"/>, returns a
     /// descriptive string with the kill reason, last signal, elapsed wall time, and a
-    /// relative path to the autopsy artifact. Otherwise returns the generic fallback.
+    /// relative path to the autopsy artifact. Otherwise it names the runner's own error
+    /// — the contract-parser message saying WHAT was wrong, which every per-stage flag
+    /// outside this pair already carries — falling back to the generic line without one.
     /// </summary>
     private static string BuildReviewFlagReason(string stageName, StageRunResult result, string rootPath)
     {
         if (result.Kill is null)
-            return $"{stageName} returned an invalid result";
+            return string.IsNullOrWhiteSpace(result.Error)
+                ? $"{stageName} returned an invalid result"
+                : $"{stageName} returned an invalid result: {result.Error}";
 
         var kill = result.Kill;
         var mins = (int)result.Elapsed.TotalMinutes;
@@ -46,7 +50,10 @@ public sealed partial class RelayDriver
     private sealed record StageRunResult(
         string Body, string? Check, double CostUsd, bool CostUnknown,
         TimeSpan Elapsed, double? TestDurationSeconds,
-        KillSignature? Kill = null);
+        KillSignature? Kill = null,
+        // What the runner said went wrong, when anything did. Carried so the pair's
+        // flag reason can name it instead of the generic "invalid result".
+        string? Error = null);
 
     private sealed record RenderOutput(IReadOnlyList<string> PngPaths, string? ErrorOutput);
 
@@ -121,7 +128,7 @@ public sealed partial class RelayDriver
             return new StageRunResult(
                 result.RawText,
                 "red", costUsd, costUnknown, stopwatch.Elapsed, null,
-                Kill: result.Kill);
+                Kill: result.Kill, Error: result.Error);
         }
 
         return new StageRunResult(result.Json, null, costUsd, costUnknown, stopwatch.Elapsed, null);
