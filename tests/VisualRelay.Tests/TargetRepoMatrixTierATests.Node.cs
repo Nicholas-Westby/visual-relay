@@ -44,8 +44,9 @@ public sealed partial class TargetRepoMatrixTierATests
                 config, StringComparison.Ordinal);
             Assert.Contains("\"testFileCmd\": \"vitest run \\u0026\\u0026 tsc --noEmit\"",
                 config, StringComparison.Ordinal);
-            // No format script declared → the de-facto Node formatter is inferred.
-            Assert.Contains("\"formatCmd\": \"prettier --write .\"", config, StringComparison.Ordinal);
+            // No format script and no prettier config → no formatter is inferred, so the
+            // repo is never reformatted by a tool it did not ask for.
+            Assert.DoesNotContain("\"formatCmd\"", config, StringComparison.Ordinal);
 
             // The escaping is lossless: the loader hands the pipeline the chain back.
             var loaded = await RelayConfigLoader.TryLoadAsync(root);
