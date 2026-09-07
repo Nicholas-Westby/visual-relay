@@ -77,7 +77,9 @@ public sealed class RelayDriverRepoGuardRegressionTests
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var guardRunner = new ScriptedTestRunner(
             new TestRunResult(1, "file too large: src/touched.cs has 305 lines (limit 300)"),
-            new TestRunResult(0, ""));
+            new TestRunResult(0, ""),              // stashed baseline
+            new TestRunResult(0, "guard clean"),   // pristine base — the change is at fault
+            new TestRunResult(0, "guard clean"));  // fix-verify re-check
         var testRunner = new ScriptedTestRunner(
             new TestRunResult(1, "red"), new TestRunResult(0, "all green"),
             new TestRunResult(0, "all green"));
@@ -88,10 +90,9 @@ public sealed class RelayDriverRepoGuardRegressionTests
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "new-oversize");
-        // Guard red with green tests never reaches Fix-verify; the flag names the file.
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 11);
-        Assert.Contains("touched.cs", outcome.Reason!, StringComparison.Ordinal);
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Contains("touched.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
     }
 
     /// <summary>(g) Mixed: pre-existing excluded, new surfaces.</summary>
@@ -118,7 +119,9 @@ public sealed class RelayDriverRepoGuardRegressionTests
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var guardRunner = new ScriptedTestRunner(
             new TestRunResult(1, "file too large: src/big.cs has 333 lines (limit 300)\nfile too large: src/brand-new.cs has 350 lines (limit 300)"),
-            new TestRunResult(1, "file too large: src/big.cs has 332 lines (limit 300)"));
+            new TestRunResult(1, "file too large: src/big.cs has 332 lines (limit 300)"), // stashed baseline
+            new TestRunResult(0, "guard clean"),   // pristine base — the change is at fault
+            new TestRunResult(0, "guard clean"));  // fix-verify re-check
         var testRunner = new ScriptedTestRunner(
             new TestRunResult(1, "red"), new TestRunResult(0, "all green"),
             new TestRunResult(0, "all green"));
@@ -129,9 +132,10 @@ public sealed class RelayDriverRepoGuardRegressionTests
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "mixed");
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        Assert.Contains("brand-new.cs", outcome.Reason!, StringComparison.Ordinal);
-        Assert.DoesNotContain("big.cs", outcome.Reason!, StringComparison.Ordinal);
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Contains("brand-new.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
+        Assert.DoesNotContain("big.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
     }
 
     /// <summary>(h) Numbered sibling pre-existing, new numbered sibling still blocks.</summary>
@@ -159,7 +163,9 @@ public sealed class RelayDriverRepoGuardRegressionTests
         // Working: Page1 (pre-existing, same count) + Page2 (newly oversize)
         var guardRunner = new ScriptedTestRunner(
             new TestRunResult(1, "file too large: src/Page1.cs has 320 lines (limit 300)\nfile too large: src/Page2.cs has 999 lines (limit 300)"),
-            new TestRunResult(1, "file too large: src/Page1.cs has 320 lines (limit 300)"));
+            new TestRunResult(1, "file too large: src/Page1.cs has 320 lines (limit 300)"), // stashed baseline
+            new TestRunResult(0, "guard clean"),   // pristine base — the change is at fault
+            new TestRunResult(0, "guard clean"));  // fix-verify re-check
         var testRunner = new ScriptedTestRunner(
             new TestRunResult(1, "red"), new TestRunResult(0, "all green"),
             new TestRunResult(0, "all green"));
@@ -170,8 +176,9 @@ public sealed class RelayDriverRepoGuardRegressionTests
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "numbered-sibling");
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        Assert.Contains("Page2.cs", outcome.Reason!, StringComparison.Ordinal);
-        Assert.DoesNotContain("Page1.cs", outcome.Reason!, StringComparison.Ordinal);
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Contains("Page2.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Page1.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
     }
 }

@@ -40,12 +40,13 @@ public static class PlanningWorktree
     }
 
     /// <summary>
-    /// Creates a detached git worktree for the task under the per-run temp
-    /// root, checked out at HEAD. Throws on failure. When <c>isRewrite</c> is
-    /// <c>true</c> the worktree lives in the rewrite-only namespace so a concurrent
-    /// drain's <see cref="PruneLeftoversAsync"/> cannot delete it.
+    /// Creates a detached git worktree for the task under the per-run temp root, checked
+    /// out at <paramref name="commitish"/> — HEAD by default; an explicit commit gives a
+    /// caller a tree that predates the working copy. Throws on failure. When
+    /// <c>isRewrite</c> is <c>true</c> the worktree lives in the rewrite-only namespace
+    /// so a concurrent drain's <see cref="PruneLeftoversAsync"/> cannot delete it.
     /// </summary>
-    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, IGitInvoker gitInvoker, CancellationToken ct, bool isRewrite = false, TimeProvider? timeProvider = null)
+    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, IGitInvoker gitInvoker, CancellationToken ct, bool isRewrite = false, TimeProvider? timeProvider = null, string commitish = "HEAD")
     {
         var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
@@ -54,7 +55,7 @@ public static class PlanningWorktree
             Directory.Delete(worktreePath, recursive: true);
 
         await RunGitAsync(gi, repoRoot,
-            ["worktree", "add", "--detach", "--quiet", worktreePath, "HEAD"],
+            ["worktree", "add", "--detach", "--quiet", worktreePath, commitish],
             ct, tp);
 
         return worktreePath;

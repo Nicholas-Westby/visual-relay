@@ -4,9 +4,10 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// A red guard or bootstrap check while the tests pass is the ENVIRONMENT failing, not
-/// the change. Escalating Fix-verify through it burned 75 minutes of frontier turns on a
-/// sandbox that would never let the guard run, so the task is flagged on the spot.
+/// A red guard while the tests pass, that is red on an untouched checkout of the run
+/// base too, is the ENVIRONMENT failing rather than the change. Escalating Fix-verify
+/// through it burned 75 minutes of frontier turns on a sandbox that would never let the
+/// guard run, so the task is flagged on the spot.
 /// </summary>
 public sealed class SetupCheckEnvironmentFailureTests
 {
@@ -17,15 +18,17 @@ public sealed class SetupCheckEnvironmentFailureTests
         repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true,
             guardCmd: "guard-build");
         repo.WriteTask("env-guard", "# Guard fails in this sandbox\n");
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var sink = new InMemoryRelayEventSink();
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),                        // stage 5 author gate
             new TestRunResult(1, "error: sandbox denied write"), // stage 10 guard
-            new TestRunResult(0, "All 7 tests passed!"));        // stage 10 test suite
+            new TestRunResult(0, "All 7 tests passed!"),         // stage 10 test suite
+            new TestRunResult(1, "error: sandbox denied write")); // guard on the pristine base
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink, new NullGitInvoker()),
+            RelayDriverDependencies.ForTests(runner, tests, sink, sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "env-guard");
@@ -45,6 +48,7 @@ public sealed class SetupCheckEnvironmentFailureTests
         repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true,
             guardCmd: "guard-build", maxStageFailures: 3);
         repo.WriteTask("env-guard-loop", "# Guard breaks once the loop is running\n");
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var sink = new InMemoryRelayEventSink();
@@ -54,9 +58,10 @@ public sealed class SetupCheckEnvironmentFailureTests
             new TestRunResult(1, "Failed TestX"),            // stage 10 test suite
             new TestRunResult(1, "Failed TestX"),            // stage 10 flaky retry
             new TestRunResult(1, "error: toolchain missing"), // fix-verify run 1 guard
-            new TestRunResult(0, "All 7 tests passed!"));     // fix-verify run 1 tests
+            new TestRunResult(0, "All 7 tests passed!"),      // fix-verify run 1 tests
+            new TestRunResult(1, "error: toolchain missing")); // guard on the pristine base
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink, new NullGitInvoker()),
+            RelayDriverDependencies.ForTests(runner, tests, sink, sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "env-guard-loop");

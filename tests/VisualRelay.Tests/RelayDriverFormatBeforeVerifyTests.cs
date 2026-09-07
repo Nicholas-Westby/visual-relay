@@ -67,9 +67,11 @@ public sealed class RelayDriverFormatBeforeVerifyTests
     }
 
     /// <summary>
-    /// (a.2) The tests are red at stage 10 (so Fix-verify runs) and the guard is red
-    /// alongside them, then green on the re-verify. The formatter fires before every
-    /// guard call — twice total. Stage 11 commits.
+    /// (a.2) Guard returns red on the first call (stage 10) while the tests pass, passes
+    /// on the pristine base so the change owns it, then turns green on the fix-verify
+    /// re-verify (stage 11).  The formatter fires before every guard call made against
+    /// the WORKING TREE — twice; the pristine-base probe runs the guard alone, so it is
+    /// the third guard call and has no formatter of its own.  Stage 11 commits.
     /// </summary>
     [Fact]
     public async Task FormatCmd_Set_RunsBeforeGuardInFixVerifyIteration()
@@ -89,6 +91,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
             }
             """);
         repo.WriteTask("fmt-fix", "# Format then fix-verify\n");
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
 
         var subagent = new CapturingSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -102,29 +105,30 @@ public sealed class RelayDriverFormatBeforeVerifyTests
             ("my-guard",
             [
                 new TestRunResult(1, "ERROR: src/big.cs is 301 lines (limit: 300)"),
-                new TestRunResult(0, "guard clean")
+                new TestRunResult(0, "guard clean"),   // pristine base — the change is at fault
+                new TestRunResult(0, "guard clean")    // fix-verify re-check
             ]),
             ("dotnet test",
             [
-                new TestRunResult(1, "red"),           // stage 5 author gate
-                new TestRunResult(1, "Failed TestX"),  // stage 10 gate
-                new TestRunResult(1, "Failed TestX"),  // stage 10 flaky retry
-                new TestRunResult(0, "all green")      // fix-verify re-verify
+                new TestRunResult(1, "red"),        // stage 5 author gate
+                new TestRunResult(0, "all green"),  // stage 10 gate
+                new TestRunResult(0, "all green")   // fix-verify re-verify
             ]));
 
         var driver = new RelayDriver(
-            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fmt-fix");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        // Two formatter calls: one before stage-9 guard, one before
-        // fix-verify re-verify guard.
+        // Two formatter calls: one before the stage-10 guard, one before the fix-verify
+        // re-verify guard. Three guard calls: those two plus the pristine-base probe,
+        // which asks only what the guard does to untouched content.
         var fmtCalls = testRunner.Calls.Count(c => c.Command.Contains("my-formatter", StringComparison.Ordinal));
         var guardCalls = testRunner.Calls.Count(c => c.Command.Contains("my-guard", StringComparison.Ordinal));
         Assert.Equal(2, fmtCalls);
-        Assert.Equal(2, guardCalls);
+        Assert.Equal(3, guardCalls);
 
         // Formatter must run before guard in each pair.
         for (var i = 0; i < testRunner.Calls.Count - 1; i++)

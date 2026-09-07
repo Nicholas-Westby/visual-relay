@@ -43,6 +43,9 @@ public sealed partial class RelayDriver
         string? failingVerifyOutputPath,
         string? bootstrapCheckCmd,
         string? guardCmd,
+        // The commit the run started from, so a red guard can be attributed to the
+        // change or to the machine against an untouched checkout of it.
+        string? runBaseSha,
         CancellationToken cancellationToken)
     {
         var stage = RelayStages.All[10]; // Stage 11 — Fix-verify
@@ -185,9 +188,10 @@ public sealed partial class RelayDriver
             lastAttemptSetupChecks = attemptSetupChecks;
             var (attemptVerifyOutputPath, _, attemptTreeHash, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
 
-            // The environment broke under us mid-loop: the tests pass and only a setup
-            // command is red, so no further attempt can change the verdict.
-            if (check == "red" && IsEnvironmentSetupFailure(attemptSetupChecks))
+            // The environment broke under us mid-loop: the tests pass, only the guard is
+            // red, and it is red on the untouched base too — no attempt can change that.
+            if (check == "red" && await IsEnvironmentGuardFailureAsync(rootPath, runId, taskId,
+                    stage.Number, runBaseSha, config, attemptSetupChecks, cancellationToken))
             {
                 var envOutcome = await FlagEnvironmentFailureAsync(rootPath, runId, taskId, taskDirectory,
                     stage.Number, attemptSetupChecks, attemptFullOutput, statusEntries, cancellationToken,

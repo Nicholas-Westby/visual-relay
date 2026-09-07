@@ -12,15 +12,16 @@ namespace VisualRelay.Tests;
 public sealed class RelayDriverRepoGuardTests
 {
     /// <summary>
-    /// (a) Guard fails with violations that are NOT all present in the baseline: the
-    /// new violation lines must turn stage 10 red. With the tests green the guard is
-    /// the machine's verdict on the toolchain, so the task is FLAGGED with those lines
-    /// rather than escalated through Fix-verify.  Uses <c>baselineVerify: false</c> so
-    /// every guard failure is treated as new and no stash round-trip is needed; the
-    /// guard-aware runner produces the right outputs per command.
+    /// (a) Guard fails with violations that are NOT all present in the baseline while
+    /// the tests pass, and the same guard PASSES on a pristine checkout of the base —
+    /// so the change is what broke it. The new violation lines turn stage 10 red and
+    /// the guard output enters the fix-verify loop for the stage-11 agent to remediate.
+    /// Uses <c>baselineVerify: false</c> so every guard failure is treated as new and no
+    /// stash round-trip is needed; the guard-aware runner produces the right outputs per
+    /// command.
     /// </summary>
     [Fact]
-    public async Task GuardRed_NewViolations_FlagsWithGuardOutput()
+    public async Task GuardRed_NewViolations_EntersFixVerifyWithOutput()
     {
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
@@ -36,13 +37,15 @@ public sealed class RelayDriverRepoGuardTests
             }
             """);
         repo.WriteTask("big-file", "# Add oversized file\n");
+        var sim = InitGitRepo(repo);
 
         var subagent = new CapturingSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
 
         var guardRunner = new ScriptedTestRunner(
             new TestRunResult(1, "ERROR: src/big.cs is 301 lines (limit: 300)\nERROR: tests/new-file.cs is 305 lines (limit: 300)"),
-            new TestRunResult(0, "guard clean"));
+            new TestRunResult(0, "guard clean"),   // pristine base — the change is at fault
+            new TestRunResult(0, "guard clean"));  // fix-verify re-check
         var testRunner = new ScriptedTestRunner(
             new TestRunResult(1, "red"),
             new TestRunResult(0, "all green"),
@@ -52,14 +55,23 @@ public sealed class RelayDriverRepoGuardTests
             ("dotnet test", testRunner));
 
         var driver = new RelayDriver(
-            RelayDriverTestHelpers.DepsFor(repo, subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "big-file");
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 11);
-        Assert.Contains("new-file.cs", outcome.Reason!, StringComparison.Ordinal);
+        var fixVerify = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(fixVerify);
+        Assert.NotNull(fixVerify!.LastTestOutput);
+        Assert.Contains("new-file.cs", fixVerify.LastTestOutput, StringComparison.Ordinal);
+
+        var seals = await File.ReadAllLinesAsync(
+            Path.Combine(repo.Root, ".relay", "big-file", "big-file.seals"));
+        Assert.Contains(seals, line =>
+            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+        Assert.Contains(seals, line =>
+            line.Contains("\"n\":11", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -147,12 +159,12 @@ public sealed class RelayDriverRepoGuardTests
     }
 
     /// <summary>
-    /// (d) Guard fails (new violations) while the tests pass: the task is never
-    /// committed silently — stage 10 seals RED and the guard's own output is written
-    /// into the NEEDS-REVIEW marker for whoever picks the task up.
+    /// (d) Guard fails (new violations) while it passes on the pristine base, the
+    /// fix-verify agent remediates, the guard re-check turns green, and the commit
+    /// seals.
     /// </summary>
     [Fact]
-    public async Task GuardRed_SealsStage10RedAndKeepsGuardOutput()
+    public async Task GuardFixedInFixVerify_SealsGreen()
     {
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
@@ -168,13 +180,15 @@ public sealed class RelayDriverRepoGuardTests
             }
             """);
         repo.WriteTask("fix-guard", "# Fix guard violation\n");
+        var sim = InitGitRepo(repo);
 
         var subagent = new CapturingSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
 
         var guardRunner = new ScriptedTestRunner(
             new TestRunResult(1, "ERROR: src/oversized.cs is 312 lines (limit: 300)"),
-            new TestRunResult(0, "guard clean"));
+            new TestRunResult(0, "guard clean"),   // pristine base — the change is at fault
+            new TestRunResult(0, "guard clean"));  // fix-verify re-check
         var testRunner = new ScriptedTestRunner(
             new TestRunResult(1, "red"),
             new TestRunResult(0, "all green"),
@@ -184,20 +198,23 @@ public sealed class RelayDriverRepoGuardTests
             ("dotnet test", testRunner));
 
         var driver = new RelayDriver(
-            RelayDriverTestHelpers.DepsFor(repo, subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fix-guard");
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        var marker = await File.ReadAllTextAsync(
-            Path.Combine(repo.Root, ".relay", "fix-guard", "NEEDS-REVIEW"));
-        Assert.Contains("oversized.cs", marker, StringComparison.Ordinal);
+        var fixVerify = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(fixVerify);
+        Assert.NotNull(fixVerify!.LastTestOutput);
+        Assert.Contains("oversized.cs", fixVerify.LastTestOutput, StringComparison.Ordinal);
 
         var seals = await File.ReadAllLinesAsync(
             Path.Combine(repo.Root, ".relay", "fix-guard", "fix-guard.seals"));
-        Assert.DoesNotContain(seals, line =>
-            line.Contains("\"n\":11", StringComparison.Ordinal));
+        Assert.Contains(seals, line =>
+            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+        Assert.Contains(seals, line =>
+            line.Contains("\"n\":11", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

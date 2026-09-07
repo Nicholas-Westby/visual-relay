@@ -224,9 +224,11 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         {
                             var failingTestOutput = BuildFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput);
                             var stage10Checks = SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config);
-                            // A setup command that failed while the tests passed is the machine's
-                            // fault; Fix-verify would escalate its whole tier ladder over it.
-                            if (IsEnvironmentSetupFailure(stage10Checks))
+                            // A guard that fails on the untouched base too is the machine's fault;
+                            // Fix-verify would escalate its whole tier ladder over it. One that
+                            // passes there was broken BY the change, and is repaired below.
+                            if (await IsEnvironmentGuardFailureAsync(rootPath, runId, taskId, 10,
+                                    runBaseSha, config, stage10Checks, cancellationToken))
                                 return await FlagEnvironmentFailureAsync(rootPath, runId, taskId, taskDirectory, 10,
                                     stage10Checks, failingTestOutput, statusEntries, cancellationToken,
                                     cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
@@ -245,7 +247,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                                 // Genuinely red — record stage 10, enter fix-verify loop.
                                 (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
-                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage10VerifyOutputPath, stage10BootstrapCmd, config.GuardCommand, cancellationToken);
+                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage10VerifyOutputPath, stage10BootstrapCmd, config.GuardCommand, runBaseSha, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;
