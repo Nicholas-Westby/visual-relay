@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.GitSim;
 using static VisualRelay.Tests.GitCommitterGitSimSetup;
 
 namespace VisualRelay.Tests;
@@ -37,8 +36,8 @@ public sealed class GitCommitterRunBaseSquashRelayTests
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
 
-        var sealed_ = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
-        Assert.Contains("src/app.cs", sealed_);
-        Assert.DoesNotContain(".relay/my-task/ledger.md", sealed_);
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
+        Assert.Contains("src/app.cs", committed);
+        Assert.DoesNotContain(".relay/my-task/ledger.md", committed);
     }
 }
