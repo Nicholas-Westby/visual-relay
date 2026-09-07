@@ -258,4 +258,33 @@ public sealed class RealGitIntegrationTests
         Assert.Contains(" M .relay/config.json", status, StringComparison.Ordinal);
         Assert.Contains("?? .relay/my-task/", status, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task GitCommitter_RealGit_StagesTheRetiredTaskFileFromAnIgnoredTasksDir()
+    {
+        if (!Ready()) return;
+        using var repo = TestRepository.Create();
+        SeedRepo(repo.Root);
+        // The operator keeps task files out of git, privately (not via a tracked
+        // .gitignore). Real git REFUSES a plain `git add` of an ignored path with
+        // exit 1, which would fail the whole commit stage — the retired task file
+        // has to be forced in.
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".git", "info", "exclude"), "llm-tasks/\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "app.cs"), "implemented");
+        var completed = Path.Combine(repo.Root, "llm-tasks", "completed");
+        Directory.CreateDirectory(completed);
+        await File.WriteAllTextAsync(Path.Combine(completed, "DONE-my-task.md"), "# done\n");
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"],
+            ["llm-tasks/completed/DONE-my-task.md"],
+            commitToken: null, preRunUntracked: null, tasksDir: "llm-tasks",
+            new GitInvoker(), CancellationToken.None, timeProvider: TimeProvider.System);
+
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
+        var committed = Git(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        Assert.Contains("llm-tasks/completed/DONE-my-task.md", committed, StringComparison.Ordinal);
+        Assert.Contains("src/app.cs", committed, StringComparison.Ordinal);
+    }
 }

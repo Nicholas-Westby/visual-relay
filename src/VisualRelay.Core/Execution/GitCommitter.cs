@@ -4,10 +4,9 @@ internal static partial class GitCommitter
 {
     /// <summary>
     /// Pathspec appended to every staging call so nothing under the target's
-    /// <c>.relay/</c> bookkeeping directory enters a task commit — neither the run's
-    /// own artifacts nor a tracked <c>config.json</c> the run edited. The files stay
-    /// on disk; git just never sees them. Resolved against git's working directory,
-    /// which is always the repo root here.
+    /// <c>.relay/</c> bookkeeping directory enters a task commit — neither the run's own
+    /// artifacts nor a tracked <c>config.json</c> the run edited. The files stay on disk;
+    /// git just never sees them. Resolved against git's cwd, always the repo root here.
     /// </summary>
     private const string ExcludeRelayPathspec = ":(exclude).relay";
 
@@ -119,13 +118,14 @@ internal static partial class GitCommitter
             return await FailAsync($"git add -u failed (git exit {addTracked.ExitCode}): {addTracked.Output.Trim()}");
         }
 
-        // The task-retirement move (the DONE- file, or a nested task directory)
-        // lands under the target's tasks dir, which the auto-include below skips —
-        // so stage it explicitly or the sealed commit records the deletion of the
-        // task file without its archived replacement.
+        // The task-retirement move (the DONE- file, or a nested task directory) lands
+        // under the target's tasks dir, which the auto-include below skips — so stage
+        // it explicitly, or the commit records the task file's deletion without its
+        // replacement. Forced: git refuses a plain add of an ignored path (exit 1),
+        // which would fail the whole commit in a repo that keeps its tasks out of git.
         if (retirementFiles.Count > 0)
         {
-            var addRetirement = await GitAsync(gi, rootPath, ["add", "--", .. retirementFiles], cancellationToken, timeProvider: tp);
+            var addRetirement = await GitAsync(gi, rootPath, ["add", "-f", "--", .. retirementFiles], cancellationToken, timeProvider: tp);
             if (addRetirement.ExitCode != 0)
             {
                 return await FailAsync($"git add retirement failed (git exit {addRetirement.ExitCode}): {addRetirement.Output.Trim()}");

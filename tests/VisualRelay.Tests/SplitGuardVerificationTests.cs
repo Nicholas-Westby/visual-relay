@@ -223,7 +223,11 @@ public sealed partial class SplitGuardVerificationTests
         // added two facts to the GitCommitterTests family: a tracked, modified
         // config.json left out of the commit, and a manifest entry under .relay
         // that is never staged.
-        const int baseline = 141;
+        //
+        // 2026-09-07: 141 -> 142. Review fix on the same work: a repo that keeps
+        // its task files out of git must still get the retired task file into the
+        // commit, which is one more fact in the GitCommitterTests family.
+        const int baseline = 142;
 
         string[] prefixes =
         [

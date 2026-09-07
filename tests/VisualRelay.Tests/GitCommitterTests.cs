@@ -115,4 +115,30 @@ public sealed class GitCommitterTests
         Assert.Contains("src/app.cs", changed);
         Assert.DoesNotContain(".relay/my-task/manifest.txt", changed);
     }
+
+    [Fact]
+    public async Task CommitAsync_WhenTheTasksDirIsGitignored_StillStagesTheRetiredTaskFile()
+    {
+        // A repo may keep its task files out of git. The retirement move must land
+        // anyway: the same commit stages the DELETION of the original task file, so
+        // without its archived replacement the task would vanish from history.
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, ".gitignore", "llm-tasks/\n");
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        sim.Commit(repo.Root, "chore: seed");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "llm-tasks/completed/DONE-my-task.md", "# done");
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"],
+            ["llm-tasks/completed/DONE-my-task.md"],
+            commitToken: null, preRunUntracked: null, tasksDir: "llm-tasks",
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
+
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
+        var changed = sim.FilesChangedInCommit(repo.Root, result.CommitSha!);
+        Assert.Contains("llm-tasks/completed/DONE-my-task.md", changed);
+        Assert.Contains("src/app.cs", changed);
+    }
 }
