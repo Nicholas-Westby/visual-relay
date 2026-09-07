@@ -104,7 +104,9 @@ Endpoints:
   `.relay/config.json` with a placeholder test command when no toolchain is detected,
   and the pre-commit hook; the config is written but never committed, and the placeholder
   is upgraded to the real test command automatically once the project gains a
-  toolchain), `run-all`, `run-selected`,
+  toolchain. Its outcome — including the note that the config was left uncommitted,
+  and any warning about a pre-commit hook it refused to overwrite — is left in
+  `/state.statusText`), `run-all`, `run-selected`,
   `resume`, `cancel`, `refresh`, `pause-toggle`, `archive-toggle`,
   `new-task`, `follow-running`, `edit`, `rewrite-selected`, `cancel-rewrite`,
   `revert-rewrite`, `mark-done`, `reset-selected`, plus property actions

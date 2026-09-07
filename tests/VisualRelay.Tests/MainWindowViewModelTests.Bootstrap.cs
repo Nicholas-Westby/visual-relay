@@ -27,6 +27,47 @@ public sealed partial class MainWindowViewModelTests
         Assert.False(viewModel.NeedsInitialization); // refresh cleared the init banner
     }
 
+    /// <summary>
+    /// The note is the ONE thing bootstrap leaves the operator to act on: a config
+    /// file written into their tree that no one committed. The command's own refresh
+    /// ends by writing the idle queue count, so the note has to outlive it.
+    /// </summary>
+    [Fact]
+    public async Task BootstrapProjectCommand_StatusText_KeepsTheConfigNoteAfterItsRefresh()
+    {
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        await viewModel.BootstrapProjectCommand.ExecuteAsync(null);
+
+        Assert.Contains(ConfigNote, viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A repository that already has someone else's pre-commit hook still had its
+    /// config written, so the warning must not cost the operator that note.
+    /// </summary>
+    [Fact]
+    public async Task BootstrapProjectCommand_WithAForeignHook_ReportsTheWarningAndTheConfigNote()
+    {
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        await viewModel.BootstrapProjectCommand.ExecuteAsync(null); // git init + VR hook
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".git", "hooks", "pre-commit"),
+            "#!/bin/sh" + Environment.NewLine + "exit 0" + Environment.NewLine,
+            TestContext.Current.CancellationToken);
+
+        await viewModel.BootstrapProjectCommand.ExecuteAsync(null);
+
+        Assert.Contains("not written by Visual Relay", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains(ConfigNote, viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    private const string ConfigNote = "Config written to .relay/config.json and left uncommitted.";
+
     [Fact]
     public async Task EnsureRunnableAsync_UpgradesPlaceholder_WhenToolchainAppears()
     {
