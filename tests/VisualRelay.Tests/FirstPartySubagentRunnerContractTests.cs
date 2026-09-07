@@ -20,7 +20,19 @@ public sealed class FirstPartySubagentRunnerContractTests
         }
     }
 
-    private static StageInvocation Invocation() =>
+    /// <summary>
+    /// A block that no repair rule can reach: the array is never closed, and
+    /// guessing the rest of it would be inventing the model's work.
+    /// </summary>
+    private const string Unreadable = """Here it is: { "summary": "s", "options": [ }""";
+
+    private const string Corrected = """
+        ```json
+        {"summary":"s","options":["a"]}
+        ```
+        """;
+
+    private static StageInvocation Invocation(string? reportFile = null) =>
         new(
             Stage: RelayStages.All[0],
             Tier: "cheap",
@@ -32,7 +44,7 @@ public sealed class FirstPartySubagentRunnerContractTests
             Manifest: [],
             LogSources: [],
             TraceDirectory: Path.GetTempPath(),
-            ReportFile: string.Empty,
+            ReportFile: reportFile ?? string.Empty,
             MaxTurns: 5);
 
     private static FirstPartySubagentRunner Build(
@@ -80,5 +92,87 @@ public sealed class FirstPartySubagentRunnerContractTests
         await Build(transport, relayEvents).RunAsync(Invocation());
 
         Assert.DoesNotContain(relayEvents.Events, e => e.EventName == "contract_repaired");
+    }
+
+    /// <summary>
+    /// A contract that cannot be read is worth one follow-up turn to the same
+    /// session before the stage's work is thrown away. Five tasks in a 27-task
+    /// run were discarded on a first read, and none of them got a second.
+    /// </summary>
+    [Fact]
+    public async Task AnUnreadableContract_IsReAskedExactlyOnce()
+    {
+        var transport = new ScriptedModelTransport().Answer(Unreadable).Answer(Corrected);
+        var relayEvents = new InMemoryRelayEventSink();
+
+        var result = await Build(transport, relayEvents).RunAsync(Invocation());
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.Contains("\"a\"", result.Json!, StringComparison.Ordinal);
+        Assert.Equal(2, transport.Requests.Count);
+        var reask = Assert.Single(relayEvents.Events, e => e.EventName == "contract_reask");
+        Assert.Equal("info", reask.Level);
+        Assert.Contains("not valid JSON", reask.Data!["error"], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The re-ask is bounded at one. A second unreadable answer flags exactly as
+    /// it did before, rather than spending the stage on a conversation.
+    /// </summary>
+    [Fact]
+    public async Task ASecondUnreadableContract_FlagsWithoutAnotherReAsk()
+    {
+        var transport = new ScriptedModelTransport().Answer(Unreadable).Answer(Unreadable);
+        var relayEvents = new InMemoryRelayEventSink();
+
+        var result = await Build(transport, relayEvents).RunAsync(Invocation());
+
+        Assert.False(result.IsValid);
+        Assert.Contains("not valid JSON", result.Error!, StringComparison.Ordinal);
+        Assert.Equal(2, transport.Requests.Count);
+    }
+
+    /// <summary>
+    /// A missing key is not a parse failure: the model wrote valid JSON, just not
+    /// the asked-for shape. Only one answer is scripted, so a re-ask here would
+    /// run the transport off the end of its script and say so.
+    /// </summary>
+    [Fact]
+    public async Task AMissingContractKey_IsNotReAsked()
+    {
+        var transport = new ScriptedModelTransport().Answer("""{"summary":"no options here"}""");
+
+        var result = await Build(transport, new InMemoryRelayEventSink()).RunAsync(Invocation());
+
+        Assert.False(result.IsValid);
+        Assert.Single(transport.Requests);
+    }
+
+    /// <summary>
+    /// The re-ask is part of the stage, so its turn and its tokens land on the
+    /// stage's report. Anything else would spend money the ledger never sees.
+    /// </summary>
+    [Fact]
+    public async Task TheReAsk_CountsTowardTheStage()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        var reportFile = Path.Combine(directory, "stage1-attempt1.report.json");
+        try
+        {
+            var transport = new ScriptedModelTransport().Answer(Unreadable).Answer(Corrected);
+
+            await Build(transport, new InMemoryRelayEventSink())
+                .RunAsync(Invocation(reportFile));
+
+            using var document = System.Text.Json.JsonDocument.Parse(
+                await File.ReadAllTextAsync(reportFile));
+            var stats = document.RootElement.GetProperty("stats");
+            Assert.Equal(2, stats.GetProperty("llm_calls").GetInt32());
+            Assert.Equal(2, document.RootElement.GetProperty("timeline").GetArrayLength());
+        }
+        finally
+        {
+            TestFileSystem.DeleteDirectoryResilient(directory);
+        }
     }
 }

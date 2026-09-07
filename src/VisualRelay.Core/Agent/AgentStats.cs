@@ -97,4 +97,45 @@ public sealed record AgentStats
     /// visibility; already counted inside the completion total, never added to it.
     /// </summary>
     public int ReasoningTokens { get; init; }
+
+    /// <summary>
+    /// These counters plus another run's, for a stage that took more than one
+    /// run of the loop to finish. Everything a stage is billed and timed on has
+    /// to add up, or the ledger silently loses whatever the extra run cost.
+    /// </summary>
+    /// <param name="other">The later run's counters.</param>
+    /// <returns>The combined counters, in call order.</returns>
+    public AgentStats Plus(AgentStats other)
+    {
+        var byName = new Dictionary<string, ToolCallCounts>(ToolCallsByName, StringComparer.Ordinal);
+        foreach (var (name, counts) in other.ToolCallsByName)
+        {
+            var existing = byName.GetValueOrDefault(name, new ToolCallCounts(0, 0));
+            byName[name] = new ToolCallCounts(
+                existing.Succeeded + counts.Succeeded, existing.Failed + counts.Failed);
+        }
+
+        return new AgentStats
+        {
+            Turns = Turns + other.Turns,
+            ToolCallsTotal = ToolCallsTotal + other.ToolCallsTotal,
+            ToolCallsSucceeded = ToolCallsSucceeded + other.ToolCallsSucceeded,
+            ToolCallsFailed = ToolCallsFailed + other.ToolCallsFailed,
+            ToolCallsByName = byName,
+            Compactions = Compactions + other.Compactions,
+            GuardrailInterventions = GuardrailInterventions + other.GuardrailInterventions,
+            StormedCalls = StormedCalls + other.StormedCalls,
+            RecoveredResponses = RecoveredResponses + other.RecoveredResponses,
+            TruncationRepairs = TruncationRepairs + other.TruncationRepairs,
+            LlmCalls = LlmCalls + other.LlmCalls,
+            TotalLlmTimeSeconds = Math.Round(TotalLlmTimeSeconds + other.TotalLlmTimeSeconds, 3),
+            TotalToolTimeSeconds = Math.Round(TotalToolTimeSeconds + other.TotalToolTimeSeconds, 3),
+            CachedTokens = CachedTokens + other.CachedTokens,
+            CacheWriteTokens = CacheWriteTokens + other.CacheWriteTokens,
+            PromptTokens = PromptTokens + other.PromptTokens,
+            PromptTokensPerCall = [.. PromptTokensPerCall, .. other.PromptTokensPerCall],
+            CompletionTokens = CompletionTokens + other.CompletionTokens,
+            ReasoningTokens = ReasoningTokens + other.ReasoningTokens,
+        };
+    }
 }

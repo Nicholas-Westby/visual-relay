@@ -16,6 +16,13 @@ public sealed record StageContractResult(string? Json, string? Error)
     /// repair is a defect worth seeing even though the stage went on.
     /// </summary>
     public IReadOnlyList<string> Repairs { get; init; } = [];
+
+    /// <summary>
+    /// True when nothing in the answer was JSON at all, even after repair. A
+    /// shape mismatch is NOT this: there the model wrote valid JSON and simply
+    /// left a key out, which one more turn is unlikely to change.
+    /// </summary>
+    public bool Unparseable { get; init; }
 }
 
 /// <summary>
@@ -58,13 +65,19 @@ public static class StageContractReader
         var candidates = StageContractLocator.Candidates(answer);
         if (candidates.Count == 0)
             return new StageContractResult(
-                null, "no JSON object found in the answer; the contract block is required");
+                null, "no JSON object found in the answer; the contract block is required")
+            {
+                Unparseable = true,
+            };
 
         // Strict first. Repair is only ever reached when NOTHING in the answer
         // parses as written, so a well-formed answer is never touched.
         return Choose(candidates, required, repair: false)
             ?? Choose(candidates, required, repair: true)
-            ?? new StageContractResult(null, "the contract block is not valid JSON");
+            ?? new StageContractResult(null, "the contract block is not valid JSON")
+            {
+                Unparseable = true,
+            };
     }
 
     /// <summary>

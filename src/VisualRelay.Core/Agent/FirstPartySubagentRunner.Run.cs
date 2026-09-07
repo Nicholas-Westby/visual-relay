@@ -13,6 +13,15 @@ public sealed partial class FirstPartySubagentRunner
     /// </summary>
     private const int RetriesPerRoute = 1;
 
+    /// <summary>
+    /// The wall clock one run of the loop gets: the stage's absolute ceiling when
+    /// the driver set one, else the route's own total timeout.
+    /// </summary>
+    private static TimeSpan StageBudget(ProviderRoute route, StageInvocation invocation) =>
+        invocation.AbsoluteCeilingMs > 0
+            ? TimeSpan.FromMilliseconds(invocation.AbsoluteCeilingMs)
+            : route.Timeouts.Total;
+
     /// <summary>Runs one stage against one model in the tier's chain.</summary>
     private async Task<(AgentLoopResult Result, KillSignature? Kill, bool HardAbort)> RunOnRouteAsync(
         ProviderRoute route,
@@ -24,9 +33,7 @@ public sealed partial class FirstPartySubagentRunner
         var apiKey = _keys.Resolve(route.ApiKeyEnvVar) ?? string.Empty;
         var client = new ChatCompletionClient(_transport, route.Timeouts, _timeProvider);
 
-        var budget = invocation.AbsoluteCeilingMs > 0
-            ? TimeSpan.FromMilliseconds(invocation.AbsoluteCeilingMs)
-            : route.Timeouts.Total;
+        var budget = StageBudget(route, invocation);
 
         // The stall clocks come from the repository's config, per tier. The
         // watchdog is an event sink, so it sees the loop's own stream; the timer

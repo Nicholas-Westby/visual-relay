@@ -105,6 +105,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
         AgentLoopResult? last = null;
         KillSignature? kill = null;
         var hardAbort = false;
+        StageContractResult? contract = null;
         try
         {
             foreach (var route in chain)
@@ -117,7 +118,17 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
                 // A hop is worth taking only for a fault of this route. An exhausted
                 // turn budget or a cancelled stage would repeat identically on the
                 // next model, and a success is done.
-                if (last.Outcome != AgentLoopOutcome.Error) break;
+                if (last.Outcome != AgentLoopOutcome.Error)
+                {
+                    // Reading the contract HERE, before the report is written, is
+                    // what lets a repair re-ask count toward the stage: its turn
+                    // and its tokens land on the same report the ledger prices.
+                    if (last.Outcome == AgentLoopOutcome.Success)
+                        (last, contract) = await ResolveContractAsync(
+                            route, conversation, invocation, last, events, cancellationToken)
+                            .ConfigureAwait(false);
+                    break;
+                }
 
                 if (!ReferenceEquals(route, chain[^1]))
                     events.Publish(new AgentEvent(
@@ -133,8 +144,8 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
             if (last is not null)
                 await WriteReportAsync(invocation, last, events).ConfigureAwait(false);
         }
-        return await ToSubagentResultAsync(invocation, last!, kill, hardAbort, cancellationToken)
-            .ConfigureAwait(false);
+        return await ToSubagentResultAsync(
+            invocation, last!, kill, hardAbort, contract, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -157,7 +168,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
 
     private async Task<SubagentResult> ToSubagentResultAsync(
         StageInvocation invocation, AgentLoopResult result, KillSignature? kill, bool hardAbort,
-        CancellationToken cancellationToken)
+        StageContractResult? contract, CancellationToken cancellationToken)
     {
         if (result.Outcome != AgentLoopOutcome.Success)
             return new SubagentResult(
@@ -176,10 +187,10 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
                 HardAbort: result.Outcome == AgentLoopOutcome.Cancelled || hardAbort,
                 Kill: kill);
 
-        var contract = StageContractReader.Read(result.Answer, invocation.Stage.OutputContract);
-        AnnounceRepairs(invocation, contract.Repairs);
-        if (!contract.Succeeded || contract.Json is not { } json)
-            return new SubagentResult(result.Answer, contract.Json, contract.Succeeded, contract.Error);
+        // Read by the caller, which owns the one repair re-ask.
+        if (contract is not { Succeeded: true, Json: { } json })
+            return new SubagentResult(
+                result.Answer, null, false, contract?.Error ?? "the contract block could not be read");
 
         // Stages 4 and 10 name the files they intend to change. A gitignored or
         // absent path there produces a manifest the commit stage cannot honour,
