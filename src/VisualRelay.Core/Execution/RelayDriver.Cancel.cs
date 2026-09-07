@@ -62,7 +62,7 @@ public sealed partial class RelayDriver
     private async Task RestoreRunBaseAsync(string rootPath, string taskId)
     {
         var config = await RelayConfigLoader.TryLoadAsync(rootPath, CancellationToken.None);
-        await WorktreeResetter.ResetAsync(rootPath, taskId, config.Config?.TasksDir,
+        await WorktreeResetter.ResetAsync(rootPath, taskId, config.Config.TasksDir,
             _dependencies.GitInvoker, CancellationToken.None);
     }
 }

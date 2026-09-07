@@ -22,13 +22,13 @@ public sealed class RelayQueueControllerCancelTests
         // The reset needs a baseline snapshot to act on; without one it refuses.
         var taskDirectory = Path.Combine(repo.Root, ".relay", "interrupted");
         Directory.CreateDirectory(taskDirectory);
-        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "pre-run-untracked.txt"), "");
+        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "pre-run-untracked.txt"), "", CancellationToken.None);
         var git = new RecordingGitInvoker();
 
         using var cts = new CancellationTokenSource();
         var runner = new CancelAwaitingTaskRunner();
         var controller = new RelayQueueController(repo.Root, runner, gitInvoker: git);
-        await controller.RefreshAsync();
+        await controller.RefreshAsync(CancellationToken.None);
         var drain = controller.DrainAsync(cts.Token);
         await runner.FirstStarted;
         await cts.CancelAsync();
@@ -40,7 +40,7 @@ public sealed class RelayQueueControllerCancelTests
 
         // Its tree is restored and it is marked for review with the cancel reason.
         Assert.Contains(git.Calls, c => c is ["checkout", "--", "."]);
-        var marker = await File.ReadAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
+        var marker = await File.ReadAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), CancellationToken.None);
         Assert.Contains("cancelled by operator", marker, StringComparison.Ordinal);
 
         // The queued task is untouched: still pending, no marker of its own.
@@ -71,7 +71,7 @@ public sealed class RelayQueueControllerCancelTests
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
 
-        await controller.RefreshAsync();
+        await controller.RefreshAsync(CancellationToken.None);
         var drain = controller.DrainAsync(cts.Token);
         await planRunner.FirstStarted;
         await cts.CancelAsync();

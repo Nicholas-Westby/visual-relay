@@ -73,7 +73,7 @@ public partial class MainWindowViewModel
 
         await RunCancellableAsync(async cancellationToken =>
         {
-            var config = await RelayConfigLoader.LoadAsync(RootPath);
+            var config = await RelayConfigLoader.LoadAsync(RootPath, cancellationToken);
 
             // Per-task event sink factory for planning: each planning task
             // gets its own ObservableRelayEventSink wired to HandleRelayEvent.
@@ -113,7 +113,7 @@ public partial class MainWindowViewModel
             // from the GUI at each checkpoint, so CollectNewTasks can discover them.
             controller.SetExternalTaskSource(() => Tasks.Select(t => t.Task).ToList());
 
-            await controller.RefreshAsync();
+            await controller.RefreshAsync(cancellationToken);
             // RefreshAsync already seeds from the persisted manual order (the shared
             // source of truth). Re-applying the app's visible order keeps the drain
             // aligned with any in-session reorder not yet reloaded — idempotent when

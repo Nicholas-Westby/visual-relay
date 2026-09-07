@@ -40,7 +40,7 @@ public sealed class ControlApiCancelTests
     public async Task InvokeCommand_Cancel_WhileARunIsBusy_CancelsThatRunsToken()
     {
         var api = NewApi(out var vm);
-        CancellationToken runToken = default;
+        var runToken = CancellationToken.None;
         var run = vm.RunCancellableForTestsAsync(async token =>
         {
             runToken = token;

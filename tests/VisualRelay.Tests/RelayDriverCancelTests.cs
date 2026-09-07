@@ -32,7 +32,7 @@ public sealed class RelayDriverCancelTests
         Assert.Equal("cancelled by operator", outcome.Reason);
 
         var taskDirectory = Path.Combine(repo.Root, ".relay", "cancel-me");
-        var marker = await File.ReadAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
+        var marker = await File.ReadAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), CancellationToken.None);
         Assert.Contains("cancelled by operator", marker, StringComparison.Ordinal);
         Assert.Contains("stage 2", marker, StringComparison.Ordinal);
 
@@ -68,7 +68,7 @@ public sealed class RelayDriverCancelTests
 
         Assert.Equal("cancelled by operator", outcome.Reason);
         var taskDirectory = Path.Combine(repo.Root, ".relay", "report-cancel");
-        var marker = await File.ReadAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
+        var marker = await File.ReadAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), CancellationToken.None);
         Assert.Contains("stage 3", marker, StringComparison.Ordinal);
 
         var status = StageStatusRecord.Read(taskDirectory);

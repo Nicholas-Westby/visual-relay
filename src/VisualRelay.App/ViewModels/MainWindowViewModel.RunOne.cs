@@ -48,7 +48,7 @@ public partial class MainWindowViewModel
         // selected task (run start ⇒ the prior run's error no longer applies).
         BeginRunningTask(task);
         NotifyPauseStateChanged();
-        var config = await RelayConfigLoader.LoadAsync(RootPath);
+        var config = await RelayConfigLoader.LoadAsync(RootPath, cancellationToken);
         var observable = new ObservableRelayEventSink(HandleRelayEvent);
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
