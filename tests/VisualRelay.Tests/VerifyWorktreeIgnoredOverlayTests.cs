@@ -83,7 +83,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -129,7 +129,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             Assert.True(new DirectoryInfo(depLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
                 "above-threshold dep/ should be symlinked so this test exercises link-cleanup");
 
-            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
 
             // The worktree (and its links) are gone.
             Assert.False(Directory.Exists(worktree), "worktree directory should be removed");
@@ -183,7 +183,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -228,7 +228,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -274,7 +274,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }

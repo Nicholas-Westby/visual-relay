@@ -131,8 +131,11 @@ public sealed partial class RelayDriver
         string? worktreePath = null;
         try
         {
+            // Fresh token, like the teardown below: a half-added worktree is a git
+            // admin entry pointing at a directory that was never checked out, and it
+            // leaves this method holding no path to remove.
             worktreePath = await PlanningWorktree.CreateAsync(
-                rootPath, worktreeId, runId, _dependencies.GitInvoker, cancellationToken,
+                rootPath, worktreeId, runId, _dependencies.GitInvoker, CancellationToken.None,
                 timeProvider: _dependencies.TimeProvider, commitish: baseSha);
             await OverlayIgnoredEntriesAsync(
                 rootPath, worktreePath, worktreeId, runId,
@@ -152,7 +155,7 @@ public sealed partial class RelayDriver
         finally
         {
             if (worktreePath is not null)
-                await CleanupVerifyWorktreeAsync(rootPath, worktreePath, cancellationToken);
+                await CleanupVerifyWorktreeAsync(rootPath, worktreePath);
         }
     }
 }

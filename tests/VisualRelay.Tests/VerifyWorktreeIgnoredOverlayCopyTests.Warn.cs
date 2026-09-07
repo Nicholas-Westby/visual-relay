@@ -50,7 +50,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -113,7 +113,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
             }
             catch { /* best-effort */ }
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }

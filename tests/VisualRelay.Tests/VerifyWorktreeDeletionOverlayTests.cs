@@ -99,7 +99,7 @@ public sealed partial class VerifyWorktreeDeletionOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -134,7 +134,7 @@ public sealed partial class VerifyWorktreeDeletionOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -178,7 +178,7 @@ public sealed partial class VerifyWorktreeDeletionOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -217,7 +217,7 @@ public sealed partial class VerifyWorktreeDeletionOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -256,7 +256,7 @@ public sealed partial class VerifyWorktreeDeletionOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }

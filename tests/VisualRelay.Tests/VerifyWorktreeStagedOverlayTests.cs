@@ -77,7 +77,7 @@ public sealed class VerifyWorktreeStagedOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -112,7 +112,7 @@ public sealed class VerifyWorktreeStagedOverlayTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }

@@ -83,7 +83,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -130,7 +130,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -185,7 +185,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -220,7 +220,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
             Assert.True(File.Exists(Path.Combine(worktree, "TEST-TIMING.md")));
             Assert.True(Directory.Exists(Path.Combine(worktree, "node_modules")));
 
-            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             Assert.False(Directory.Exists(worktree), "worktree directory should be removed");
 
             // Both source entries survive: the copy's source untouched, the

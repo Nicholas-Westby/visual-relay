@@ -61,7 +61,12 @@ public static class TaskRewriteRunner
             // the rewrite namespace — is never deleted.
             await PlanningWorktree.PruneTaskLeftoversAsync(rootPath, task.Id, git, ct);
 
-            worktreePath = await PlanningWorktree.CreateAsync(rootPath, task.Id, runId, git, ct, isRewrite: true);
+            ct.ThrowIfCancellationRequested();
+            // Fresh token, like every other worktree add: a torn one is a git admin
+            // entry pointing at a directory that was never checked out, and the catch
+            // below would return with no path for the teardown to remove.
+            worktreePath = await PlanningWorktree.CreateAsync(
+                rootPath, task.Id, runId, git, CancellationToken.None, isRewrite: true);
             PlanningWorktree.CopyConfigIntoWorktree(rootPath, worktreePath);
         }
         catch (OperationCanceledException)

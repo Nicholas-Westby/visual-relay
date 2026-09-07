@@ -59,7 +59,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -125,7 +125,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         finally
         {
             if (worktree is not null)
-                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -177,7 +177,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
                 await File.ReadAllTextAsync(Path.Combine(escapeLink, "guard.txt")));
 
             // NOW cleanup — must not follow the link into the sentinel.
-            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
             Assert.False(Directory.Exists(worktree),
                 "worktree directory should be removed after cleanup");
 
@@ -192,7 +192,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         {
             if (worktree is not null)
             {
-                try { await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None); }
+                try { await driver.CleanupVerifyWorktreeForTestAsync(root, worktree); }
                 catch { /* already cleaned up */ }
             }
             TestFileSystem.DeleteDirectoryResilient(root);

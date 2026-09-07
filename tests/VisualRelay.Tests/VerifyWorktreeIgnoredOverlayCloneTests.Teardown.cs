@@ -46,7 +46,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCloneTests
                 "cloned blob.bin must be a regular file, not a file symlink");
             Assert.True(new DirectoryInfo(Path.Combine(worktree, "deps", "out")).Attributes.HasFlag(FileAttributes.ReparsePoint));
 
-            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
+            await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
 
             Assert.False(Directory.Exists(worktree), "worktree directory should be removed");
             Assert.True(Directory.Exists(sentinel), "sentinel directory outside repo must survive teardown");

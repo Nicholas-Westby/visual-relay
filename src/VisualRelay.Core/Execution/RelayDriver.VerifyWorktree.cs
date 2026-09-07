@@ -59,7 +59,7 @@ public sealed partial class RelayDriver
         {
             // Teardown on a fresh token: handing on a cancelled one would skip the
             // `git worktree remove` and leave the snapshot registered in the repo.
-            await CleanupVerifyWorktreeAsync(rootPath, worktreePath, CancellationToken.None);
+            await CleanupVerifyWorktreeAsync(rootPath, worktreePath);
         }
     }
 
@@ -79,9 +79,8 @@ public sealed partial class RelayDriver
         CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken, thresholdBytes, cloneOverlay);
 
     /// <summary>TEST SEAM: drives the private <see cref="CleanupVerifyWorktreeAsync"/>.</summary>
-    internal Task CleanupVerifyWorktreeForTestAsync(
-        string sourcePath, string worktreePath, CancellationToken cancellationToken) =>
-        CleanupVerifyWorktreeAsync(sourcePath, worktreePath, cancellationToken);
+    internal Task CleanupVerifyWorktreeForTestAsync(string sourcePath, string worktreePath) =>
+        CleanupVerifyWorktreeAsync(sourcePath, worktreePath);
 
     /// <summary>
     /// Creates a detached HEAD worktree (reusing <see cref="PlanningWorktree.CreateAsync"/>)
@@ -94,8 +93,10 @@ public sealed partial class RelayDriver
         string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
         long thresholdBytes = IgnoredOverlayCopyMaxBytes, bool cloneOverlay = true)
     {
+        // Fresh token: a torn `git worktree add` leaves an admin entry pointing at a
+        // directory that was never checked out, and no path for the caller to remove.
         var worktreePath = await PlanningWorktree.CreateAsync(
-            sourcePath, worktreeId, runId, _dependencies.GitInvoker, cancellationToken,
+            sourcePath, worktreeId, runId, _dependencies.GitInvoker, CancellationToken.None,
             timeProvider: _dependencies.TimeProvider);
 
         // (1) ADD / MODIFY — copy every path DIFFERING from HEAD (staged + unstaged) and
