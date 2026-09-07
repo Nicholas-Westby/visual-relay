@@ -153,6 +153,13 @@ internal static partial class GitCommitter
             if (rel.Length == 0)
                 continue;
 
+            // Visual Relay's own bookkeeping, which the run keeps writing as it
+            // goes and the agent may have self-committed. The working-tree staging
+            // calls exclude it by pathspec; this pass reads the rewound commits'
+            // tree directly, so it has to make the same exclusion itself.
+            if (IsInternalArtifact(rel))
+                continue;
+
             // Already represented in the index (staged from the working tree, the
             // authoritative current content) → leave it; do not clobber a live edit.
             var staged = await GitAsync(gi, rootPath, ["ls-files", "--", rel], cancellationToken, timeProvider: timeProvider);
