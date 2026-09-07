@@ -18,7 +18,13 @@ public static class PlanPhaseRunner
     /// to <paramref name="mainRootPath"/>.
     /// </summary>
     /// <param name="mainRootPath">Main repo root that artifacts are copied back to.</param>
-    /// <param name="tasks">Task ids paired with the subagent runner that drives each.</param>
+    /// <param name="tasks">
+    /// Task ids paired with a factory that builds the subagent runner for each. A factory
+    /// rather than a runner because the sink a planning task publishes to only exists once
+    /// its worktree does: it composes the caller's observable sink with the file sink that
+    /// writes the task's run.log. Building the agent from that sink is what puts the
+    /// planning stages' tool calls and thinking in the same log as every other stage.
+    /// </param>
     /// <param name="config">Drive configuration; <c>MaxPlanConcurrency</c> bounds parallelism.</param>
     /// <param name="testRunner">Test runner used by the planning stages.</param>
     /// <param name="cancellationToken">Cancels all in-flight planning work.</param>
@@ -44,7 +50,7 @@ public static class PlanPhaseRunner
     /// </param>
     public static async Task<List<(string TaskId, RelayTaskOutcome Outcome)>> RunPlanPhaseAsync(
         string mainRootPath,
-        IEnumerable<(string TaskId, ISubagentRunner Runner)> tasks,
+        IEnumerable<(string TaskId, Func<IRelayEventSink, ISubagentRunner> RunnerFactory)> tasks,
         RelayConfig config,
         ITestRunner testRunner,
         IGitInvoker gitInvoker,
@@ -66,7 +72,7 @@ public static class PlanPhaseRunner
 
         // Fire all planning tasks concurrently, gated by the semaphore.
         await Task.WhenAll(taskList.Select(t => PlanOneAsync(
-            mainRootPath, t.TaskId, t.Runner, testRunner, runId,
+            mainRootPath, t.TaskId, t.RunnerFactory, testRunner, runId,
             semaphore, results, eventSinkFactory, environmentAccessor, gitInvoker, cancellationToken)));
 
         // Return in input order.
@@ -78,7 +84,7 @@ public static class PlanPhaseRunner
     private static async Task PlanOneAsync(
         string mainRootPath,
         string taskId,
-        ISubagentRunner runner,
+        Func<IRelayEventSink, ISubagentRunner> runnerFactory,
         ITestRunner testRunner,
         string runId,
         SemaphoreSlim semaphore,
@@ -92,7 +98,7 @@ public static class PlanPhaseRunner
         try
         {
             var outcome = await PlanOneTaskAsync(
-                mainRootPath, taskId, runner, testRunner, runId,
+                mainRootPath, taskId, runnerFactory, testRunner, runId,
                 eventSinkFactory, environmentAccessor, gitInvoker, ct);
             lock (results)
                 results.Add((taskId, outcome));
@@ -118,7 +124,7 @@ public static class PlanPhaseRunner
     private static async Task<RelayTaskOutcome> PlanOneTaskAsync(
         string mainRootPath,
         string taskId,
-        ISubagentRunner runner,
+        Func<IRelayEventSink, ISubagentRunner> runnerFactory,
         ITestRunner testRunner,
         string runId,
         Func<string, IRelayEventSink>? eventSinkFactory,
@@ -145,8 +151,10 @@ public static class PlanPhaseRunner
             var fileSink = new FileRelayEventSink(
                 Path.Combine(worktreePath, ".relay", taskId, "run.log"));
             var sink = new CompositeRelayEventSink(observableSink, fileSink);
+            // The agent is built from THIS sink, so its trace stream lands in the same
+            // run.log the driver writes rather than in the GUI alone.
             var dependencies = new RelayDriverDependencies(
-                runner, testRunner, sink, gitInvoker, environmentAccessor);
+                runnerFactory(sink), testRunner, sink, gitInvoker, environmentAccessor);
             var options = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
             var driver = new RelayDriver(dependencies, options);
 

@@ -58,7 +58,7 @@ public sealed class OrchestratorProfileIsolationTests
             var controller = new RelayQueueController(
                 repo.Root,
                 new RecordingTaskRunner(),
-                planSubagentRunnerFactory: _ => planRunner,
+                planSubagentRunnerFactory: (_, _) => planRunner,
                 planTestRunner: new ScriptedTestRunner(),
                 environmentAccessor: env,
                 gitInvoker: sim);

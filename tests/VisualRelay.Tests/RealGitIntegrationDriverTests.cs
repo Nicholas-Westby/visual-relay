@@ -44,7 +44,7 @@ public sealed class RealGitIntegrationDriverTests
             MaxPlanConcurrency: 2, InactivityTimeoutMsByTier: null, InactivityTimeoutMs: 600_000);
 
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root, tasks: [("task-a", runnerA), ("task-b", runnerB)], config: config,
+            mainRootPath: repo.Root, tasks: [("task-a", _ => runnerA), ("task-b", _ => runnerB)], config: config,
             testRunner: new ScriptedTestRunner(), gitInvoker: new GitInvoker(), cancellationToken: CancellationToken.None,
             environmentAccessor: new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.Combine(repo.Root, ".xdg") });
         Assert.All(planResults, r => Assert.Equal(RelayTaskOutcomeStatus.Planned, r.Outcome.Status));

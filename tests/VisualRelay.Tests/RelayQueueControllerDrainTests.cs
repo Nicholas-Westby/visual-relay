@@ -34,7 +34,7 @@ public sealed class RelayQueueControllerDrainTests
         var controller = new RelayQueueController(
             repo.Root,
             new RecordingTaskRunner(),
-            planSubagentRunnerFactory: taskId => taskId == "alpha" ? flagAt3 : betaRunner,
+            planSubagentRunnerFactory: (taskId, _) => taskId == "alpha" ? flagAt3 : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
@@ -94,7 +94,7 @@ public sealed class RelayQueueControllerDrainTests
         var controller = new RelayQueueController(
             repo.Root,
             new RecordingTaskRunner(),
-            planSubagentRunnerFactory: taskId => taskId == "alpha" ? flagAt3 : betaRunner,
+            planSubagentRunnerFactory: (taskId, _) => taskId == "alpha" ? flagAt3 : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
@@ -182,7 +182,7 @@ public sealed class RelayQueueControllerDrainTests
         var controller = new RelayQueueController(
             repo.Root,
             new RecordingTaskRunner(),
-            planSubagentRunnerFactory: taskId => taskId == "alpha" ? poisoner : betaRunner,
+            planSubagentRunnerFactory: (taskId, _) => taskId == "alpha" ? poisoner : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);

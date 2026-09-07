@@ -1,10 +1,18 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
 public sealed partial class PlanPhaseRunnerTests
 {
+    /// <summary>
+    /// Wraps a ready-made runner as the sink-taking factory the plan phase asks for,
+    /// for the tests that do not care which sink the agent publishes to.
+    /// </summary>
+    private static Func<IRelayEventSink, ISubagentRunner> Use(ISubagentRunner runner) =>
+        _ => runner;
+
     [Fact]
     public async Task RunPlanPhase_EnforcesBatchLimit_NoMoreThanMaxConcurrencyInFlight()
     {
@@ -26,7 +34,7 @@ public sealed partial class PlanPhaseRunnerTests
 
         var tasks = Enumerable.Range(0, taskCount).Select(i => (
             TaskId: $"task-{i:D2}",
-            Runner: (ISubagentRunner)sharedCounter
+            RunnerFactory: (Func<IRelayEventSink, ISubagentRunner>)(_ => sharedCounter)
         )).ToList();
 
         // Run PlanPhaseRunner directly — it orchestrates the parallel plan phase.
@@ -70,9 +78,9 @@ public sealed partial class PlanPhaseRunnerTests
 
         var tasks = new[]
         {
-            ("alpha", MakeRunner("src/alpha.cs", "tests/alpha.tests.cs")),
-            ("beta",  MakeRunner("src/beta.cs", "tests/beta.tests.cs")),
-            ("gamma", MakeRunner("src/gamma.cs", "tests/gamma.tests.cs")),
+            ("alpha", Use(MakeRunner("src/alpha.cs", "tests/alpha.tests.cs"))),
+            ("beta",  Use(MakeRunner("src/beta.cs", "tests/beta.tests.cs"))),
+            ("gamma", Use(MakeRunner("src/gamma.cs", "tests/gamma.tests.cs"))),
         };
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 3);
@@ -137,7 +145,7 @@ public sealed partial class PlanPhaseRunnerTests
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root, tasks: [("stray-writer", strayWriter)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            mainRootPath: repo.Root, tasks: [("stray-writer", _ => strayWriter)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
 
         Assert.Single(results);
@@ -179,7 +187,7 @@ public sealed partial class PlanPhaseRunnerTests
             {
                 var runner = new ScriptedSubagentRunner();
                 runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
-                return ($"lock-{i:D2}", (ISubagentRunner)runner);
+                return ($"lock-{i:D2}", Use(runner));
             })
             .ToArray();
 
@@ -216,7 +224,7 @@ public sealed partial class PlanPhaseRunnerTests
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root, tasks: [("copy-back", runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            mainRootPath: repo.Root, tasks: [("copy-back", _ => runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
 
         Assert.Single(results);
@@ -263,7 +271,7 @@ public sealed partial class PlanPhaseRunnerTests
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root,
-            tasks: [("real-spec", capturer)],
+            tasks: [("real-spec", _ => capturer)],
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,

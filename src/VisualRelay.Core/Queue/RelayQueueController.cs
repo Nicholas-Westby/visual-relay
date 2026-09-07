@@ -11,7 +11,7 @@ public sealed partial class RelayQueueController
 {
     private readonly IRelayTaskRunner _runner;
     private readonly RelayTaskRepository _repository;
-    private readonly Func<string, ISubagentRunner>? _planSubagentRunnerFactory;
+    private readonly Func<string, IRelayEventSink, ISubagentRunner>? _planSubagentRunnerFactory;
     private readonly ITestRunner? _planTestRunner;
     private readonly Func<string, IRelayEventSink>? _planEventSinkFactory;
     private readonly DrainLifecycleCallbacks? _lifecycle;
@@ -30,7 +30,7 @@ public sealed partial class RelayQueueController
     public RelayQueueController(
         string rootPath,
         IRelayTaskRunner runner,
-        Func<string, ISubagentRunner>? planSubagentRunnerFactory = null,
+        Func<string, IRelayEventSink, ISubagentRunner>? planSubagentRunnerFactory = null,
         ITestRunner? planTestRunner = null,
         Func<string, IRelayEventSink>? planEventSinkFactory = null,
         DrainLifecycleCallbacks? lifecycle = null,
@@ -145,10 +145,10 @@ public sealed partial class RelayQueueController
                     if (configResult.IsRunnable)
                     {
                         // Tasks needing planning (stages 1–4 not all Done).
-                        var needsPlan = new List<(string TaskId, ISubagentRunner Runner)>();
-                        foreach (var task in queue)
-                            if (!StagesOneThroughFourAreDone(task.Id))
-                                needsPlan.Add((task.Id, _planSubagentRunnerFactory!(task.Id)));
+                        var needsPlan = new List<(string TaskId, Func<IRelayEventSink, ISubagentRunner> Factory)>();
+                        // Each agent is built later, from the sink its own worktree gets.
+                        foreach (var task in queue.Where(t => !StagesOneThroughFourAreDone(t.Id)))
+                            needsPlan.Add((task.Id, sink => _planSubagentRunnerFactory!(task.Id, sink)));
 
                         if (needsPlan.Count > 0)
                         {

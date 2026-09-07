@@ -24,7 +24,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner,
+            planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
@@ -58,7 +58,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: taskId => taskId == "bad-plan" ? flagAt3 : goodRunner,
+            planSubagentRunnerFactory: (taskId, _) => taskId == "bad-plan" ? flagAt3 : goodRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
@@ -101,7 +101,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner,
+            planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
@@ -132,7 +132,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => flagAt2,
+            planSubagentRunnerFactory: (_, _) => flagAt2,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
@@ -181,7 +181,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner,
+            planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             lifecycle: lifecycle,
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,

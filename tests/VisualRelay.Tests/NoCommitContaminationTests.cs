@@ -85,7 +85,7 @@ public sealed partial class NoCommitContaminationTests
 
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root,
-            tasks: [(taskIdA, runnerA), (taskIdB, runnerB)],
+            tasks: [(taskIdA, _ => runnerA), (taskIdB, _ => runnerB)],
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,

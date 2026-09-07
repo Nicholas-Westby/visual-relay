@@ -168,7 +168,7 @@ public sealed class PlanningWorktreeConfigCopyTests
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root, tasks: [("ignored-cfg", runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            mainRootPath: repo.Root, tasks: [("ignored-cfg", _ => runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
 
         Assert.Single(results);

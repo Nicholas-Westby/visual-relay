@@ -112,7 +112,7 @@ public sealed partial class DrainQueueToolTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner,
+            planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         await controller.RefreshAsync();
@@ -146,7 +146,7 @@ public sealed partial class DrainQueueToolTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner,
+            planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
@@ -186,7 +186,7 @@ public sealed partial class DrainQueueToolTests
 
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner,
+            planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);

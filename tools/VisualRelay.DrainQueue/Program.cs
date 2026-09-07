@@ -35,9 +35,10 @@ var verboseDiagnostics = DiagnosticsSettings.LoadVerboseDiagnostics();
 var planTestRunner = new SandboxedTestRunner(
     new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, verboseDiagnostics);
 
-ISubagentRunner PlanSubagentFactory(string taskId) =>
-    SubagentRunnerFactory.Create(
-        config, new ConsoleRelayEventSink(taskId), new SystemEnvironmentAccessor(), verboseDiagnostics);
+// Built from the planning driver's own sink, so the agent's traces land in the task's
+// run.log alongside the stage boundaries.
+ISubagentRunner PlanSubagentFactory(string taskId, IRelayEventSink sink) =>
+    SubagentRunnerFactory.Create(config, sink, new SystemEnvironmentAccessor(), verboseDiagnostics);
 
 // PlanPhaseRunner internally creates FileRelayEventSink for each planning task.
 // The ConsoleRelayEventSink gives attributable interleaved console output.
