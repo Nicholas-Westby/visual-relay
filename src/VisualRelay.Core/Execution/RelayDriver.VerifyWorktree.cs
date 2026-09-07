@@ -50,7 +50,9 @@ public sealed partial class RelayDriver
         }
         finally
         {
-            await CleanupVerifyWorktreeAsync(rootPath, worktreePath, cancellationToken);
+            // Teardown on a fresh token: handing on a cancelled one would skip the
+            // `git worktree remove` and leave the snapshot registered in the repo.
+            await CleanupVerifyWorktreeAsync(rootPath, worktreePath, CancellationToken.None);
         }
     }
 

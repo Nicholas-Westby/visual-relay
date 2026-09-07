@@ -22,7 +22,7 @@ disk, and every staging call the commit stage makes carries a
 | `.relay/<task>/stage{n}-attempt{m}.report.json` | Per-attempt stage report (outcome, measured usage, served model, `error_message`). | Written by Visual Relay; read by Visual Relay (cost/outcome). | No |
 | `.relay/<task>/stage{n}-attempt{m}/<uuid>.jsonl` | Trace session for one attempt. The UUID filename is kept from the format the archived corpus uses. | Written by Visual Relay; read by Visual Relay's trace pane. | No (gitignored) |
 | `.relay/<task>/run.log` | Visual Relay's own durable, human-readable run log (one line per event). Distinct from the target's `logs/app.log`. | Written by Visual Relay. | No (gitignored) |
-| `.relay/<task>/NEEDS-REVIEW` | Control marker: a runner crash or gate failure flagged this task for review so drains do not loop on it. | Written by Visual Relay. | No |
+| `.relay/<task>/NEEDS-REVIEW` | Control marker: a runner crash, a gate failure, or an operator cancel (reason `cancelled by operator`) flagged this task for review so drains do not loop on it. | Written by Visual Relay. | No |
 | `.relay/DRAIN-HALTED` | Control marker: repeated commit-gate rejections halted the drain. | Written by Visual Relay. | No |
 
 ## The `logSources` contract

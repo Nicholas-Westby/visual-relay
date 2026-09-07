@@ -68,6 +68,11 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
             foreach (var stage in RelayStages.All)
             {
+                // Between stages nothing is half-written — the one clean place to stop.
+                cancellationToken.ThrowIfCancellationRequested();
+                // Stage 12 retires and commits with no clean point inside it, so it runs
+                // on a fresh token and the cancel lands once RunTaskAsync has returned.
+                var stageToken = stage.Number == 12 ? CancellationToken.None : cancellationToken;
                 if (stage.Number < firstStageToRun)
                     continue;
                 if (_options.LastStageToRun is { } last && stage.Number > last)
@@ -100,9 +105,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     continue;
                 }
 
-                await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
+                await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, stageToken);
                 MarkStatus(statusEntries, stage.Number, "Running");
-                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+                await WriteStatusAsync(taskDirectory, statusEntries, stageToken);
                 var stopwatch = Stopwatch.StartNew();
                 string body;
                 string? check = null;
@@ -141,15 +146,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 5 && config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true)
                     {
-                        MarkStatusSkipped(statusEntries, stage);
-                        ledger.AppendLine("> **Skipped**: automated testing bypassed for this task.");
-                        ledger.AppendLine();
-                        (previousSeal, taskHash) = await RecordStageAsync(
-                            rootPath, runId, taskId, taskDirectory, stage,
-                            "_Skipped: automated testing bypassed for this task._",
-                            "green", null, stopwatch.Elapsed, ledger, seals, statusEntries, manifest,
-                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
-                            cancellationToken);
+                        (previousSeal, taskHash) = await RecordTestsBypassedAsync(rootPath, runId, taskId,
+                            taskDirectory, stage, ledger, seals, statusEntries, manifest, previousSeal,
+                            taskHash, sessionCostUsd, unknownCostStageCount, stopwatch.Elapsed, cancellationToken);
                         continue;
                     }
 
@@ -278,9 +277,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
                 else if (stage.Number == 12)
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
-                        stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, skipStatusAndPublish: true);
+                        stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, stageToken, testDurationSeconds, skipStatusAndPublish: true);
             }
-            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, input.Markdown, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, cancellationToken);
+            // Fresh token like stage 12: a torn commit leaves neither state.
+            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, input.Markdown, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, CancellationToken.None);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return await WindDownCancelledRunAsync(rootPath, runId, taskId, taskDirectory, statusEntries);
         }
         catch (Exception ex)
         {

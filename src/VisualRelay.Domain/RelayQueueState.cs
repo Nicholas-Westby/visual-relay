@@ -9,5 +9,8 @@ public enum RelayQueueState
     Paused,
     ReviewNeeded,
     Completed,
-    Failed
+    Failed,
+
+    /// <summary>An operator cancelled the drain; it stopped without halting.</summary>
+    Cancelled
 }

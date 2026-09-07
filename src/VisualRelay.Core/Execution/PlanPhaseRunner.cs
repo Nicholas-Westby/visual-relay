@@ -103,6 +103,11 @@ public static class PlanPhaseRunner
             lock (results)
                 results.Add((taskId, outcome));
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The drain was cancelled: this task never reached a verdict, so it
+            // records none and stays pending for the next drain.
+        }
         catch (Exception ex)
         {
             // Per-task exception handling: a single planning task that throws
@@ -162,7 +167,10 @@ public static class PlanPhaseRunner
 
             // Copy artifacts back regardless of outcome — even flagged tasks
             // need their NEEDS-REVIEW marker and partial status in the main repo.
-            PlanningWorktree.CopyArtifactsBack(mainRootPath, worktreePath, taskId);
+            // A cancelled planning run is the exception: it reached no verdict, so
+            // copying its wind-down back would mark a task the operator only stopped.
+            if (!ct.IsCancellationRequested)
+                PlanningWorktree.CopyArtifactsBack(mainRootPath, worktreePath, taskId);
 
             DrainSummaryLog.Write(mainRootPath, runId, taskId, "plan",
                 outcome.Status == RelayTaskOutcomeStatus.Flagged
@@ -173,8 +181,9 @@ public static class PlanPhaseRunner
         }
         finally
         {
+            // Fresh token: a cancelled drain must still take its worktrees with it.
             if (worktreePath is not null)
-                await PlanningWorktree.RemoveAsync(mainRootPath, worktreePath, gitInvoker, ct);
+                await PlanningWorktree.RemoveAsync(mainRootPath, worktreePath, gitInvoker, CancellationToken.None);
         }
     }
 }

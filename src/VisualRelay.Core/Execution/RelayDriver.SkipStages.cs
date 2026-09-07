@@ -93,6 +93,27 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
+    /// Records Author-tests (5) as skipped for a task whose configuration bypasses
+    /// automated testing, so the ledger and the stage seal both say so rather than
+    /// leaving a silent gap in the run.
+    /// </summary>
+    private async Task<(string PreviousSeal, string TaskHash)> RecordTestsBypassedAsync(
+        string rootPath, string runId, string taskId, string taskDirectory,
+        RelayStageDefinition stage, StringBuilder ledger, List<string> seals,
+        List<StageStatusEntry> statusEntries, IReadOnlyList<string> manifest,
+        string previousSeal, string taskHash, double sessionCostUsd,
+        int unknownCostStageCount, TimeSpan elapsed, CancellationToken cancellationToken)
+    {
+        MarkStatusSkipped(statusEntries, stage);
+        ledger.AppendLine("> **Skipped**: automated testing bypassed for this task.");
+        ledger.AppendLine();
+        return await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage,
+            "_Skipped: automated testing bypassed for this task._",
+            "green", null, elapsed, ledger, seals, statusEntries, manifest,
+            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+    }
+
+    /// <summary>
     /// Records Verify (10) green, then skips Fix-verify (11) — nothing to fix —
     /// through <see cref="RecordStageAsync"/> so stage 11's seal and Skipped status
     /// settle and resume treats it as complete. Symmetric to the Fix (9) skip on a

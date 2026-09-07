@@ -131,6 +131,14 @@ public sealed partial class RelayQueueController
                                 RootPath, needsPlan, configResult.Config, _planTestRunner, _gitInvoker ?? new GitInvoker(), drainCts.Token,
                                 _planEventSinkFactory, _environmentAccessor);
 
+                            // Cancelled planning reached no verdict and copied nothing
+                            // back, so every task stays pending, unmarked and unqueued.
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                State = RelayQueueState.Cancelled;
+                                return results;
+                            }
+
                             foreach (var (taskId, outcome) in planResults)
                             {
                                 if (outcome.Status is RelayTaskOutcomeStatus.Flagged
@@ -193,6 +201,14 @@ public sealed partial class RelayQueueController
                         return results;
                     }
 
+                    // A cancelled drain starts nothing new; the rest of the queue
+                    // stays pending exactly as the operator left it.
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        State = RelayQueueState.Cancelled;
+                        return results;
+                    }
+
                     var task = queue[0];
                     queue.RemoveAt(0);
                     seenIds.Add(task.Id);
@@ -203,7 +219,12 @@ public sealed partial class RelayQueueController
                     RelayTaskOutcome outcome;
                     try { outcome = await _runner.RunTaskAsync(RootPath, task.Id, cancellationToken); }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                    { State = RelayQueueState.Failed; return results; }
+                    {
+                        // A runner that throws the cancel instead of winding down itself
+                        // still leaves a task needing review, like the driver's own path.
+                        outcome = new RelayTaskOutcome(task.Id, RelayTaskOutcomeStatus.Flagged,
+                            null, null, RelayDriver.CancelledReason);
+                    }
                     catch (Exception ex)
                     {
                         outcome = new RelayTaskOutcome(task.Id, RelayTaskOutcomeStatus.Flagged,
@@ -227,9 +248,11 @@ public sealed partial class RelayQueueController
 
                     if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                     {
+                        // Tidying up runs on a fresh token: after a cancel the drain's own
+                        // token is spent, and a half-done reset is worse than none.
                         var tasksDir = configResult?.Config?.TasksDir
-                            ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config.TasksDir;
-                        await ResetAndLogAsync(outcome.TaskId, tasksDir, drainRunId, "execute", cancellationToken);
+                            ?? (await RelayConfigLoader.TryLoadAsync(RootPath, CancellationToken.None)).Config.TasksDir;
+                        await ResetAndLogAsync(outcome.TaskId, tasksDir, drainRunId, "execute", CancellationToken.None);
                         try { await WriteNeedsReviewMarkerAsync(outcome.TaskId, outcome.Reason ?? "Needs review"); }
                         catch { DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "exception", "WriteNeedsReviewMarker failed"); }
                         Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });
@@ -245,6 +268,14 @@ public sealed partial class RelayQueueController
                     if (TryRestartBetweenTasks(mode, outcome, task.Id, drainRunId,
                             queue.Count))
                         return results;
+
+                    // A cancel is an operator's decision, not a run of faults: the drain
+                    // stops here without consulting — or tripping — the circuit breaker.
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        State = RelayQueueState.Cancelled;
+                        return results;
+                    }
 
                     if (circuitBreaker.ShouldHalt(RootPath, outcome))
                     {
