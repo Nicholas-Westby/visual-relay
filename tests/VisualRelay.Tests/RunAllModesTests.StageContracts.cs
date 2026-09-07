@@ -1,3 +1,4 @@
+using VisualRelay.Core.Agent;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Queue;
 
@@ -84,6 +85,24 @@ public sealed partial class RunAllModesTests
         var commit = RelayStages.All.Single(s => s.Number == 12);
         // Stage 12 (Commit) is a driver stage — no LLM output contract.
         Assert.Equal(string.Empty, commit.OutputContract);
+    }
+
+    [Fact]
+    public void ResearchContract_HasOptionalConventionsKey()
+    {
+        var research = RelayStages.All.Single(s => s.Number == 2);
+        Assert.Contains("\"conventions\"?", research.OutputContract, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResearchContract_AnswerWithoutConventions_StillParses()
+    {
+        var research = RelayStages.All.Single(s => s.Number == 2);
+
+        var result = StageContractReader.Read(
+            """{"findings":"f","constraints":[]}""", research.OutputContract);
+
+        Assert.True(result.Succeeded, result.Error);
     }
 
     // ── Tier invariants ──────────────────────────────────────────────────

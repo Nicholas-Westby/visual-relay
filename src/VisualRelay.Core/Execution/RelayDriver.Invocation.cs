@@ -39,6 +39,13 @@ public sealed partial class RelayDriver
         var fullSuiteIsTargeted = stage.Number != 11
             && verifyCommand is not null
             && string.Equals(verifyCommand, config.TestCommand, StringComparison.Ordinal);
+        // Only Research (2) is told to read the repo's own instruction files — every
+        // other stage keeps the StageInvocation default (null/empty) and BuildPrompt
+        // omits the heading. rootPath here is already the right root for the check: the
+        // planning worktree during stages 1-4, the repo root otherwise.
+        var repositoryInstructionFiles = stage.Number == 2
+            ? RepositoryInstructionFiles.Find(rootPath)
+            : null;
         return new StageInvocation(
             stage,
             stage.Tier,
@@ -59,7 +66,8 @@ public sealed partial class RelayDriver
             AbsoluteCeilingMs: ceilingMs,
             VerifyOutputPath: verifyOutputPath,
             TasksDir: config.TasksDir,
-            TestCommandIsFullSuite: fullSuiteIsTargeted);
+            TestCommandIsFullSuite: fullSuiteIsTargeted,
+            RepositoryInstructionFiles: repositoryInstructionFiles);
     }
 
     /// <summary>

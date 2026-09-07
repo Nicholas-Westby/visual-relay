@@ -66,6 +66,18 @@ public static partial class SandboxedStage
             // Right after "Working directory:" so every stage sees it before the task input.
             parts.Insert(3, $"Protected paths (queue bookkeeping — never part of this task's diff): {invocation.TasksDir}/, .relay/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.");
         }
+        if (invocation.RepositoryInstructionFiles is { Count: > 0 } instructionFiles)
+        {
+            // Only Research (stage 2) ever carries files here, so only its prompt gets
+            // this section — every other stage's list is null/empty and the heading is skipped.
+            var bullets = string.Join('\n', instructionFiles.Select(f => $"- {f}"));
+            parts.AddRange(["", "## Repository instructions",
+                "This repository ships instruction files for its contributors and coding agents. Read each "
+                + "one before investigating anything else, extract every convention that applies to this task "
+                + "(style, testing, commit and file-layout rules, forbidden practices), and record them in the "
+                + "`conventions` list of your answer so later stages follow them.",
+                bullets]);
+        }
         if (!string.IsNullOrWhiteSpace(invocation.TaskContext))
         {
             parts.AddRange(["", "## Task context", invocation.TaskContext]);

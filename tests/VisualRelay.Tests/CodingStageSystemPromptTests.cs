@@ -100,6 +100,17 @@ public sealed class CodingStageSystemPromptTests
     }
 
     [Fact]
+    public void Research_SystemPrompt_ContainsFindingsAndConventions()
+    {
+        // "findings" is asserted elsewhere too (StageSystemPrompt_ContainsExpectedKeywords
+        // and RunAllModesTests.StageContracts.cs); "conventions" is new — Research must
+        // point the agent at the conventions list its own contract now supports.
+        var stage = RelayStages.All.Single(s => s.Name == "Research");
+        Assert.Contains("findings", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("conventions", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Diagnose_SystemPrompt_ProhibitsEditingAndFalseClaims()
     {
         var stage = RelayStages.All.Single(s => s.Name == "Diagnose");

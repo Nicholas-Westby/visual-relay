@@ -40,4 +40,10 @@ public sealed record StageInvocation(
     // one could be built (no {files} form configured, or no runnable test file in the
     // manifest). BuildPrompt then says so in ## Verify command, so a stage told to run
     // "ONLY the targeted test command" does not read the full suite as a contradiction.
-    bool TestCommandIsFullSuite = false);
+    bool TestCommandIsFullSuite = false,
+    // Repo-relative paths of the well-known contributor/agent instruction files (and
+    // the .cursor/rules directory) BuildInvocation found under the stage's root.
+    // Only Research (stage 2) ever gets a non-empty list; every other stage keeps the
+    // default null. BuildPrompt renders a "Repository instructions" section naming
+    // them right after the Manifest block, and omits it entirely when null or empty.
+    IReadOnlyList<string>? RepositoryInstructionFiles = null);

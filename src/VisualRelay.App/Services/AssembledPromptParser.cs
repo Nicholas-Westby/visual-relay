@@ -15,6 +15,7 @@ public static partial class AssembledPromptParser
     {
         "Task input",
         "Manifest",
+        "Repository instructions",
         "Task context",
         "Log sources",
         "Prior stages",

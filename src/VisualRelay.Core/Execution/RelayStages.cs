@@ -7,7 +7,7 @@ public static class RelayStages
     public static IReadOnlyList<RelayStageDefinition> All { get; } =
     [
         Stage(1, "Ideate", "cheap", "none", "git,ls,cat", """{ "summary": string, "options": string[] }"""),
-        Stage(2, "Research", "cheap", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "findings": string, "constraints": string[] }"""),
+        Stage(2, "Research", "cheap", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "findings": string, "constraints": string[], "conventions"?: string[] }"""),
         Stage(3, "Diagnose", "balanced", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "evidence": string, "excerpts": string[], "repro": string }"""),
         Stage(4, "Plan", "balanced", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "plan": string, "manifest": string[] }"""),
         // Stage 5 writes are "all" because the nono sandbox has no partial-write
@@ -49,7 +49,12 @@ public static class RelayStages
     private static string SystemPromptFor(string name) => name switch
     {
         "Ideate" => "Frame the task and list 2-3 solution options. Do not edit files.",
-        "Research" => "Investigate the codebase; record findings and constraints. Do not edit files.",
+        "Research" =>
+            "Investigate the repository's context: how it is built, tested and organised, and " +
+            "which conventions contributors must follow. Record findings and constraints. " +
+            "When your input lists repository instruction files, read them first and record " +
+            "every applicable convention in `conventions`. Leave explaining the defect itself " +
+            "to Diagnose. Do not edit files.",
         "Diagnose" => "Read application logs and code; extract evidence that explains the issue. Do not edit files — do not implement or prototype the change. Any code you write in this stage is discarded and never reaches later stages, but your written claims DO carry forward: describe the needed change in prose, and never state that work is already implemented.",
         "Plan" => "Write a concrete plan and exact impacted code and test files. The manifest must list only code files — never files under the tasks directory (e.g. llm-tasks/). For files that already exist, use their exact repo-relative path. For files that do not yet exist and will be created, prefix the path with '+' (e.g. '+src/NewFeature.cs'). Do not edit files.",
         "Author-tests" =>

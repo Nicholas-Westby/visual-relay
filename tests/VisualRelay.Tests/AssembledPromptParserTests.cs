@@ -193,4 +193,20 @@ public sealed class AssembledPromptParserTests
         Assert.Equal("", Assert.Single(result, s => s.Title == "Task input").Body);
         Assert.Equal("has content", Assert.Single(result, s => s.Title == "Manifest").Body);
     }
+
+    [Fact]
+    public void Parse_RepositoryInstructionsHeading_SplitsIntoItsOwnSection()
+    {
+        var prompt = string.Join('\n',
+            "## Manifest", "src/app.cs",
+            "", "## Repository instructions", "Read them first.", "- AGENTS.md",
+            "", "## Task context", "More context.");
+
+        var result = AssembledPromptParser.Parse(prompt);
+
+        Assert.Equal("Manifest", result[0].Title);
+        Assert.Equal("Read them first.\n- AGENTS.md",
+            Assert.Single(result, s => s.Title == "Repository instructions").Body);
+        Assert.Equal("Task context", result[2].Title);
+    }
 }
