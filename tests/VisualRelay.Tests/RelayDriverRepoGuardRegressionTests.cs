@@ -88,9 +88,10 @@ public sealed class RelayDriverRepoGuardRegressionTests
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "new-oversize");
-        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
-        Assert.Contains("touched.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
+        // Guard red with green tests never reaches Fix-verify; the flag names the file.
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 11);
+        Assert.Contains("touched.cs", outcome.Reason!, StringComparison.Ordinal);
     }
 
     /// <summary>(g) Mixed: pre-existing excluded, new surfaces.</summary>
@@ -128,10 +129,9 @@ public sealed class RelayDriverRepoGuardRegressionTests
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "mixed");
-        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
-        Assert.Contains("brand-new.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
-        Assert.DoesNotContain("big.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.Contains("brand-new.cs", outcome.Reason!, StringComparison.Ordinal);
+        Assert.DoesNotContain("big.cs", outcome.Reason!, StringComparison.Ordinal);
     }
 
     /// <summary>(h) Numbered sibling pre-existing, new numbered sibling still blocks.</summary>
@@ -170,9 +170,8 @@ public sealed class RelayDriverRepoGuardRegressionTests
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "numbered-sibling");
-        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
-        Assert.Contains("Page2.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
-        Assert.DoesNotContain("Page1.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.Contains("Page2.cs", outcome.Reason!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Page1.cs", outcome.Reason!, StringComparison.Ordinal);
     }
 }

@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
+using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
 
@@ -9,6 +10,11 @@ public partial class MainWindowViewModel
     // Injectable factory for Create config validation. Null → DirectExecTestRunner
     // with CreateConfigValidationTimeout. Tests inject a fake without real processes.
     public Func<TimeSpan, ITestRunner>? InitValidationRunnerFactory { get; set; }
+
+    // Injectable runner for the baseline guard check in EnsureRunnableAsync. Null →
+    // the same sandboxed runner the pipeline uses. Tests inject a fake so the gate is
+    // exercised without spawning a real build.
+    public Func<RelayConfig, ITestRunner>? BaselineGuardRunnerFactory { get; set; }
 
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 

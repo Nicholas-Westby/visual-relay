@@ -185,6 +185,16 @@ public sealed partial class RelayDriver
             lastAttemptSetupChecks = attemptSetupChecks;
             var (attemptVerifyOutputPath, _, attemptTreeHash, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
 
+            // The environment broke under us mid-loop: the tests pass and only a setup
+            // command is red, so no further attempt can change the verdict.
+            if (check == "red" && IsEnvironmentSetupFailure(attemptSetupChecks))
+            {
+                var envOutcome = await FlagEnvironmentFailureAsync(rootPath, runId, taskId, taskDirectory,
+                    stage.Number, attemptSetupChecks, attemptFullOutput, statusEntries, cancellationToken,
+                    cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
+                return (envOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+            }
+
             // Record verify failure signature for enriched flag reasons.
             if (check == "red" && !string.IsNullOrWhiteSpace(verifyReason))
             {

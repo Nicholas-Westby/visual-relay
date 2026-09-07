@@ -67,9 +67,9 @@ public sealed class RelayDriverFormatBeforeVerifyTests
     }
 
     /// <summary>
-    /// (a.2) Guard returns red on the first call (stage 10), then green on the
-    /// fix-verify re-verify (stage 11).  The formatter fires before every guard
-    /// call — twice total.  Stage 11 commits.
+    /// (a.2) The tests are red at stage 10 (so Fix-verify runs) and the guard is red
+    /// alongside them, then green on the re-verify. The formatter fires before every
+    /// guard call — twice total. Stage 11 commits.
     /// </summary>
     [Fact]
     public async Task FormatCmd_Set_RunsBeforeGuardInFixVerifyIteration()
@@ -106,9 +106,10 @@ public sealed class RelayDriverFormatBeforeVerifyTests
             ]),
             ("dotnet test",
             [
-                new TestRunResult(1, "red"),
-                new TestRunResult(0, "all green"),
-                new TestRunResult(0, "all green")
+                new TestRunResult(1, "red"),           // stage 5 author gate
+                new TestRunResult(1, "Failed TestX"),  // stage 10 gate
+                new TestRunResult(1, "Failed TestX"),  // stage 10 flaky retry
+                new TestRunResult(0, "all green")      // fix-verify re-verify
             ]));
 
         var driver = new RelayDriver(

@@ -222,6 +222,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         if (check != "green")
                         {
                             var failingTestOutput = BuildFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput);
+                            var stage10Checks = SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config);
+                            // A setup command that failed while the tests passed is the machine's
+                            // fault; Fix-verify would escalate its whole tier ladder over it.
+                            if (IsEnvironmentSetupFailure(stage10Checks))
+                                return await FlagEnvironmentFailureAsync(rootPath, runId, taskId, taskDirectory, 10,
+                                    stage10Checks, failingTestOutput, statusEntries, cancellationToken,
+                                    cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                             // Skip baseline diff when bootstrap/guard/new-guard-probe is the source.
                             var newFailures = (config.BaselineVerify && !stage10BootstrapFailed && !stage10GuardFailed && stage10NewGuardOutput is null)
                                 ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, stage10TestResult, _dependencies.GitInvoker, cancellationToken)
@@ -231,8 +238,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 if (!config.EnableFixVerify)
                                 {
                                     var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
-                                    var prefix = SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config).ToSummaryLines() + "\n\n";
-                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, prefix + failingTestOutput, statusEntries, cancellationToken,
+                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, stage10Checks.ToSummaryLines() + "\n\n" + failingTestOutput, statusEntries, cancellationToken,
                                         cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                                 }
 
