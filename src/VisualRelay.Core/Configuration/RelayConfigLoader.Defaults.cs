@@ -47,7 +47,6 @@ public static partial class RelayConfigLoader
             InactivityTimeoutMs: 600_000,
             OutputSilenceTimeoutMsByTier: null,
             OutputSilenceTimeoutMs: 0,
-            CommitProofArtifacts: true,
             BoostTurnsTaskIds: [],
             SkipTestsTaskIds: [],
             DownshiftOnEarlyImplementation: true,

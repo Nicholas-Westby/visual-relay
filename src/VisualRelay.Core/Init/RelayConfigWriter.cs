@@ -93,23 +93,6 @@ public static class RelayConfigWriter
     }
 
     /// <summary>
-    /// Read-modify-write upsert of the <c>commitProofArtifacts</c> key into
-    /// <c>.relay/config.json</c>. Preserves all existing keys (testCmd,
-    /// tierProfiles, baselineVerify, etc.) so toggling the checkbox never
-    /// clobbers other settings.
-    /// </summary>
-    public static void UpsertCommitProofArtifacts(string rootPath, bool commitProofArtifacts)
-    {
-        var relayDir = Path.Combine(rootPath, ".relay");
-        Directory.CreateDirectory(relayDir);
-        var json = ReadOrCreateConfig(relayDir, out var path);
-
-        json["commitProofArtifacts"] = commitProofArtifacts;
-
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-    }
-
-    /// <summary>
     /// Read-modify-write upsert of the <c>subagentTimeoutMs</c> key into
     /// <c>.relay/config.json</c>. Preserves all existing keys.
     /// </summary>

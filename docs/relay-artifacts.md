@@ -5,20 +5,21 @@ target project's `.relay/` directory, plus the `logSources` contract. Use it to 
 find in a target's `.relay/<task>/` folder.
 
 "Written-by / read-by" tells you who owns the file. "Committed?" tells you
-whether Visual Relay stages it into the task's proof commit (committed files are
-part of the provenance record; everything else is local working state and is
-gitignored in generated samples).
+whether Visual Relay stages the file into the task's commit. Nothing under
+`.relay/` is: it is Visual Relay's own working state, the run keeps writing it to
+disk, and every staging call the commit stage makes carries a
+`:(exclude).relay` pathspec so a task's diff shows only the repo's own change.
 
 ## Per-target and per-task files
 
 | Path | What it is | Written by / read by | Committed? |
 | --- | --- | --- | --- |
-| `.relay/config.json` | Relay config for the target: `testCmd`, `testFileCmd`, `logSources`, tier profiles, flags. | Read by Visual Relay. | By the author (not staged by Visual Relay) |
-| `.relay/<task>/manifest.txt` | Newline-delimited list of the in-scope files for the task (proof of scope). Write-only proof; not read back. Renamed from the bare `manifest` so the filename explains itself. | Written by Visual Relay. | Yes |
-| `.relay/<task>/ledger.md` | Running record of each stage (one section per stage). | Written by Visual Relay. | Yes |
-| `.relay/<task>/<task>.seals` | The provenance hash chain. The `seal` term is stamped into every task commit as the `Relay-Seal:` trailer. | Written by Visual Relay. | Yes |
-| `.relay/<task>/stage{n}-attempt{m}.input.json` | Per-attempt stage input (system prompt, task input, metadata). | Written by Visual Relay; read by Visual Relay (UI). | Yes (force-added, final attempt only) |
-| `.relay/<task>/stage{n}-attempt{m}.report.json` | Per-attempt stage report (outcome, measured usage, served model, `error_message`). | Written by Visual Relay; read by Visual Relay (cost/outcome). | Yes (force-added, final attempt only) |
+| `.relay/config.json` | Relay config for the target: `testCmd`, `testFileCmd`, `logSources`, tier profiles, flags. | Read by Visual Relay. | No (only if the author commits it by hand) |
+| `.relay/<task>/manifest.txt` | Newline-delimited list of the in-scope files for the task (proof of scope). Write-only proof; not read back. Renamed from the bare `manifest` so the filename explains itself. | Written by Visual Relay. | No |
+| `.relay/<task>/ledger.md` | Running record of each stage (one section per stage). | Written by Visual Relay. | No |
+| `.relay/<task>/<task>.seals` | The provenance hash chain. The `seal` term is stamped into every task commit as the `Relay-Seal:` trailer. | Written by Visual Relay. | No |
+| `.relay/<task>/stage{n}-attempt{m}.input.json` | Per-attempt stage input (system prompt, task input, metadata). | Written by Visual Relay; read by Visual Relay (UI). | No |
+| `.relay/<task>/stage{n}-attempt{m}.report.json` | Per-attempt stage report (outcome, measured usage, served model, `error_message`). | Written by Visual Relay; read by Visual Relay (cost/outcome). | No |
 | `.relay/<task>/stage{n}-attempt{m}/<uuid>.jsonl` | Trace session for one attempt. The UUID filename is kept from the format the archived corpus uses. | Written by Visual Relay; read by Visual Relay's trace pane. | No (gitignored) |
 | `.relay/<task>/run.log` | Visual Relay's own durable, human-readable run log (one line per event). Distinct from the target's `logs/app.log`. | Written by Visual Relay. | No (gitignored) |
 | `.relay/<task>/NEEDS-REVIEW` | Control marker: a runner crash or gate failure flagged this task for review so drains do not loop on it. | Written by Visual Relay. | No |

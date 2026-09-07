@@ -25,9 +25,9 @@ public sealed class RelayGitignoreWriterTests
 
         Assert.True(written);
         var content = File.ReadAllText(Path.Combine(repo.Root, ".relay", ".gitignore"));
-        // Blanket-ignore diagnostics while keeping the file itself and the
-        // repo config trackable; the canonical record relies on the commit
-        // stage's force-add, not on negations here.
+        // Blanket-ignore everything Visual Relay writes while leaving the file
+        // itself and the repo config trackable, so an author who wants the
+        // config in git can add it by hand.
         Assert.Contains("\n*\n", content);
         Assert.Contains("!.gitignore", content);
         Assert.Contains("!config.json", content);
@@ -71,13 +71,12 @@ public sealed class RelayGitignoreWriterTests
     }
 
     [Fact]
-    public void Content_Comment_MentionsPerStageArtifacts()
+    public void Content_Comment_SaysTheCommitStageNeverStagesRelay()
     {
-        // The canonical-record comment embedded in the generated .gitignore
-        // must describe the full committed set, including per-stage
-        // .input.json and .report.json artifacts that are force-added
-        // (final attempt only) by the commit stage.
-        Assert.Contains(".input.json", RelayGitignoreWriter.Content);
-        Assert.Contains(".report.json", RelayGitignoreWriter.Content);
+        // The comment embedded in the generated .gitignore must not promise a
+        // force-add: nothing under .relay/ reaches a commit any more, and a
+        // reader who tracks config.json by hand should know why they can.
+        Assert.Contains("never stages it", RelayGitignoreWriter.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("force-added", RelayGitignoreWriter.Content, StringComparison.Ordinal);
     }
 }

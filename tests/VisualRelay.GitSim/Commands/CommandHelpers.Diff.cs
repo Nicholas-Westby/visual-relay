@@ -75,18 +75,40 @@ internal static partial class GitSimCommands
         IReadOnlyList<(DiffStatus Status, string Path)> changes, IReadOnlyList<string> pathspecs) =>
         pathspecs.Count == 0 ? changes : changes.Where(c => MatchesAny(c.Path, pathspecs)).ToList();
 
+    /// <summary>The magic pathspec prefix that subtracts a path from the match set.</summary>
+    private const string ExcludePrefix = ":(exclude)";
+
+    /// <summary>
+    /// Git pathspec matching over the subset the suite uses: literal prefixes plus
+    /// the <c>:(exclude)</c> magic prefix. A path matches when it is under some
+    /// positive spec — or under no spec at all, since an exclude-only list means
+    /// "everything but these" — and under no exclusion.
+    /// </summary>
     public static bool MatchesAny(string path, IReadOnlyList<string> pathspecs)
     {
         if (pathspecs.Count == 0)
             return true; // no pathspec == match every path (git convention)
+
+        var included = false;
+        var anyPositive = false;
         foreach (var spec in pathspecs)
         {
-            var s = spec.Replace('\\', '/').TrimEnd('/');
-            if (s.Length == 0 || s == "." || path == s || path.StartsWith(s + "/", StringComparison.Ordinal))
-                return true;
+            var excluded = spec.StartsWith(ExcludePrefix, StringComparison.Ordinal);
+            var bare = excluded ? spec[ExcludePrefix.Length..] : spec;
+            var s = bare.Replace('\\', '/').TrimEnd('/');
+            var hit = s.Length == 0 || s == "." || path == s || path.StartsWith(s + "/", StringComparison.Ordinal);
+            if (excluded)
+            {
+                if (hit)
+                    return false;
+                continue;
+            }
+
+            anyPositive = true;
+            included |= hit;
         }
 
-        return false;
+        return included || !anyPositive;
     }
 
     /// <summary>Joins paths with NUL (git <c>-z</c>) or newline, with a trailing separator on non-empty NUL output.</summary>

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using VisualRelay.Core.Tasks;
-using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -171,42 +170,10 @@ public sealed partial class RelayDriver
 
             var retirement = TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task);
 
-            var proofFiles = new List<string>();
-            if (config.CommitProofArtifacts)
-            {
-                proofFiles.AddRange(new[]
-                {
-                    Path.Combine(".relay", taskId, "ledger.md"),
-                    Path.Combine(".relay", taskId, $"{taskId}.seals"),
-                    Path.Combine(".relay", taskId, "manifest.txt"),
-                    Path.Combine(".relay", taskId, "status.json"),
-                });
-
-                // ── Per-stage .input.json and .report.json artifacts ──
-                if (Directory.Exists(taskDirectory))
-                {
-                    var inputFiles = Directory.EnumerateFiles(taskDirectory, "stage*-attempt*.input.json");
-                    var reportFiles = Directory.EnumerateFiles(taskDirectory, "stage*-attempt*.report.json");
-                    var allArtifacts = inputFiles.Concat(reportFiles);
-
-                    // Group by stage number and pick all files from the highest attempt.
-                    var latestByStage = allArtifacts
-                        .GroupBy(f => RelayAttempt.StageNumber(Path.GetFileName(f)) ?? 0)
-                        .Where(g => g.Key > 0)
-                        .SelectMany(g =>
-                        {
-                            var maxAttempt = g.Max(f => RelayAttempt.AttemptNumber(Path.GetFileName(f)));
-                            return g.Where(f => RelayAttempt.AttemptNumber(Path.GetFileName(f)) == maxAttempt);
-                        });
-
-                    foreach (var fullPath in latestByStage)
-                    {
-                        proofFiles.Add(Path.Combine(".relay", taskId, Path.GetFileName(fullPath)));
-                    }
-                }
-            }
-            if (retirement?.Additions is { Count: > 0 } additions)
-                proofFiles.AddRange(additions);
+            // The only paths staged beyond the run's own changes: the archived task
+            // file the retirement move just wrote. Nothing under .relay/ is ever
+            // staged — the bookkeeping stays on disk (see GitCommitter).
+            var retirementFiles = retirement?.Additions ?? [];
 
             var (chain, advisories) = BuildCommitChain(commitMessages, taskId);
             foreach (var advisory in advisories)
@@ -228,7 +195,7 @@ public sealed partial class RelayDriver
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
             doneWritten = true;
 
-            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, _dependencies.GitInvoker, cancellationToken, runBaseSha, timeProvider: _dependencies.TimeProvider);
+            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, retirementFiles, activeLockNonce, preRunUntracked, config.TasksDir, _dependencies.GitInvoker, cancellationToken, runBaseSha, timeProvider: _dependencies.TimeProvider);
             if (!commit.Success)
             {
                 retirement?.Rollback?.Invoke();

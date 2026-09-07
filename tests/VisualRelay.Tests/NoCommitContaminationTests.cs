@@ -144,26 +144,23 @@ public sealed partial class NoCommitContaminationTests
                     var head = sim.Head(repo.Root)!;
                     Assert.Equal(2, sim.CommitsBetween(repo.Root, seedHash, head).Count);
 
-                    // Task B's commit (HEAD) must contain only task-b files.
+                    // Task B's commit (HEAD) must contain only task-b files, and no
+                    // task's bookkeeping: .relay/ never enters a commit at all.
                     var headFiles = sim.FilesChangedInCommit(repo.Root, head);
                     Assert.Contains("src/b.cs", headFiles);
                     Assert.Contains("tests/b.tests.cs", headFiles);
-                    Assert.Contains(".relay/task-b/manifest.txt", headFiles);
-                    Assert.Contains(".relay/task-b/ledger.md", headFiles);
                     Assert.DoesNotContain("src/a.cs", headFiles);
                     Assert.DoesNotContain("tests/a.tests.cs", headFiles);
-                    Assert.DoesNotContain(headFiles, p => p.StartsWith(".relay/task-a/", StringComparison.Ordinal));
+                    Assert.DoesNotContain(headFiles, p => p.StartsWith(".relay/", StringComparison.Ordinal));
 
                     // Task A's commit (HEAD~1) must contain only task-a files.
                     var parent = sim.CommitInfo(repo.Root, head)!.Parents[0];
                     var parentFiles = sim.FilesChangedInCommit(repo.Root, parent);
                     Assert.Contains("src/a.cs", parentFiles);
                     Assert.Contains("tests/a.tests.cs", parentFiles);
-                    Assert.Contains(".relay/task-a/manifest.txt", parentFiles);
-                    Assert.Contains(".relay/task-a/ledger.md", parentFiles);
                     Assert.DoesNotContain("src/b.cs", parentFiles);
                     Assert.DoesNotContain("tests/b.tests.cs", parentFiles);
-                    Assert.DoesNotContain(parentFiles, p => p.StartsWith(".relay/task-b/", StringComparison.Ordinal));
+                    Assert.DoesNotContain(parentFiles, p => p.StartsWith(".relay/", StringComparison.Ordinal));
 
                     // Shared file must NOT appear in either commit (it was not modified).
                     Assert.DoesNotContain("src/shared.cs", headFiles);

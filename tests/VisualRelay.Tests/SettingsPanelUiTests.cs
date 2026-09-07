@@ -6,8 +6,6 @@ using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
 using VisualRelay.App.Views.Controls.Buttons;
-using VisualRelay.Core.Configuration;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -21,8 +19,8 @@ public sealed partial class SettingsPanelUiTests
     private void EnsureNoUserEnv() => SettingsTestHelpers.EnsureNoUserEnv(_env);
     private IDisposable SeedUserEnv(TestRepository repo, string content) =>
         SettingsTestHelpers.SeedUserEnv(_env, repo, content);
-    private static void WriteCommitConfig(TestRepository repo, bool? commitProofArtifacts) =>
-        SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts);
+    private static void WriteLoadableConfig(TestRepository repo) =>
+        SettingsTestHelpers.WriteLoadableConfig(repo);
 
     // Scoped-down construction: build the settings panel under test (a
     // SettingsWindow bound to the VM) without the whole MainWindow, the cog, or
@@ -44,7 +42,7 @@ public sealed partial class SettingsPanelUiTests
         // MainWindow boot (allowlisted in NoWholeAppBootGuardTests).
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
         repo.WriteTask("alpha", "# Alpha\n");
 
         var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
@@ -63,50 +61,11 @@ public sealed partial class SettingsPanelUiTests
     }
 
     [AvaloniaFact]
-    public async Task ToggleCommitProofArtifacts_WritesConfig()
-    {
-        EnsureNoUserEnv();
-        using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
-
-        var dialog = await OpenScopedSettingsAsync(repo);
-        var vm = (MainWindowViewModel)dialog.DataContext!;
-        Assert.True(vm.IsSettingsOpen);
-
-        var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-        var checkBox = panel.FindControl<CheckBox>("CommitProofCheckBox")!;
-        Assert.NotNull(checkBox);
-
-        // It should start checked (true).
-        Assert.True(checkBox.IsChecked);
-        Assert.True(vm.CommitProofArtifacts);
-
-        // Uncheck it.
-        checkBox.IsChecked = false;
-        Dispatcher.UIThread.RunJobs();
-        Assert.False(vm.CommitProofArtifacts);
-
-        // The config file should now have commitProofArtifacts: false.
-        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
-        Assert.False(result.Config.CommitProofArtifacts);
-
-        // Other keys must be preserved.
-        Assert.Equal("dotnet test", result.Config.TestCommand);
-        Assert.Empty(result.Config.LogSources);
-
-        dialog.Close();
-        Dispatcher.UIThread.RunJobs();
-    }
-
-    // ── Consolidated Settings panel tests ────────────────────────────────────
-
-    [AvaloniaFact]
     public async Task SettingsPanelContainsScrollViewerWithNoHorizontalScroll()
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
         var dialog = await OpenScopedSettingsAsync(repo);
@@ -128,11 +87,11 @@ public sealed partial class SettingsPanelUiTests
     }
 
     [AvaloniaFact]
-    public async Task SettingsPanelShowsBothCommitProofCheckboxAndProviderKeyRows()
+    public async Task SettingsPanelShowsProviderKeyRows()
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
         var dialog = await OpenScopedSettingsAsync(repo);
@@ -140,11 +99,6 @@ public sealed partial class SettingsPanelUiTests
         Assert.True(vm.IsSettingsOpen);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
-
-        // Commit proof checkbox must still be present.
-        var commitCheckBox = panel.FindControl<CheckBox>("CommitProofCheckBox");
-        Assert.NotNull(commitCheckBox);
-        Assert.True(commitCheckBox.IsChecked);
 
         // Provider key rows must be present — the named HF controls are the
         // canonical smoke test that the key rows were copied into SettingsPanel.
@@ -163,7 +117,7 @@ public sealed partial class SettingsPanelUiTests
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-from-env-file\nDEEPSEEK_API_KEY=sk-deepseek-999\n");
 
         // VM-only fact: no window at all. KeyStates start empty; OpenSettingsAsync
@@ -190,7 +144,7 @@ public sealed partial class SettingsPanelUiTests
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
 
         // Scoped to just the TopBar under test (hosted in a bare window so the
         // control renders) — the top-bar composition needs no MainWindow.
@@ -217,7 +171,7 @@ public sealed partial class SettingsPanelUiTests
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
         var dialog = await OpenScopedSettingsAsync(repo);

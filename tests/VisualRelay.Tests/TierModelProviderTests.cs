@@ -10,7 +10,7 @@ public sealed class TierModelProviderTests
     {
         var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() };
         using var repo = TestRepository.Create();
-        SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts: true);
+        SettingsTestHelpers.WriteLoadableConfig(repo);
         using var _ = SettingsTestHelpers.SeedUserEnv(env, repo, "HF_TOKEN=hf-abc\n");
         RelayConfigWriter.UpsertTierModelOverrides(
             repo.Root, new Dictionary<string, string> { ["frontier"] = "kimi-k2" });

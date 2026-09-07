@@ -7,10 +7,11 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// End-to-end git-commit behaviour of <see cref="RelayDriver"/> against a real
-/// seeded repo: a green task produces a genuine relay commit, an agent commit made
-/// mid-run is rejected by the hook, gitignored proof files and manifest-directory
-/// deletions still reach the commit, and commit-message selection falls back
-/// correctly (later candidate, legacy string, slug) when a candidate is unusable.
+/// seeded repo: a green task produces a genuine relay commit carrying no <c>.relay</c>
+/// bookkeeping, an agent commit made mid-run is rejected by the hook,
+/// manifest-directory deletions still reach the commit, and commit-message selection
+/// falls back correctly (later candidate, legacy string, slug) when a candidate is
+/// unusable.
 /// </summary>
 /// <param name="fixture">
 /// The assembly-wide seeded-pipeline fixture, registered in
@@ -37,23 +38,21 @@ public sealed class RelayDriverGitCommitTests(PipelineTestFixture fixture)
         Assert.Contains("fix(sample): ship status", message);
         Assert.Contains("Task: ship-status", message);
         Assert.Contains("Relay-Seal:", message);
-        var names = sim.FilesInCommit(clone.Root, sim.Head(clone.Root)!);
-        Assert.Contains(".relay/ship-status/manifest.txt", names);
-        Assert.Contains("src/status.cs", names);
-        Assert.DoesNotContain("src/ghost.cs", names);
+        var changed = sim.FilesChangedInCommit(clone.Root, sim.Head(clone.Root)!);
+        Assert.Contains("src/status.cs", changed);
+        Assert.DoesNotContain("src/ghost.cs", changed);
+        Assert.DoesNotContain(changed, p => p.StartsWith(".relay/", StringComparison.Ordinal));
         Assert.True(File.Exists(Path.Combine(clone.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
         Assert.False(File.Exists(Path.Combine(clone.Root, "llm-tasks", "ship-status.md")));
     }
 
     [Fact]
-    public async Task RunTaskAsync_WhenRelayDirIsGitignored_StillCommitsTheProofFiles()
+    public async Task RunTaskAsync_WhenRelayDirIsGitignored_CommitsTheCodeAndSkipsRelay()
     {
         // The self-hosting repo gitignores .relay/* (run scratch — report.json,
-        // run.log — is bulky), keeping only config.json. The commit's proof files
-        // (ledger/seals/manifest) live under .relay/<task>/ and so are ignored too,
-        // which made stage 12 die with "paths are ignored by .gitignore" — no task
-        // could ever commit. The committer must force the small proof files in so
-        // the Relay-Seal stays verifiable while bulky scratch stays ignored.
+        // run.log — is bulky), keeping only config.json. The run's own bookkeeping
+        // under .relay/<task>/ is never staged, so an ignored .relay can neither
+        // block the commit ("paths are ignored by .gitignore") nor enter it.
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
@@ -71,8 +70,8 @@ public sealed class RelayDriverGitCommitTests(PipelineTestFixture fixture)
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         var names = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
-        Assert.Contains(".relay/ship-status/manifest.txt", names);
         Assert.Contains("src/status.cs", names);
+        Assert.DoesNotContain(names, p => p.StartsWith(".relay/", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -115,7 +114,7 @@ public sealed class RelayDriverGitCommitTests(PipelineTestFixture fixture)
 
         var names = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains("src/status.cs", names);
-        Assert.Contains(".relay/ship-status/manifest.txt", names);
+        Assert.DoesNotContain(".relay/", names);
         Assert.Contains("Relay-Seal:", RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "log -1 --pretty=%B"));
     }
 

@@ -223,4 +223,39 @@ public sealed class RealGitIntegrationTests
         Assert.Equal("extra", Git(repo.Root, "show", "HEAD:src/extra.cs"));
         Assert.Equal(string.Empty, Git(repo.Root, "status", "--porcelain").Trim());
     }
+
+    // ── .relay exclusion end-to-end (real :(exclude) pathspec) ───────────────
+
+    [Fact]
+    public async Task GitCommitter_RealGit_ExcludesRelayFromTheSealedCommit()
+    {
+        if (!Ready()) return;
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        File.WriteAllText(Path.Combine(repo.Root, ".relay", "config.json"), "{\"testCmd\":\"old\"}");
+        SeedRepo(repo.Root);
+
+        // The run edits a tracked .relay/config.json, writes its own bookkeeping,
+        // and stage 4 even names one of those paths in the manifest.
+        File.WriteAllText(Path.Combine(repo.Root, ".relay", "config.json"), "{\"testCmd\":\"new\"}");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "implemented");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay", "my-task"));
+        File.WriteAllText(Path.Combine(repo.Root, ".relay", "my-task", "ledger.md"), "# ledger");
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123", ["feat: add widget"],
+            ["src/app.cs", ".relay/my-task/ledger.md"], [],
+            commitToken: null, preRunUntracked: null, tasksDir: null,
+            new GitInvoker(), CancellationToken.None, timeProvider: TimeProvider.System);
+
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
+        var committed = Git(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        Assert.Contains("src/app.cs", committed, StringComparison.Ordinal);
+        Assert.DoesNotContain(".relay/", committed, StringComparison.Ordinal);
+
+        // Both .relay files survive untouched: one still modified, one still untracked.
+        var status = Git(repo.Root, "status", "--porcelain");
+        Assert.Contains(" M .relay/config.json", status, StringComparison.Ordinal);
+        Assert.Contains("?? .relay/my-task/", status, StringComparison.Ordinal);
+    }
 }

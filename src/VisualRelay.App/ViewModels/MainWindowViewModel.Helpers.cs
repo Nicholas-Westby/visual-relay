@@ -146,7 +146,6 @@ public partial class MainWindowViewModel
         TestCommandIsPlaceholder = ProjectBootstrapper.IsPlaceholder(configResult.Config.TestCommand);
         if (configResult.Status == RelayConfigStatus.Loaded)
         {
-            CommitProofArtifacts = configResult.Config.CommitProofArtifacts;
             _isHydrating = true;
             StageTimeoutMinutes = Math.Clamp((int)Math.Round(configResult.Config.SubagentTimeoutMilliseconds / 60_000.0), 1, 720);
             TestTimeoutMinutes = Math.Clamp((int)Math.Round(configResult.Config.TestTimeoutMilliseconds / 60_000.0), 1, 720);

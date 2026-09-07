@@ -1,22 +1,20 @@
 namespace VisualRelay.Core.Init;
 
-// Writes .relay/.gitignore in the target repo so run diagnostics (LLM trace
-// dirs, attempt reports, event logs, per-run profile pins) never enter the
-// repo's history: they are short-lived working-tree forensics, ~40 MB per
-// ten-task drain, while the durable per-task record stays tiny. A blanket
-// "*" is safe because the canonical record (ledger.md, status.json,
-// manifest.txt, *.seals, and per-stage .input.json/.report.json — final
-// attempt only) is force-added by the commit stage (GitCommitter proof
-// files use `git add -f`), which gitignore rules do not block.
+// Writes .relay/.gitignore in the target repo so a run's bookkeeping never
+// enters the repo's history: LLM trace dirs, attempt reports, event logs and
+// per-run profile pins are short-lived working-tree forensics (~40 MB per
+// ten-task drain), and even the durable per-task record is Visual Relay's
+// working state, not the repo's. The commit stage stages nothing under
+// .relay/ either way; the negations exist only so an author who WANTS the
+// config in git can add it by hand.
 public static class RelayGitignoreWriter
 {
     public static readonly string Content = string.Join('\n',
-        "# Maintained by Visual Relay. Run diagnostics (LLM traces, attempt",
-        "# reports, event logs, profile pins) are short-lived working-tree",
-        "# forensics and stay out of git. The per-task canonical record",
-        "# (ledger.md, status.json, manifest.txt, *.seals, and per-stage",
-        "# .input.json/.report.json — final attempt only) is force-added",
-        "# by the run's commit stage, which these rules do not block.",
+        "# Maintained by Visual Relay. Everything under .relay/ is Visual Relay's",
+        "# own working state — traces, attempt reports, event logs, the per-task",
+        "# ledger/status/manifest/seals — and stays out of git; the commit stage",
+        "# never stages it. The negations below only let an author track the",
+        "# config by hand if they want it shared.",
         "*",
         "!.gitignore",
         "!config.json") + "\n";

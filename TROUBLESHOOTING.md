@@ -69,6 +69,22 @@ Nothing reads these any more, so delete them if you want the space back:
 `XDG_DATA_HOME` defaults to `~/.local/share` if unset. Settings and sandbox
 policy live elsewhere and are still in use — remove only the two paths above.
 
+## A target repo already tracks `.relay` run artifacts
+
+Older versions force-added each run's bookkeeping (ledger, seals, manifest,
+status, per-stage input/report) into the task commit, so a repo Visual Relay ran
+against before will have thousands of `.relay/` paths in its history. Nothing
+stages them any more, but the ones already tracked keep showing up in
+`git status` whenever a run rewrites them.
+
+Untrack them once, from the repo root — the files stay on disk and every run
+keeps using them:
+
+    git rm -r --cached --quiet -- .relay ':(exclude).relay/config.json' ':(exclude).relay/.gitignore'
+
+Then commit the removal. Keep `.relay/config.json` tracked if you want the
+target's config shared with the repo; `.relay/.gitignore` keeps the rest out.
+
 ## Windows
 
 **State locations.** Windows has no `XDG_DATA_HOME`/`HOME`, so Visual Relay falls back to the

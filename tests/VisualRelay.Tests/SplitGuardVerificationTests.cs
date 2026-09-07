@@ -218,7 +218,12 @@ public sealed partial class SplitGuardVerificationTests
         // 2026-09-01: 138 -> 139. The vision chain gained the DeepSeek route as
         // its tail, so a DeepSeek-only install has a vision tier again, and that
         // gained a fact of its own.
-        const int baseline = 139;
+        //
+        // 2026-09-07: 139 -> 141. Keeping .relay bookkeeping out of task commits
+        // added two facts to the GitCommitterTests family: a tracked, modified
+        // config.json left out of the commit, and a manifest entry under .relay
+        // that is never staged.
+        const int baseline = 141;
 
         string[] prefixes =
         [

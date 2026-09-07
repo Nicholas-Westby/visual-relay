@@ -114,7 +114,7 @@ public sealed class ProjectBootstrapperTests
         var (repo, sim) = CreateSimRepo();
         await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
         // Set an operator-changed key that the upgrade must preserve.
-        RelayConfigWriter.UpsertCommitProofArtifacts(repo.Root, false);
+        RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 900_000);
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
@@ -122,7 +122,7 @@ public sealed class ProjectBootstrapperTests
 
         Assert.True(upgraded);
         var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.False(loaded.Config.CommitProofArtifacts); // preserved across the upgrade
+        Assert.Equal(900_000, loaded.Config.SubagentTimeoutMilliseconds); // preserved across the upgrade
         Assert.Contains("go test", loaded.Config.TestCommand);
     }
 }

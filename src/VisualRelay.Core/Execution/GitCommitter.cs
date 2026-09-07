@@ -2,13 +2,22 @@ namespace VisualRelay.Core.Execution;
 
 internal static partial class GitCommitter
 {
+    /// <summary>
+    /// Pathspec appended to every staging call so nothing under the target's
+    /// <c>.relay/</c> bookkeeping directory enters a task commit — neither the run's
+    /// own artifacts nor a tracked <c>config.json</c> the run edited. The files stay
+    /// on disk; git just never sees them. Resolved against git's working directory,
+    /// which is always the repo root here.
+    /// </summary>
+    private const string ExcludeRelayPathspec = ":(exclude).relay";
+
     public static async Task<GitCommitResult> CommitAsync(
         string rootPath,
         string taskId,
         string taskHash,
         IReadOnlyList<string> commitMessages,
         IReadOnlyList<string> manifest,
-        IReadOnlyList<string> proofFiles,
+        IReadOnlyList<string> retirementFiles,
         string? commitToken,
         IReadOnlySet<string>? preRunUntracked,
         string? tasksDir,
@@ -92,7 +101,7 @@ internal static partial class GitCommitter
 
         if (manifestFilesToStage.Count > 0)
         {
-            var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken, timeProvider: tp);
+            var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage, ExcludeRelayPathspec], cancellationToken, timeProvider: tp);
             if (add.ExitCode != 0)
             {
                 return await FailAsync($"git add failed (git exit {add.ExitCode}): {add.Output.Trim()}");
@@ -104,22 +113,22 @@ internal static partial class GitCommitter
         // double, a csproj — without declaring them). Stage 9 verifies the working
         // tree, so the commit must match it or committed code could reference an
         // uncommitted change and fail to build from a clean checkout.
-        var addTracked = await GitAsync(gi, rootPath, ["add", "-u"], cancellationToken, timeProvider: tp);
+        var addTracked = await GitAsync(gi, rootPath, ["add", "-u", "--", ".", ExcludeRelayPathspec], cancellationToken, timeProvider: tp);
         if (addTracked.ExitCode != 0)
         {
             return await FailAsync($"git add -u failed (git exit {addTracked.ExitCode}): {addTracked.Output.Trim()}");
         }
 
-        // Proof files (ledger/seals/manifest) live under .relay/, which the
-        // self-hosting repo gitignores along with bulky run scratch. Force them in
-        // so the Relay-Seal stays verifiable; the manifest add above stays strict so
-        // a genuinely ignored source path still surfaces as an error.
-        if (proofFiles.Count > 0)
+        // The task-retirement move (the DONE- file, or a nested task directory)
+        // lands under the target's tasks dir, which the auto-include below skips —
+        // so stage it explicitly or the sealed commit records the deletion of the
+        // task file without its archived replacement.
+        if (retirementFiles.Count > 0)
         {
-            var addProof = await GitAsync(gi, rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken, timeProvider: tp);
-            if (addProof.ExitCode != 0)
+            var addRetirement = await GitAsync(gi, rootPath, ["add", "--", .. retirementFiles], cancellationToken, timeProvider: tp);
+            if (addRetirement.ExitCode != 0)
             {
-                return await FailAsync($"git add proof failed (git exit {addProof.ExitCode}): {addProof.Output.Trim()}");
+                return await FailAsync($"git add retirement failed (git exit {addRetirement.ExitCode}): {addRetirement.Output.Trim()}");
             }
         }
 

@@ -130,11 +130,10 @@ internal static class SettingsTestHelpers
         env["XDG_CONFIG_HOME"] = null;
 
     /// <summary>
-    /// Writes a valid <c>.relay/config.json</c> with the given
-    /// <paramref name="commitProofArtifacts"/> value (or omits the key when null)
-    /// so the loader treats it as Loaded.
+    /// Writes a minimal valid <c>.relay/config.json</c> so the loader treats the
+    /// repo as Loaded and the settings panel hydrates from it.
     /// </summary>
-    public static void WriteCommitConfig(TestRepository repo, bool? commitProofArtifacts)
+    public static void WriteLoadableConfig(TestRepository repo)
     {
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
         var json = new JsonObject
@@ -142,10 +141,6 @@ internal static class SettingsTestHelpers
             ["testCmd"] = "dotnet test",
             ["logSources"] = new JsonArray()
         };
-        if (commitProofArtifacts is { } value)
-        {
-            json["commitProofArtifacts"] = value;
-        }
         var configPath = Path.Combine(repo.Root, ".relay", "config.json");
         File.WriteAllText(
             configPath,

@@ -16,7 +16,7 @@ public sealed partial class SettingsPanelUiTests
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
 
         var dialog = await OpenScopedSettingsAsync(repo);
 
@@ -48,7 +48,7 @@ public sealed partial class SettingsPanelUiTests
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
 
         var dialog = await OpenScopedSettingsAsync(repo);
 
@@ -74,7 +74,7 @@ public sealed partial class SettingsPanelUiTests
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
-        WriteCommitConfig(repo, commitProofArtifacts: true);
+        WriteLoadableConfig(repo);
 
         var dialog = await OpenScopedSettingsAsync(repo);
 

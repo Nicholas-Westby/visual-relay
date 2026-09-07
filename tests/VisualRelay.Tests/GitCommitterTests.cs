@@ -60,4 +60,59 @@ public sealed class GitCommitterTests
         Assert.Contains("manifest contains gitignored", result.Error, StringComparison.Ordinal);
         Assert.Contains("config.local.toml", result.Error, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task CommitAsync_WhenTrackedRelayConfigIsModified_LeavesItOutOfTheCommit()
+    {
+        // A tracked .relay/config.json edited during the run (skip-tests prune,
+        // a settings toggle) must not ride along in the sealed commit: the
+        // tracked-changes add excludes .relay, so the edit stays in the tree.
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, ".gitignore", ".relay/*\n!.relay/config.json\n");
+        sim.Seed(repo.Root, ".relay/config.json", "{\"testCmd\":\"old\"}");
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        sim.Commit(repo.Root, "chore: seed");
+        Write(repo, ".relay/config.json", "{\"testCmd\":\"new\"}");
+        Write(repo, "src/app.cs", "updated");
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
+            commitToken: null, preRunUntracked: null, tasksDir: null,
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
+
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
+        var changed = sim.FilesChangedInCommit(repo.Root, result.CommitSha!);
+        Assert.Contains("src/app.cs", changed);
+        Assert.DoesNotContain(".relay/config.json", changed);
+
+        // The edit survives the commit as an unstaged working-tree change.
+        var (_, status) = await sim.Git(repo.Root, "status", "--porcelain");
+        Assert.Contains(" M .relay/config.json", status, StringComparison.Ordinal);
+        Assert.Equal("{\"testCmd\":\"new\"}", File.ReadAllText(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
+    [Fact]
+    public async Task CommitAsync_WhenManifestListsARelayPath_NeverStagesIt()
+    {
+        // Stage 4 can name a .relay path (a repo that does not gitignore .relay
+        // passes the ignored-path pre-check). The manifest add must still skip it.
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        sim.Commit(repo.Root, "chore: seed");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, ".relay/my-task/manifest.txt", "src/app.cs\n");
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123", ["feat: add widget"],
+            [".relay/my-task/manifest.txt", "src/app.cs"], [],
+            commitToken: null, preRunUntracked: null, tasksDir: null,
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
+
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
+        var changed = sim.FilesChangedInCommit(repo.Root, result.CommitSha!);
+        Assert.Contains("src/app.cs", changed);
+        Assert.DoesNotContain(".relay/my-task/manifest.txt", changed);
+    }
 }

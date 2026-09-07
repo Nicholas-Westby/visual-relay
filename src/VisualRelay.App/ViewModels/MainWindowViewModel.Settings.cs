@@ -9,25 +9,6 @@ namespace VisualRelay.App.ViewModels;
 public partial class MainWindowViewModel
 {
     /// <summary>
-    /// When true (default), the proof files under .relay/&lt;taskId&gt;/
-    /// (ledger.md, &lt;taskId&gt;.seals, manifest.txt, status.json, and per-stage
-    /// .input.json/.report.json — final attempt only) are force-added to each
-    /// relay commit. When false, the proof files are still written to disk but
-    /// omitted from commits. Task retirement records are always committed.
-    /// </summary>
-    [ObservableProperty]
-    private bool _commitProofArtifacts = true;
-
-    /// <summary>Persist every toggle to .relay/config.json.</summary>
-    partial void OnCommitProofArtifactsChanged(bool value)
-    {
-        if (Directory.Exists(RootPath))
-        {
-            RelayConfigWriter.UpsertCommitProofArtifacts(RootPath, value);
-        }
-    }
-
-    /// <summary>
     /// GLOBAL (per-machine) "verbose diagnostics" preference. Default OFF = quiet:
     /// the nono sandbox wrapper runs with <c>--silent</c> so only the child command's
     /// output is captured. Turning it ON shows nono's full banner/footer diagnostics

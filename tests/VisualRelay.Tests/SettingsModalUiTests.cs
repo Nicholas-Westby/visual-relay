@@ -26,7 +26,7 @@ public sealed class SettingsModalUiTests
     {
         SettingsTestHelpers.EnsureNoUserEnv(_env);
         using var repo = TestRepository.Create();
-        SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts: true);
+        SettingsTestHelpers.WriteLoadableConfig(repo);
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SettingsTestHelpers.SeedUserEnv(_env, repo, "HF_TOKEN=hf-modal-test\n");
 
@@ -70,7 +70,7 @@ public sealed class SettingsModalUiTests
     {
         SettingsTestHelpers.EnsureNoUserEnv(_env);
         using var repo = TestRepository.Create();
-        SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts: true);
+        SettingsTestHelpers.WriteLoadableConfig(repo);
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SettingsTestHelpers.SeedUserEnv(_env, repo, "HF_TOKEN=hf-dedup-test\n");
 
@@ -98,7 +98,7 @@ public sealed class SettingsModalUiTests
     {
         SettingsTestHelpers.EnsureNoUserEnv(_env);
         using var repo = TestRepository.Create();
-        SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts: true);
+        SettingsTestHelpers.WriteLoadableConfig(repo);
         using var r = SettingsTestHelpers.SeedUserEnv(_env, repo, "HF_TOKEN=hf-test\n");
 
         var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };

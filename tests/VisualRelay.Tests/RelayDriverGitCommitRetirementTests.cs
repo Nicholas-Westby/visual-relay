@@ -255,9 +255,10 @@ public sealed class RelayDriverGitCommitRetirementTests
         var config = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, config.Status);
         Assert.DoesNotContain("ship-status", config.Config.SkipTestsTaskIds!);
-        // The prune must land in the commit — config.json shown as modified.
+        // The prune is a working-tree edit only: .relay/config.json never enters
+        // the sealed commit, even when the run modified this tracked file.
         var nameStatus = await NameStatusAsync(sim, repo.Root);
-        Assert.Contains("M\t.relay/config.json", nameStatus, StringComparison.Ordinal);
+        Assert.DoesNotContain(".relay/config.json", nameStatus, StringComparison.Ordinal);
         Assert.Contains("D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
         Assert.Contains("A\tllm-tasks/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
     }
