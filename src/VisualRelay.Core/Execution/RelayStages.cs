@@ -46,6 +46,13 @@ public static class RelayStages
         "authoritative gate after you return, so do NOT keep re-running it to chase a " +
         "clean local result — if it hangs or times out, record your work and return.";
 
+    /// <summary>
+    /// What Research recorded is worth nothing unless the stages that write code read
+    /// it back, so the same instruction closes each of their prompts verbatim.
+    /// </summary>
+    private const string FollowRecordedConventionsRule =
+        "Follow every convention recorded in the prior stages' `conventions` lists.";
+
     private static string SystemPromptFor(string name) => name switch
     {
         "Ideate" => "Frame the task and list 2-3 solution options. Do not edit files.",
@@ -64,7 +71,7 @@ public static class RelayStages
             "check, lint, format, build, or screenshot gate — " +
             "the harness runs the full gate at its Verify/Commit stages. " +
             SelfVerifyStopRule + " " +
-            "Follow every convention recorded in the prior stages' `conventions` lists.",
+            FollowRecordedConventionsRule,
         "Implement" =>
             "Implement the change within the manifest files. " +
             "Verify your changes using the targeted test command shown in the " +
@@ -75,7 +82,7 @@ public static class RelayStages
             SelfVerifyStopRule + " " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets. " +
-            "Follow every convention recorded in the prior stages' `conventions` lists.",
+            FollowRecordedConventionsRule,
         "Review" =>
             "Review the actual diff and classify issues. " +
             "If you need to verify any behavior, use ONLY the targeted test command shown in the " +
@@ -87,7 +94,7 @@ public static class RelayStages
             "directory and Visual Relay's internal artifact dirs) are queue bookkeeping, NEVER part " +
             "of the diff under review — even when untracked: pending specs for OTHER tasks " +
             "legitimately appear there mid-drain, so never flag them as stray content. " +
-            "Follow every convention recorded in the prior stages' `conventions` lists.",
+            FollowRecordedConventionsRule,
         "Visual-review" =>
             "You are reviewing rendered screenshots of the application built from the current " +
             "working tree, plus the task's own attached images. Read the PNG files listed in your " +
