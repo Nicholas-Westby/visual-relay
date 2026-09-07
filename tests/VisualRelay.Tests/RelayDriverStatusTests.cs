@@ -121,10 +121,10 @@ public sealed class RelayDriverStatusTests
     }
 
     [Fact]
-    public async Task RunTaskAsync_StatusJson_InProofFilesArray()
+    public async Task RunTaskAsync_StatusJson_IsOnDiskAfterACommittedRun()
     {
-        // Verify that status.json exists after a committed run.
-        // The proof files array includes status.json alongside ledger.md, *.seals, and manifest.txt.
+        // The per-stage status record is working-tree bookkeeping: written for the UI
+        // and for resume, never staged, so it must survive the run on disk.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("proof-status", "# Proof status\n");

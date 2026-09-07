@@ -5,8 +5,8 @@ namespace VisualRelay.Domain;
 /// <summary>
 /// A single entry in the per-stage status record.
 /// Written by the driver at each lifecycle point and read by the UI as the
-/// single source of truth for stage status. This is a committed proof file
-/// (force-added alongside ledger.md / *.seals / manifest.txt), not local run state.
+/// single source of truth for stage status. It is working-tree bookkeeping under
+/// the target's .relay directory, never staged into a commit.
 /// </summary>
 public sealed record StageStatusEntry(
     int Stage,

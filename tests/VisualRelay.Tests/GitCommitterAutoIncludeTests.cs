@@ -137,9 +137,8 @@ public sealed class GitCommitterAutoIncludeTests
     public async Task CommitAsync_ExcludesVisualRelayInternalArtifacts_EvenWhenNotGitignored()
     {
         // On a consumer repo that does not gitignore .relay/ or .relay-scratch/, the
-        // run's own artifacts (reports, traces, scratch) surface as untracked. They must
-        // never be auto-committed into the user's task commit — only the deliberate
-        // proof subset is force-added (via proofFiles), handled separately.
+        // run's own artifacts (reports, traces, scratch) surface as untracked. They
+        // must never reach the user's task commit.
         var (sim, repo) = NewRepo();
         using var _ = repo;
         sim.Seed(repo.Root, "app.py", "old");
@@ -179,7 +178,6 @@ public sealed class GitCommitterAutoIncludeTests
     [Fact]
     public async Task CommitAsync_ExcludesGitignoredNewFile()
     {
-        // Gitignored paths must stay excluded unless force-added as proof files.
         // The auto-include pass must respect .gitignore (--exclude-standard covers it).
         var (sim, repo) = NewRepo();
         using var _ = repo;

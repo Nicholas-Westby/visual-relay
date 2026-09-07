@@ -2,10 +2,10 @@ namespace VisualRelay.Core.Execution;
 
 internal static partial class GitCommitter
 {
-    // Visual Relay's own run artifacts. These are never auto-committed (the
-    // deliberate proof subset is force-added via proofFiles); everything else the
-    // run authors is fair game. Auto-include must stay repo-agnostic — it must NOT
-    // assume a src/tests/tools layout, since Visual Relay runs on any repo.
+    // Visual Relay's own run artifacts. Nothing under these prefixes is ever
+    // committed; everything else the run authors is fair game. Auto-include must
+    // stay repo-agnostic — it must NOT assume a src/tests/tools layout, since
+    // Visual Relay runs on any repo.
     // TODO: .relay-scratch/ entry is removable once the workspace-side cleanup
     // (RelayTaskRepository.ListAsync) has been deployed widely enough to purge
     // stale legacy dirs from the wild.
