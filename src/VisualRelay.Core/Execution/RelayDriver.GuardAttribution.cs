@@ -139,9 +139,13 @@ public sealed partial class RelayDriver
                 IgnoredOverlayCopyMaxBytes, cloneOverlay: true, cancellationToken);
             var result = await _dependencies.TestRunner.RunAsync(
                 worktreePath, guardCommand, cancellationToken);
-            return !result.TimedOut && result.ExitCode == 0;
+            return result is { TimedOut: false, ExitCode: 0 };
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            throw; // a cancelled run is the caller's business, never a verdict
+        }
+        catch
         {
             return null; // not a git repo, or the checkout failed → cannot attribute
         }

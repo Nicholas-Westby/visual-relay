@@ -16,12 +16,12 @@ public partial class MainWindowViewModel
     /// </summary>
     private IEnvironmentAccessor Env => EnvironmentAccessor ?? new SystemEnvironmentAccessor();
 
-    /// <summary>Builds the agent for a stage, honouring the agent selector.</summary>
+    /// <summary>Builds the agent for a stage, publishing to the caller's sink.</summary>
     /// <param name="config">The repository's relay configuration.</param>
+    /// <param name="sink">Where the agent's stage and trace events go.</param>
     /// <returns>The runner to use.</returns>
-    private ISubagentRunner CreateSubagentRunner(RelayConfig config) =>
-        SubagentRunnerFactory.Create(
-            config, new ObservableRelayEventSink(HandleRelayEvent), Env, VerboseSandboxDiagnostics);
+    private ISubagentRunner CreateSubagentRunner(RelayConfig config, IRelayEventSink sink) =>
+        SubagentRunnerFactory.Create(config, sink, Env, VerboseSandboxDiagnostics);
 
     /// <summary>Builds a sandboxed test runner over the configured timeout.</summary>
     /// <param name="config">The repository's relay configuration.</param>

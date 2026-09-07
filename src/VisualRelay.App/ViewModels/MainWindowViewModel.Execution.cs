@@ -1,6 +1,5 @@
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
-using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
@@ -84,7 +83,7 @@ public partial class MainWindowViewModel
             // Built from the planning driver's own sink so the agent's traces reach the
             // task's run.log, not just the GUI.
             ISubagentRunner PlanSubagentFactory(string _, IRelayEventSink sink) =>
-                SubagentRunnerFactory.Create(config, sink, Env, VerboseSandboxDiagnostics);
+                CreateSubagentRunner(config, sink);
             var planTestRunner = CreateSandboxedTestRunner(config);
 
             var lifecycle = CreateDrainLifecycleCallbacks();
