@@ -50,14 +50,31 @@ internal static class RepositoryInstructionFiles
         var found = new List<string>();
         found.AddRange(LeadingCandidateFiles.Where(candidate => File.Exists(Path.Combine(rootPath, candidate))));
 
-        var cursorRulesFull = Path.Combine(rootPath, ".cursor", "rules");
-        if (Directory.Exists(cursorRulesFull)
-            && Directory.EnumerateFiles(cursorRulesFull, "*", SearchOption.AllDirectories).Any())
+        if (HasAnyFile(Path.Combine(rootPath, ".cursor", "rules")))
         {
             found.Add(CursorRulesDirectory);
         }
 
         found.AddRange(TrailingCandidateFiles.Where(candidate => File.Exists(Path.Combine(rootPath, candidate))));
         return found;
+    }
+
+    /// <summary>
+    /// True when <paramref name="fullPath"/> is a directory holding at least one file
+    /// anywhere in its tree. A subdirectory this process cannot read makes the
+    /// recursive walk throw; that answers "no" rather than ending the task, since a
+    /// directory nothing can read is one Research could not have read either.
+    /// </summary>
+    private static bool HasAnyFile(string fullPath)
+    {
+        try
+        {
+            return Directory.Exists(fullPath)
+                && Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 }

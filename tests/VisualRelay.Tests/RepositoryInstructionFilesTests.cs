@@ -61,4 +61,51 @@ public sealed class RepositoryInstructionFilesTests
 
         Assert.Contains(".cursor/rules", RepositoryInstructionFiles.Find(dir.Path));
     }
+
+    /// <summary>
+    /// A subdirectory the process cannot read makes the recursive probe throw. That
+    /// must not escape: the question "does this repo ship cursor rules?" is answered
+    /// "no", and every other candidate is still reported — a throw here flags the
+    /// task at stage 2 instead.
+    /// </summary>
+    [Fact]
+    public void CursorRulesDirectory_Unreadable_IsTreatedAsAbsentRatherThanThrowing()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "POSIX modes are not enforceable here");
+        using var dir = new TempDirectory();
+        File.WriteAllText(Path.Combine(dir.Path, "AGENTS.md"), "a");
+        var unreadable = Path.Combine(dir.Path, ".cursor", "rules", "private");
+        Directory.CreateDirectory(unreadable);
+        SetMode(unreadable, UnixFileMode.None);
+        Assert.SkipWhen(CanEnumerate(unreadable), "this process reads mode-000 directories anyway");
+
+        try
+        {
+            Assert.Equal(new[] { "AGENTS.md" }, RepositoryInstructionFiles.Find(dir.Path));
+        }
+        finally
+        {
+            SetMode(unreadable,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    private static void SetMode(string path, UnixFileMode mode)
+    {
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, mode);
+    }
+
+    private static bool CanEnumerate(string path)
+    {
+        try
+        {
+            _ = Directory.GetFileSystemEntries(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            return false;
+        }
+    }
 }
