@@ -86,6 +86,47 @@ public sealed class RelayQueueControllerCancelTests
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
     }
 
+    [Fact]
+    public async Task DrainAsync_CancelDuringACommitInRestartMode_StopsInsteadOfHandingOffARestart()
+    {
+        // Stage 12 finishes on a fresh token, so a task cancelled mid-commit still
+        // commits. In restart mode that commit used to hand off a relaunch, and the
+        // next instance resumed the drain — the operator's cancel simply lost.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("committing", "# Committing\n");
+        repo.WriteTask("queued", "# Queued\n");
+
+        using var cts = new CancellationTokenSource();
+        var runner = new CommitThenCancelTaskRunner(cts);
+        var controller = new RelayQueueController(repo.Root, runner, gitInvoker: new RecordingGitInvoker());
+        RestartHandoff? handoff = null;
+        controller.OnRestartRequested = h => handoff = h;
+        await controller.RefreshAsync(CancellationToken.None);
+
+        var results = await controller.DrainAsync(cts.Token, RunAllMode.RestartBetweenTasks);
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, Assert.Single(results).Status);
+        Assert.Equal(["committing"], runner.TasksRun);
+        Assert.Equal(RelayQueueState.Cancelled, controller.State);
+        Assert.Null(handoff);
+        Assert.Null(RestartHandoff.Read(repo.Root));
+    }
+
+    /// <summary>Commits the task, having cancelled the drain while the commit was sealing.</summary>
+    private sealed class CommitThenCancelTaskRunner(CancellationTokenSource cts) : IRelayTaskRunner
+    {
+        public List<string> TasksRun { get; } = [];
+
+        public Task<RelayTaskOutcome> RunTaskAsync(
+            string rootPath, string taskId, CancellationToken cancellationToken = default)
+        {
+            TasksRun.Add(taskId);
+            cts.Cancel();
+            return Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "sha", null));
+        }
+    }
+
     /// <summary>Stays in-flight until the drain is cancelled, then throws like a torn stage.</summary>
     private sealed class CancelAwaitingTaskRunner : IRelayTaskRunner
     {

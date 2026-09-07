@@ -258,6 +258,14 @@ public sealed partial class RelayQueueController
                         Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });
                     }
 
+                    // A cancel outranks what follows: it must not trip the circuit
+                    // breaker, nor hand off a restart into the queue it just stopped.
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        State = RelayQueueState.Cancelled;
+                        return results;
+                    }
+
                     // Sequential / RestartBetweenTasks: check for new tasks at
                     // each task boundary.
                     if (skipPlanning)
@@ -268,14 +276,6 @@ public sealed partial class RelayQueueController
                     if (TryRestartBetweenTasks(mode, outcome, task.Id, drainRunId,
                             queue.Count))
                         return results;
-
-                    // A cancel is an operator's decision, not a run of faults: the drain
-                    // stops here without consulting — or tripping — the circuit breaker.
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        State = RelayQueueState.Cancelled;
-                        return results;
-                    }
 
                     if (circuitBreaker.ShouldHalt(RootPath, outcome))
                     {

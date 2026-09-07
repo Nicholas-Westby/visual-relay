@@ -11,7 +11,7 @@ namespace VisualRelay.Tests;
 /// FRESH token — the run's own is already cancelled — and defers a cancel that lands
 /// inside the sealing commit stage until the commit has finished.
 /// </summary>
-public sealed class RelayDriverCancelTests
+public sealed partial class RelayDriverCancelTests
 {
     [Fact]
     public async Task RunTaskAsync_CancelledMidStage_WritesMarkerStatusAndCancelledEvent()

@@ -23,7 +23,14 @@ public sealed partial class RelayDriver
         var worktreeId = $"{taskId}-verify-s{stageNumber}-a{attempt}";
         try
         {
-            worktreePath = await CreateVerifyWorktreeAsync(rootPath, worktreeId, runId, cancellationToken);
+            // Fresh token: a torn `git worktree add` lands in the catch below, whose
+            // fallback runs the project's suite against the REAL repository — the
+            // opposite of stopping. The loop-top check stops the run right after.
+            worktreePath = await CreateVerifyWorktreeAsync(rootPath, worktreeId, runId, CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // never fall back to the main tree because the run was cancelled
         }
         catch
         {

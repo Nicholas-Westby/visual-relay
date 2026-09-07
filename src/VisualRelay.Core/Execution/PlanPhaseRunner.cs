@@ -141,7 +141,9 @@ public static class PlanPhaseRunner
         try
         {
             DrainSummaryLog.Write(mainRootPath, runId, taskId, "plan", "start");
-            worktreePath = await PlanningWorktree.CreateAsync(mainRootPath, taskId, runId, gitInvoker, ct);
+            // Fresh token, like the removal below: a half-added worktree is a git
+            // admin entry pointing at a directory that was never checked out.
+            worktreePath = await PlanningWorktree.CreateAsync(mainRootPath, taskId, runId, gitInvoker, CancellationToken.None);
             // The detached checkout omits the (normally git-ignored) per-repo
             // config, so provide it from the source repo before the driver loads
             // config from the worktree — otherwise stage 1 flags "config not found".

@@ -27,13 +27,16 @@ public sealed partial class RelayDriver
         string rootPath, string runId, string taskId, string taskDirectory,
         List<StageStatusEntry> statusEntries)
     {
-        var stage = FindRunningStage(statusEntries);
+        var stage = FindCancelledStage(statusEntries);
         try
         {
-            foreach (var entry in statusEntries.Where(e => e.Status == "Running").ToList())
-                MarkStatus(statusEntries, entry.Stage, "Done");
-            MarkStatusFlagged(statusEntries, stage, CancelledReason);
-            await WriteStatusAsync(taskDirectory, statusEntries, CancellationToken.None);
+            if (stage > 0)
+            {
+                foreach (var entry in statusEntries.Where(e => e.Status == "Running").ToList())
+                    MarkStatus(statusEntries, entry.Stage, "Done");
+                MarkStatusFlagged(statusEntries, stage, CancelledReason);
+                await WriteStatusAsync(taskDirectory, statusEntries, CancellationToken.None);
+            }
 
             // Same order a flag uses: capture the partial work before the marker, so
             // the marker is never the only record that work existed.
@@ -53,6 +56,18 @@ public sealed partial class RelayDriver
 
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, CancelledReason);
     }
+
+    /// <summary>
+    /// The stage a cancel belongs to: the one that was running, or — when the cancel
+    /// landed between stages, or before the loop started — the first that has not
+    /// settled yet. Never a settled stage: a resume restarts at the first unfinished
+    /// entry, so rewriting a finished one would throw its work away. Zero when every
+    /// stage is already settled, which leaves the marker without a stage line.
+    /// </summary>
+    private static int FindCancelledStage(IReadOnlyList<StageStatusEntry> entries) =>
+        entries.FirstOrDefault(e => e.Status == "Running")?.Stage
+        ?? entries.FirstOrDefault(e => !StageStatusIsComplete(e.Status))?.Stage
+        ?? 0;
 
     /// <summary>
     /// Puts the working tree back where the run found it, so the repository is not
