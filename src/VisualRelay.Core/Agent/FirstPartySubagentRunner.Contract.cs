@@ -39,8 +39,8 @@ public sealed partial class FirstPartySubagentRunner
 
         AnnounceReAsk(invocation, contract.Error);
         var retry = await ReAskAsync(
-            route, conversation, invocation, result.Answer, contract.Error, cancellationToken)
-            .ConfigureAwait(false);
+            route, conversation, invocation, result.Answer, contract.Error, events,
+            cancellationToken).ConfigureAwait(false);
 
         // The turn was spent either way, so it counts toward the stage either
         // way: the report is what the ledger and the cost card are built from.
@@ -65,6 +65,7 @@ public sealed partial class FirstPartySubagentRunner
         StageInvocation invocation,
         string answer,
         string? error,
+        IAgentEventSink events,
         CancellationToken cancellationToken)
     {
         var apiKey = _keys.Resolve(route.ApiKeyEnvVar) ?? string.Empty;
@@ -74,7 +75,7 @@ public sealed partial class FirstPartySubagentRunner
         // No tools. The model has nothing left to look up: it is being asked to
         // re-emit what it already wrote, in valid JSON, and a tool call here
         // would only spend the one turn it has.
-        var loop = new AgentTurnLoop(client, [], events: _events(invocation), _timeProvider);
+        var loop = new AgentTurnLoop(client, [], events, _timeProvider);
         var options = new AgentLoopOptions(
             Model: route.UpstreamModel,
             Endpoint: route.Endpoint,

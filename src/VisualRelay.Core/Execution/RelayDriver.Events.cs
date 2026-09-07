@@ -116,7 +116,7 @@ public sealed partial class RelayDriver
                 // traced and priced. Emitting a second trace for it would
                 // double-count its cost in every consumer that sums the stream.
                 var index = flaggedStage - 1;
-                var settled = index >= 0 && index < statusEntries.Count
+                var settled = index < statusEntries.Count
                     && statusEntries[index].Status is "Done" or "Skipped";
                 var stageCost = settled
                     ? null

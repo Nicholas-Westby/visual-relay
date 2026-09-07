@@ -50,9 +50,11 @@ public sealed class FirstPartySubagentRunnerContractTests
     private static FirstPartySubagentRunner Build(
         ScriptedModelTransport transport, InMemoryRelayEventSink relayEvents)
     {
-        var env = new DictionaryEnvironmentAccessor();
-        env["DEEPSEEK_API_KEY"] = "sk-test-value";
-        env["HF_TOKEN"] = "sk-test-value";
+        var env = new DictionaryEnvironmentAccessor
+        {
+            ["DEEPSEEK_API_KEY"] = "sk-test-value",
+            ["HF_TOKEN"] = "sk-test-value",
+        };
         return new FirstPartySubagentRunner(
             transport, RelayConfigLoader.Defaults(), env, _ => new Sink(),
             retryBackoffBase: TimeSpan.Zero, relayEvents: relayEvents);
