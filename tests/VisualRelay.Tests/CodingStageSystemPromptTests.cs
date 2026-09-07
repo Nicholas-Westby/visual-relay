@@ -110,6 +110,22 @@ public sealed class CodingStageSystemPromptTests
         Assert.Contains("conventions", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Author-tests, Implement and Review must all tell the agent to follow whatever
+    /// conventions Research recorded, so a repo's own rules reach the coding stages.
+    /// </summary>
+    [Theory]
+    [InlineData("Author-tests")]
+    [InlineData("Implement")]
+    [InlineData("Review")]
+    public void CodingStageSystemPrompt_FollowsRecordedConventions(string stageName)
+    {
+        var stage = RelayStages.All.Single(s => s.Name == stageName);
+        Assert.Contains(
+            "Follow every convention recorded in the prior stages' `conventions` lists.",
+            stage.SystemPrompt, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Diagnose_SystemPrompt_ProhibitsEditingAndFalseClaims()
     {

@@ -63,7 +63,8 @@ public static class RelayStages
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, format, build, or screenshot gate — " +
             "the harness runs the full gate at its Verify/Commit stages. " +
-            SelfVerifyStopRule,
+            SelfVerifyStopRule + " " +
+            "Follow every convention recorded in the prior stages' `conventions` lists.",
         "Implement" =>
             "Implement the change within the manifest files. " +
             "Verify your changes using the targeted test command shown in the " +
@@ -73,7 +74,8 @@ public static class RelayStages
             "it legitimately. Resolving means an edit, not repeated re-runs. " +
             SelfVerifyStopRule + " " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
-            "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
+            "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets. " +
+            "Follow every convention recorded in the prior stages' `conventions` lists.",
         "Review" =>
             "Review the actual diff and classify issues. " +
             "If you need to verify any behavior, use ONLY the targeted test command shown in the " +
@@ -84,7 +86,8 @@ public static class RelayStages
             "Do not edit files. Paths named on the 'Protected paths' line of your input (the tasks " +
             "directory and Visual Relay's internal artifact dirs) are queue bookkeeping, NEVER part " +
             "of the diff under review — even when untracked: pending specs for OTHER tasks " +
-            "legitimately appear there mid-drain, so never flag them as stray content.",
+            "legitimately appear there mid-drain, so never flag them as stray content. " +
+            "Follow every convention recorded in the prior stages' `conventions` lists.",
         "Visual-review" =>
             "You are reviewing rendered screenshots of the application built from the current " +
             "working tree, plus the task's own attached images. Read the PNG files listed in your " +
