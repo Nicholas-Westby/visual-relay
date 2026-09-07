@@ -25,7 +25,9 @@ public sealed class RunShellCommandTool(SandboxedCommandExecutor executor) : IAg
         + "It starts at the repository root inside the sandbox; cd within the command to work "
         + "elsewhere in the tree. Pass timeout_seconds to say how long it may take — the value is "
         + "honoured as given, and the only ceiling is the time left in this stage; if it ever has "
-        + "to be reduced the result tells you the number that was applied and why.",
+        + "to be reduced the result tells you the number that was applied and why. Use "
+        + "run_command instead to run one program from an argv array with no shell. Both are "
+        + "available in every stage that can run commands, under exactly these two names.",
         BuildSchema());
 
     /// <inheritdoc />

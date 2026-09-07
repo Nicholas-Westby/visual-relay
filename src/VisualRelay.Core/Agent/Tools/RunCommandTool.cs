@@ -26,7 +26,8 @@ public sealed class RunCommandTool(SandboxedCommandExecutor executor) : IAgentTo
         + "sandbox. Pass timeout_seconds to say how long it may take — the value is honoured as "
         + "given, and the only ceiling is the time left in this stage; if it ever has to be "
         + "reduced the result tells you the number that was applied and why. Use "
-        + "run_shell_command when you genuinely need shell syntax.",
+        + "run_shell_command when you genuinely need shell syntax. Both are available in "
+        + "every stage that can run commands, under exactly these two names.",
         BuildSchema());
 
     /// <inheritdoc />
