@@ -105,6 +105,65 @@ public sealed class GuardCommandDetectorTests
         Assert.Equal("dotnet format", FormatCommandDetector.Detect(repo.Root));
     }
 
+    /// <summary>
+    /// A repo whose package.json declares a lint script already owns a policy gate that
+    /// its CI runs as a separate required step. VR's own gate was only the test command,
+    /// while the stage prompts promised the model a full check/lint/format gate at
+    /// Verify, so lint errors sailed through into committed code.
+    /// </summary>
+    [Fact]
+    public void Detect_PackageJsonWithLintScript_AppendsNpmRunLint()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"),
+            """{ "scripts": { "test": "mocha", "lint": "eslint ." } }""");
+
+        Assert.Equal("npm run lint", GuardCommandDetector.Detect(repo.Root));
+    }
+
+    /// <summary>
+    /// A check script usually wraps lint, types and formatting, so it is the broader
+    /// gate and wins when a repo declares both.
+    /// </summary>
+    [Fact]
+    public void Detect_PackageJsonWithLintAndCheckScripts_PrefersCheck()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"),
+            """{ "scripts": { "lint": "eslint .", "check": "eslint . && tsc --noEmit" } }""");
+
+        Assert.Equal("npm run check", GuardCommandDetector.Detect(repo.Root));
+    }
+
+    /// <summary>
+    /// Corroboration cuts both ways: a package.json that declares neither script yields
+    /// no guard rather than a guessed one that would fail on every commit.
+    /// </summary>
+    [Fact]
+    public void Detect_PackageJsonWithoutLintOrCheckScript_ReturnsNull()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"),
+            """{ "scripts": { "test": "mocha" } }""");
+
+        Assert.Null(GuardCommandDetector.Detect(repo.Root));
+    }
+
+    /// <summary>The repo's own script chains after its guard scripts, before .NET.</summary>
+    [Fact]
+    public void Detect_GuardsAndNodeAndSolution_ChainsNodeScriptInTheMiddle()
+    {
+        using var repo = TestRepository.Create();
+        WriteGuard(repo.Root, "guard-one.sh");
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"),
+            """{ "scripts": { "lint": "eslint ." } }""");
+        File.WriteAllText(Path.Combine(repo.Root, "MyApp.slnx"), "");
+
+        Assert.Equal(
+            "tools/guards/guard-one.sh && npm run lint && dotnet format MyApp.slnx --verify-no-changes",
+            GuardCommandDetector.Detect(repo.Root));
+    }
+
     /// <summary>A SwiftPM manifest appends a compile check.</summary>
     [Fact]
     public void Detect_PackageSwift_AppendsSwiftBuild()
