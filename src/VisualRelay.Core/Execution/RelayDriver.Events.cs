@@ -107,6 +107,13 @@ public sealed partial class RelayDriver
         RelayCostEstimate? cost = null, TimeSpan? elapsed = null,
         double sessionCostUsd = 0, int unknownCostStageCount = 0)
     {
+        // A cancelled run is not a flagged one. The turn loop absorbs a cancel and
+        // reports it as an invalid stage result, which would otherwise land here and
+        // record the agent's wording over the operator's — and the stage would already
+        // be settled by the time the wind-down looked for the one that was running.
+        if (cancellationToken.IsCancellationRequested)
+            return await WindDownCancelledRunAsync(rootPath, runId, taskId, taskDirectory, statusEntries);
+
         try
         {
             var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);

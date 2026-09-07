@@ -49,6 +49,39 @@ public sealed class RelayDriverCancelTests
     }
 
     [Fact]
+    public async Task RunTaskAsync_StageReportsTheCancelInsteadOfThrowing_WindsDownAtThatStage()
+    {
+        // The turn loop absorbs a cancel and reports it as an invalid stage result. That
+        // must not be recorded as an ordinary flag: the marker, the status entry and the
+        // event all name the cancel, at the stage that was actually running.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("report-cancel", "# Report cancel\n");
+        using var cts = new CancellationTokenSource();
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverTestHelpers.DepsFor(repo, new CancelReportingSubagentRunner(cts, atStage: 3),
+                new ScriptedTestRunner(), sink),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "report-cancel", cts.Token);
+
+        Assert.Equal("cancelled by operator", outcome.Reason);
+        var taskDirectory = Path.Combine(repo.Root, ".relay", "report-cancel");
+        var marker = await File.ReadAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
+        Assert.Contains("stage 3", marker, StringComparison.Ordinal);
+
+        var status = StageStatusRecord.Read(taskDirectory);
+        Assert.Equal("Flagged", status[2].Status);
+        Assert.Equal("cancelled by operator", status[2].Error);
+        Assert.All(status, e => Assert.NotEqual("stage cancelled", e.Error));
+
+        var cancelled = Assert.Single(sink.Events, e => e.EventName == "cancelled");
+        Assert.Equal(3, cancelled.StageNumber);
+        Assert.DoesNotContain(sink.Events, e => e.EventName == "flagged");
+    }
+
+    [Fact]
     public async Task RunTaskAsync_CancelledDuringTheCommitStage_StillCommits()
     {
         // Stage 12 retires the task and commits. A cancel that lands inside it must
@@ -110,6 +143,20 @@ public sealed class RelayDriverCancelTests
                 return _inner.RunAsync(invocation, cancellationToken);
             cts.Cancel();
             throw new OperationCanceledException(cts.Token);
+        }
+    }
+
+    /// <summary>Cancels the run and reports it as an invalid result, as the turn loop does.</summary>
+    private sealed class CancelReportingSubagentRunner(CancellationTokenSource cts, int atStage) : ISubagentRunner
+    {
+        private readonly ScriptedSubagentRunner _inner = new();
+
+        public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+        {
+            if (invocation.Stage.Number < atStage)
+                return _inner.RunAsync(invocation, cancellationToken);
+            cts.Cancel();
+            return Task.FromResult(new SubagentResult(string.Empty, null, IsValid: false, Error: "stage cancelled"));
         }
     }
 
