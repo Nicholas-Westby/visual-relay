@@ -106,7 +106,8 @@ public sealed partial class RelayDriver
                 if (result.HardAbort || run >= maxRuns)
                 {
                     var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-                        result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken);
+                        result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken,
+                        cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                     return (outcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
                 }
                 continue;

@@ -256,11 +256,27 @@ public sealed partial class RelayDriver
         entries[idx] = entries[idx] with { Status = "Skipped", Check = "green" };
     }
 
-    private static void MarkStatusFlagged(List<StageStatusEntry> entries, int stageNumber, string error)
+    /// <summary>
+    /// Marks a stage flagged, keeping whatever the stage spent. A flagged stage
+    /// burned the same money and minutes a finished one does, so its entry
+    /// carries the same numbers; nulls leave what is already recorded alone.
+    /// </summary>
+    private static void MarkStatusFlagged(
+        List<StageStatusEntry> entries, int stageNumber, string error,
+        RelayCostEstimate? cost = null, TimeSpan? elapsed = null)
     {
         var idx = stageNumber - 1;
         if (idx < 0 || idx >= entries.Count) return;
-        entries[idx] = entries[idx] with { Status = "Flagged", Error = error };
+        var duration = cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed?.TotalSeconds;
+        entries[idx] = entries[idx] with
+        {
+            Status = "Flagged",
+            Error = error,
+            DurationSeconds = duration ?? entries[idx].DurationSeconds,
+            CostUsd = cost?.CostUsd ?? entries[idx].CostUsd,
+            Turns = cost?.Turns > 0 ? cost.Turns : entries[idx].Turns,
+            Model = cost?.Model ?? entries[idx].Model,
+        };
     }
 
     private static int FindRunningStage(IReadOnlyList<StageStatusEntry> entries)

@@ -164,44 +164,27 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     if (cost is not null) sessionCostUsd += cost.CostUsd; else unknownCostStageCount++;
                     if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
                     {
-                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number, result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken);
+                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number, result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken,
+                            cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                     }
 
                     body = result.Json;
                     if (!TryParseContractJson(result.Json, out var json, out var contractError))
                     {
                         return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-                            contractError ?? "invalid contract JSON", result.RawText, statusEntries, cancellationToken);
+                            contractError ?? "invalid contract JSON", result.RawText, statusEntries, cancellationToken,
+                            cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                     }
                     if (stage.Number == 4)
                     {
-                        manifest.Clear();
-                        var raw = ReadStringArray(json, "manifest").Distinct(StringComparer.Ordinal).ToList();
-                        var dropped = new List<string>();
-                        var clean = new List<string>();
-                        foreach (var e in raw)
-                        {
-                            if (IsPathUnderDirectory(rootPath, e, config.TasksDir))
-                                dropped.Add(e);
-                            else
-                                clean.Add(e.StartsWith('+') ? e[1..] : e);
-                        }
-                        manifest.AddRange(clean);
-                        targetedTestCommand = BuildTargetedTestCommand(config, manifest);
-                        if (dropped.Count > 0)
-                        {
-                            var note = dropped.Count == 1
-                                ? $"> **Note**: dropped 1 task-dir entry from manifest: `{dropped[0]}`"
-                                : $"> **Note**: dropped {dropped.Count} task-dir entries from manifest: {string.Join(", ", dropped.Select(d => $"`{d}`"))}";
-                            ledger.AppendLine(note);
-                            ledger.AppendLine();
-                        }
-                        await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
-                        (body, targetedTestCommand, var cd, var ud) = await TryPlanCompletenessRetryAsync(body, json, manifest, rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, targetedTestCommand, cancellationToken);
-                        sessionCostUsd += cd; unknownCostStageCount += ud;
-                        if (config.DownshiftOnEarlyImplementation)
-                            implementationFrontLoaded = await EarlyImplementationDetector
-                                .ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, _dependencies.GitInvoker, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
+                        var plan = await HandleStage4Async(rootPath, runId, taskId, taskDirectory,
+                            config, stage, input, ledger, manifest, json, body,
+                            implementationFrontLoaded, cancellationToken);
+                        body = plan.Body;
+                        targetedTestCommand = plan.TargetedTestCommand;
+                        sessionCostUsd += plan.CostDelta;
+                        unknownCostStageCount += plan.UnknownCostDelta;
+                        implementationFrontLoaded = plan.ImplementationFrontLoaded;
                     }
 
                     if (stage.Number == 5)
@@ -251,7 +234,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 {
                                     var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
                                     var prefix = SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config).ToSummaryLines() + "\n\n";
-                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, prefix + failingTestOutput, statusEntries, cancellationToken);
+                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, prefix + failingTestOutput, statusEntries, cancellationToken,
+                                        cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                                 }
 
                                 // Genuinely red — record stage 10, enter fix-verify loop.

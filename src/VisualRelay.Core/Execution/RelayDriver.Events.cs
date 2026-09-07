@@ -90,20 +90,48 @@ public sealed partial class RelayDriver
                     stage.Number, stage.Name, run, maxRuns, fromTier, toTier, fromTurns, toTurns)
             }), cancellationToken);
 
+    /// <summary>
+    /// Flags a task, keeping the flagged stage's telemetry.
+    /// <para>
+    /// A stage that flags has spent exactly what a stage that finishes spends, so
+    /// it records the same stats and emits the same stage trace. It used to
+    /// record nulls and emit nothing, which made a drain's most expensive stages
+    /// the only ones its ledger could not see. Callers with the numbers in hand
+    /// pass them; the rest are priced from the stage's own attempt reports.
+    /// </para>
+    /// </summary>
     private async Task<RelayTaskOutcome> FlagAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         int stageNumber, string reason, string? details,
-        List<StageStatusEntry> statusEntries, CancellationToken cancellationToken)
+        List<StageStatusEntry> statusEntries, CancellationToken cancellationToken,
+        RelayCostEstimate? cost = null, TimeSpan? elapsed = null,
+        double sessionCostUsd = 0, int unknownCostStageCount = 0)
     {
         try
         {
             var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
             if (flaggedStage > 0)
             {
+                // A stage the success path already recorded has already been
+                // traced and priced. Emitting a second trace for it would
+                // double-count its cost in every consumer that sums the stream.
+                var index = flaggedStage - 1;
+                var settled = index >= 0 && index < statusEntries.Count
+                    && statusEntries[index].Status is "Done" or "Skipped";
+                var stageCost = settled
+                    ? null
+                    : cost ?? EstimateStageCostCumulative(taskDirectory, flaggedStage);
+
                 foreach (var e in statusEntries.Where(e => e.Status == "Running").ToList())
                     MarkStatus(statusEntries, e.Stage, "Done");
-                MarkStatusFlagged(statusEntries, flaggedStage, reason);
+                MarkStatusFlagged(statusEntries, flaggedStage, reason, stageCost, elapsed);
                 await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+
+                if (stageCost is not null && flaggedStage <= RelayStages.All.Count)
+                    await PublishStageDoneAsync(
+                        rootPath, runId, taskId, RelayStages.All[flaggedStage - 1],
+                        elapsed ?? TimeSpan.Zero, stageCost, sessionCostUsd,
+                        unknownCostStageCount, cancellationToken, status: "Flagged");
             }
 
             // Capture flagged working tree for resume (best-effort).
