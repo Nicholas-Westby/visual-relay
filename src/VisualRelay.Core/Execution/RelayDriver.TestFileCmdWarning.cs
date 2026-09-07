@@ -1,3 +1,4 @@
+using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -35,6 +36,28 @@ public sealed partial class RelayDriver
             {
                 ["message"] = warning,
                 ["testFileCmd"] = config.TestFileCommand
+            }), ct);
+    }
+
+    /// <summary>
+    /// Surfaces the no-op placeholder gate at run start. The placeholder exists so a
+    /// greenfield folder is runnable, but on a repo whose detection simply failed it
+    /// makes Verify report a green gate having run no tests at all — silently. A warn
+    /// event is the only thing standing between that and a committed, untested change.
+    /// </summary>
+    private async Task WarnPlaceholderTestCommandAsync(
+        RelayConfig config, string runId, string rootPath, string taskId, CancellationToken ct)
+    {
+        if (!ProjectBootstrapper.IsPlaceholder(config.TestCommand)) return;
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "warn", "test_command_placeholder", runId, rootPath, taskId,
+            Data: new Dictionary<string, string>
+            {
+                ["message"] =
+                    "testCmd is the visual-relay placeholder: it exits 0 without running any "
+                    + "tests, so every gate in this run is vacuous. Set a real testCmd in "
+                    + ".relay/config.json before trusting a green Verify.",
+                ["testCmd"] = config.TestCommand
             }), ct);
     }
 }

@@ -18,7 +18,10 @@ namespace VisualRelay.Core.Init;
 //   8. Maven         (pom.xml)                    → "./mvnw test" | "mvn test"
 //   9. Gradle        (build.gradle[.kts] / settings.gradle[.kts])
 //                                                 → "./gradlew test" | "gradle test"
-//  10. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
+//  10. Ruby          (Gemfile / Rakefile)         → "bundle exec rake test", then
+//                                                   "bundle exec rake"
+//  11. CMake         (CMakeLists.txt)             → configure + build + ctest
+//  12. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
 //
 // An explicit project script (package.json scripts.test) beats an inferred runner
 // (bun test). This way a Bun-lockfile repo whose tests are vitest via scripts.test
@@ -105,7 +108,29 @@ public static class TestCommandDetector
             candidates.Add($"{WrapperOrTool(rootPath, "gradlew", "gradle")} test");
         }
 
-        // 10. Python (weak) — tests/ or test/ directory is a last-resort signal
+        // 10. Ruby. Either marker is enough: a Gemfile is what `bundle exec` needs, and a
+        //     Rakefile is where the test task lives — most gems carry both, some only one.
+        //     `rake test` is the near-universal task name; the bare `rake` default task is
+        //     offered after it for the projects that route tests through it instead.
+        if (File.Exists(Path.Combine(rootPath, "Gemfile"))
+            || File.Exists(Path.Combine(rootPath, "Rakefile")))
+        {
+            candidates.Add("bundle exec rake test");
+            candidates.Add("bundle exec rake");
+        }
+
+        // 11. CMake. `ctest` alone fails on a repo that has never been configured, so the
+        //     candidate carries the whole three-step sequence — configure, build, test —
+        //     into a `build/` directory the project keeps out of git. It is validated (and
+        //     later run) through a shell, which is what makes the && chain work.
+        if (File.Exists(Path.Combine(rootPath, "CMakeLists.txt")))
+        {
+            candidates.Add(
+                "cmake -S . -B build && cmake --build build "
+                + "&& ctest --test-dir build --output-on-failure");
+        }
+
+        // 12. Python (weak) — tests/ or test/ directory is a last-resort signal
         if (Directory.Exists(Path.Combine(rootPath, "tests"))
             || Directory.Exists(Path.Combine(rootPath, "test")))
         {
@@ -158,130 +183,4 @@ public static class TestCommandDetector
     internal static bool HasAnyFile(string rootPath, params string[] patterns) =>
         patterns.Any(pattern =>
             Directory.EnumerateFiles(rootPath, pattern, SearchOption.TopDirectoryOnly).Any());
-}
-
-/// <summary>
-/// Detects repo policy guard commands by enumerating <c>tools/guards/*.sh</c>
-/// and chaining them with <c> &amp;&amp; </c>. When a .NET solution file
-/// (<c>*.slnx</c> or <c>*.sln</c>) exists in the repo root, appends
-/// <c>dotnet format &lt;solution&gt; --verify-no-changes</c>. When a
-/// SwiftPM manifest (<c>Package.swift</c>) exists, appends
-/// <c>swift build</c>. Toolchain checks are appended even when no guard
-/// scripts exist. Returns <c>null</c> when neither guards nor a recognized
-/// toolchain marker is found — guard detection never blocks init.
-/// </summary>
-public static class GuardCommandDetector
-{
-    /// <summary>
-    /// Detects the guard command or returns <c>null</c> when no guards or
-    /// toolchain markers exist.
-    /// </summary>
-    public static string? Detect(string rootPath)
-    {
-        var parts = new List<string>();
-
-        // Collect guard scripts when tools/guards/ exists.
-        var guardsDir = Path.Combine(rootPath, "tools", "guards");
-        if (Directory.Exists(guardsDir))
-        {
-            var scripts = Directory.EnumerateFiles(guardsDir, "*.sh")
-                .OrderBy(f => f, StringComparer.Ordinal)
-                .Select(Path.GetFileName)
-                .ToList();
-
-            foreach (var script in scripts)
-            {
-                parts.Add($"tools/guards/{script}");
-            }
-        }
-
-        // Append dotnet format when a .NET solution file exists.
-        var slnx = Directory.EnumerateFiles(rootPath, "*.slnx", SearchOption.TopDirectoryOnly).FirstOrDefault();
-        var sln = Directory.EnumerateFiles(rootPath, "*.sln", SearchOption.TopDirectoryOnly).FirstOrDefault();
-        var solution = slnx ?? sln;
-        if (solution is not null)
-        {
-            parts.Add($"dotnet format {Path.GetFileName(solution)} --verify-no-changes");
-        }
-
-        // Append "swift build" when a SwiftPM manifest exists.
-        if (File.Exists(Path.Combine(rootPath, "Package.swift")))
-        {
-            parts.Add("swift build");
-        }
-
-        if (parts.Count == 0)
-            return null;
-
-        return string.Join(" && ", parts);
-    }
-}
-
-/// <summary>
-/// Detects a whole-project formatter command by inspecting build-system markers
-/// in priority order (same order as <see cref="TestCommandDetector"/>).
-/// Returns <c>null</c> when no recognized toolchain is found — format detection
-/// never blocks init.
-/// </summary>
-public static class FormatCommandDetector
-{
-    /// <summary>
-    /// Detects the format command or returns <c>null</c> when no toolchain
-    /// markers are found.
-    /// </summary>
-    public static string? Detect(string rootPath)
-    {
-        // .NET solution or project
-        var slnx = Directory.EnumerateFiles(rootPath, "*.slnx", SearchOption.TopDirectoryOnly).FirstOrDefault();
-        var sln = Directory.EnumerateFiles(rootPath, "*.sln", SearchOption.TopDirectoryOnly).FirstOrDefault();
-        if (slnx is not null || sln is not null)
-            return $"dotnet format {Path.GetFileName(slnx ?? sln!)}";
-        if (TestCommandDetector.HasAnyFile(rootPath, "*.csproj"))
-            return "dotnet format";
-
-        // Bun / Node — look for a format script in package.json; fall back to prettier
-        if (File.Exists(Path.Combine(rootPath, "package.json")))
-        {
-            var fmt = ReadPackageJsonFormatScript(rootPath);
-            return fmt ?? "prettier --write .";
-        }
-
-        // Go
-        if (File.Exists(Path.Combine(rootPath, "go.mod")))
-            return "gofmt -w .";
-
-        // Rust
-        if (File.Exists(Path.Combine(rootPath, "Cargo.toml")))
-            return "cargo fmt";
-
-        // SwiftPM — swiftformat is the de-facto formatter.
-        if (File.Exists(Path.Combine(rootPath, "Package.swift")))
-            return "swiftformat .";
-
-        return null;
-    }
-
-    private static string? ReadPackageJsonFormatScript(string rootPath)
-    {
-        try
-        {
-            var path = Path.Combine(rootPath, "package.json");
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            if (doc.RootElement.TryGetProperty("scripts", out var scripts)
-                && scripts.ValueKind == JsonValueKind.Object
-                && scripts.TryGetProperty("format", out var formatScript)
-                && formatScript.ValueKind == JsonValueKind.String)
-            {
-                var value = formatScript.GetString();
-                if (!string.IsNullOrWhiteSpace(value))
-                    return value;
-            }
-        }
-        catch
-        {
-            // Best-effort — fall through to prettier on any parse failure.
-        }
-
-        return null;
-    }
 }

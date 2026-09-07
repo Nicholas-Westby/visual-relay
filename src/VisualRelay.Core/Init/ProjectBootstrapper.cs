@@ -33,6 +33,15 @@ public static class ProjectBootstrapper
     public const string PlaceholderTestCommand =
         "true # visual-relay placeholder test command — auto-managed; do not edit";
 
+    /// <summary>
+    /// Whether <paramref name="testCommand"/> is the no-op placeholder — a gate that
+    /// exits 0 having run nothing, so a green Verify proves nothing about the change.
+    /// </summary>
+    /// <param name="testCommand">The configured test command.</param>
+    /// <returns>True when it is the placeholder.</returns>
+    public static bool IsPlaceholder(string? testCommand) =>
+        string.Equals(testCommand, PlaceholderTestCommand, StringComparison.Ordinal);
+
     // The upgrade re-validates the detected command against a freshly-scaffolded
     // project; a first compile (cargo/go/cmake) can be slow, so allow generous time.
     private static readonly TimeSpan UpgradeValidationTimeout = TimeSpan.FromSeconds(120);
@@ -52,6 +61,18 @@ public static class ProjectBootstrapper
     /// task pipeline uses testTimeoutMs, so this only affects the create-config path.
     /// </summary>
     private static readonly TimeSpan InitValidationTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// The runner every candidate is smoke-validated with: the SAME shell the pipeline
+    /// later runs the command through (<c>/bin/sh -c</c>, or <c>cmd.exe /c</c>), so a
+    /// command with <c>&amp;&amp;</c>, a pipe, a glob or an env-var prefix is judged as
+    /// it will actually behave. Argv-splitting it instead handed the operators to the
+    /// first program as arguments and rejected commands that run perfectly well.
+    /// </summary>
+    /// <param name="timeout">Time box for the smoke run.</param>
+    /// <returns>The validation runner.</returns>
+    public static ITestRunner CreateValidationRunner(TimeSpan timeout) =>
+        new ShellTestRunner(timeout, loginShell: false);
 
     /// <summary>
     /// Makes <paramref name="rootPath"/> runnable by Visual Relay. Idempotent and
@@ -130,7 +151,7 @@ public static class ProjectBootstrapper
         var timeoutMs = (int)validationTimeout.TotalMilliseconds;
         if (candidates.Count > 0)
         {
-            var runner = validationRunner ?? new DirectExecTestRunner(validationTimeout);
+            var runner = validationRunner ?? CreateValidationRunner(validationTimeout);
             var validator = new TestCommandValidator(runner);
             var rejections = new List<(string, string, int, bool, string)>();
 

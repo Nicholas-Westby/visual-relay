@@ -102,6 +102,14 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _needsInitialization;
 
+    /// <summary>
+    /// True when <c>testCmd</c> is Visual Relay's no-op placeholder — the gate exits 0
+    /// having run nothing. Refreshed with the rest of the config; surfaced on
+    /// <c>GET /state</c> so an operator can see a green Verify is vacuous.
+    /// </summary>
+    [ObservableProperty]
+    private bool _testCommandIsPlaceholder;
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
     private string _initTestCommandInput = string.Empty;

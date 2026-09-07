@@ -143,6 +143,7 @@ public partial class MainWindowViewModel
         var configResult = await RelayConfigLoader.TryLoadAsync(RootPath);
         NeedsInitialization = !ShowArchive && configResult.NeedsInitialization;
         ConfigDiagnostic = configResult.Status == RelayConfigStatus.Malformed ? configResult.Diagnostic : null;
+        TestCommandIsPlaceholder = ProjectBootstrapper.IsPlaceholder(configResult.Config.TestCommand);
         if (configResult.Status == RelayConfigStatus.Loaded)
         {
             CommitProofArtifacts = configResult.Config.CommitProofArtifacts;

@@ -30,6 +30,8 @@ public sealed partial class ControlApi
             isBusy = vm.IsBusy,
             pauseRequested = vm.PauseRequested,
             statusText = vm.StatusText,
+            // True ⇒ testCmd is the no-op placeholder: a green Verify proves nothing.
+            testCommandIsPlaceholder = vm.TestCommandIsPlaceholder,
             setupCheck = vm.SetupCheck is { } sc ? new
             {
                 command = sc.Command,

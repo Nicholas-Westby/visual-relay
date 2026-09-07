@@ -88,6 +88,8 @@ Endpoints:
     executing task (`stageNumber`/`stageName`/`tier` null between stages); empty when idle.
   - `sessionCostUsd` — cumulative USD accrued since launch, 0 before the first priced
     stage completes.
+  - `testCommandIsPlaceholder` — true when `testCmd` is Visual Relay's no-op placeholder
+    (it exits 0 having run nothing), so a green Verify proves nothing about the change.
   - `drainHalted` / `haltReason` — the drain circuit breaker's halt marker and its
     reason (clipped to 500 characters); false/null when no root is open or no marker exists.
   - every `tasks[]` entry, and `selectedTask`, also carries `reviewReason`, `costUsd`,

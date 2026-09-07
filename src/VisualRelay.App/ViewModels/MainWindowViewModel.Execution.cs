@@ -189,7 +189,8 @@ public partial class MainWindowViewModel
 
         // Smoke-validate before writing — never persist a command that can't start.
         StatusText = "Validating test command (may compile up to 2 min)…";
-        var runner = InitValidationRunnerFactory?.Invoke(ProjectBootstrapper.CreateConfigValidationTimeout) ?? new DirectExecTestRunner(ProjectBootstrapper.CreateConfigValidationTimeout);
+        var runner = InitValidationRunnerFactory?.Invoke(ProjectBootstrapper.CreateConfigValidationTimeout)
+            ?? ProjectBootstrapper.CreateValidationRunner(ProjectBootstrapper.CreateConfigValidationTimeout);
         var validator = new TestCommandValidator(runner);
         var validation = await validator.ValidateAsync(RootPath, command);
 
