@@ -14,7 +14,7 @@ public partial class MainWindowViewModel
     // Injectable runner for the baseline guard check in EnsureRunnableAsync. Null →
     // the same sandboxed runner the pipeline uses. Tests inject a fake so the gate is
     // exercised without spawning a real build.
-    public Func<RelayConfig, ITestRunner>? BaselineGuardRunnerFactory { get; set; }
+    public Func<RelayConfig, ITestRunner>? BaselineGuardRunnerFactory { get; init; }
 
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 

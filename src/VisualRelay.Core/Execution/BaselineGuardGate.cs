@@ -46,7 +46,7 @@ public static class BaselineGuardGate
     /// <param name="guardCommand">The configured guard command.</param>
     /// <param name="result">What running it produced.</param>
     /// <returns>The refusal message.</returns>
-    internal static string BuildMessage(string guardCommand, TestRunResult result)
+    private static string BuildMessage(string guardCommand, TestRunResult result)
     {
         var verdict = result.TimedOut ? "timed out" : $"fails (exit {result.ExitCode})";
         var message =

@@ -26,7 +26,7 @@ public sealed partial class RelayDriver
     /// the guard scripts the task itself added) and the bootstrap check (it runs only
     /// when the manifest touches a bootstrap file — see ResolveBootstrapCheck).
     /// </summary>
-    internal static bool IsEnvironmentSetupFailure(SetupCheckResults checks) =>
+    private static bool IsEnvironmentSetupFailure(SetupCheckResults checks) =>
         checks.TestCheck != "red"
         && checks.NewGuardProbeCheck != "red"
         && checks.BootstrapCheck != "red"
@@ -37,7 +37,7 @@ public sealed partial class RelayDriver
     /// verbatim, and carries the tail of what it printed so the operator can act on
     /// it without opening the artifacts.
     /// </summary>
-    internal static string BuildEnvironmentFailureReason(SetupCheckResults checks)
+    private static string BuildEnvironmentFailureReason(SetupCheckResults checks)
     {
         var command = checks.GuardCommand ?? "guard command";
         var reason = $"environment failure: guard '{command}' failed while the tests passed";
