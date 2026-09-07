@@ -28,33 +28,69 @@ public sealed partial class RelayDriver
         List<StageStatusEntry> statusEntries)
     {
         var stage = FindCancelledStage(statusEntries);
-        try
+
+        // Defence-in-depth, exactly as a flag: a failed file or git operation still
+        // yields a valid outcome carrying the cancel reason. Each step is guarded on
+        // its OWN, so a broken one cannot take the steps after it down with it — above
+        // all the restore, which is the only thing that puts the repository back.
+        async Task StepAsync(string step, Func<Task> action)
         {
-            if (stage > 0)
+            try
+            {
+                await action();
+            }
+            catch (Exception ex)
+            {
+                await LogWindDownFailureAsync(rootPath, runId, taskId, stage, step, ex);
+            }
+        }
+
+        if (stage > 0)
+            await StepAsync("status", async () =>
             {
                 foreach (var entry in statusEntries.Where(e => e.Status == "Running").ToList())
                     MarkStatus(statusEntries, entry.Stage, "Done");
                 MarkStatusFlagged(statusEntries, stage, CancelledReason);
                 await WriteStatusAsync(taskDirectory, statusEntries, CancellationToken.None);
-            }
+            });
 
-            // Same order a flag uses: capture the partial work before the marker, so
-            // the marker is never the only record that work existed.
-            await FlaggedWorkStore.CaptureAsync(rootPath, taskId, taskDirectory, stage,
-                _dependencies.GitInvoker, DateTimeOffset.UtcNow, CancellationToken.None);
-            await WriteNeedsReviewMarkerAsync(taskDirectory, CancelledReason, stage, CancellationToken.None);
+        // Same order a flag uses: capture the partial work before the marker, so
+        // the marker is never the only record that work existed.
+        await StepAsync("capture", () => FlaggedWorkStore.CaptureAsync(
+            rootPath, taskId, taskDirectory, stage,
+            _dependencies.GitInvoker, DateTimeOffset.UtcNow, CancellationToken.None));
+        await StepAsync("marker", () => WriteNeedsReviewMarkerAsync(
+            taskDirectory, CancelledReason, stage, CancellationToken.None));
+        await StepAsync("event", () => _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "warn", "cancelled", runId, rootPath, taskId, stage,
+            Data: new Dictionary<string, string> { ["reason"] = CancelledReason }), CancellationToken.None));
+        await StepAsync("restore", () => RestoreRunBaseAsync(rootPath, taskId));
+
+        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, CancelledReason);
+    }
+
+    /// <summary>
+    /// Names the wind-down step that failed, so an operator reading run.log can tell a
+    /// missing marker from a tree that was never put back. Best-effort in turn: the
+    /// event sink may be the very thing that just failed.
+    /// </summary>
+    private async Task LogWindDownFailureAsync(
+        string rootPath, string runId, string taskId, int stage, string step, Exception failure)
+    {
+        try
+        {
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
-                DateTimeOffset.UtcNow, "warn", "cancelled", runId, rootPath, taskId, stage,
-                Data: new Dictionary<string, string> { ["reason"] = CancelledReason }), CancellationToken.None);
-            await RestoreRunBaseAsync(rootPath, taskId);
+                DateTimeOffset.UtcNow, "warn", "cancel_winddown_failed", runId, rootPath, taskId, stage,
+                Data: new Dictionary<string, string>
+                {
+                    ["step"] = step,
+                    ["error"] = failure.Message
+                }), CancellationToken.None);
         }
         catch
         {
-            // Defence-in-depth, exactly as a flag: a failed file or git operation
-            // still yields a valid outcome carrying the cancel reason.
+            // Nothing left to report through; the outcome still names the cancel.
         }
-
-        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, CancelledReason);
     }
 
     /// <summary>
