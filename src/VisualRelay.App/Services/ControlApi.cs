@@ -37,6 +37,7 @@ public sealed partial class ControlApi(
         "resume" => viewModel.ResumeSelectedCommand,
         "refresh" => viewModel.RefreshCommand,
         "pause-toggle" => viewModel.TogglePauseCommand,
+        "cancel" => viewModel.CancelRunCommand,
         "archive-toggle" => viewModel.ToggleArchiveCommand,
         "new-task" => viewModel.OpenNewTaskDialogCommand,
         "follow-running" => viewModel.FollowRunningTaskCommand,

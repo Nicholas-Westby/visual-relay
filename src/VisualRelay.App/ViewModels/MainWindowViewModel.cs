@@ -194,6 +194,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelRunCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
     [NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]

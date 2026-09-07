@@ -73,8 +73,8 @@ Endpoints:
 
 - `GET /` — HTML index page documenting the API surface (routes and commands).
 - `GET /health` — liveness, `{ "status": "ok", "app": "Visual Relay" }`.
-- `GET /state` — JSON snapshot: `rootPath`, `isBusy`, `pauseRequested`, `statusText`,
-  `selectedTask`, `tasks[]`, `stages[]`, and a `commands` map giving each
+- `GET /state` — JSON snapshot: `rootPath`, `isBusy`, `pauseRequested`, `cancelRequested`,
+  `statusText`, `selectedTask`, `tasks[]`, `stages[]`, and a `commands` map giving each
   command's `enabled` flag (mirrors which buttons are clickable). It also answers
   "is it stuck?", "what is it doing right now?", "did the drain halt?" and "what has
   it cost?" — no file reading required:
@@ -92,6 +92,9 @@ Endpoints:
     (it exits 0 having run nothing), so a green Verify proves nothing about the change.
   - `drainHalted` / `haltReason` — the drain circuit breaker's halt marker and its
     reason (clipped to 500 characters); false/null when no root is open or no marker exists.
+  - `cancelRequested` — true from a `cancel` request until the run has finished winding
+    down, so a caller can tell "stopping" from "stopped". `statusText` then reads
+    `Cancelled <task>`.
   - every `tasks[]` entry, and `selectedTask`, also carries `reviewReason`, `costUsd`,
     `durationSeconds`, `completedStageCount`, `settledStageCount`, `pipelineStageCount`.
 - `POST /command/{name}` — invokes the same command the button binds. A **disabled**
@@ -102,7 +105,7 @@ Endpoints:
   and the pre-commit hook; the config is written but never committed, and the placeholder
   is upgraded to the real test command automatically once the project gains a
   toolchain), `run-all`, `run-selected`,
-  `resume`, `refresh`, `pause-toggle`, `archive-toggle`,
+  `resume`, `cancel`, `refresh`, `pause-toggle`, `archive-toggle`,
   `new-task`, `follow-running`, `edit`, `rewrite-selected`, `cancel-rewrite`,
   `revert-rewrite`, `mark-done`, `reset-selected`, plus property actions
   `open-folder` (body `{"path":"<dir>"}` — the programmatic Browse: point the app at a
@@ -111,6 +114,13 @@ Endpoints:
   `obsidian-scan`, `obsidian-bridge` (body `{"value":true|false}` or `{"path":"<vault>"}`),
   `select-activity-tab` and `select-detail-tab` (body `{"name":"<tab header>"}` or
   `{"index":<n>}`).
+  `cancel` stops the run in flight — `run-all`, `run-selected` and `resume` alike — and
+  is enabled only while one is active (`409` when idle). It returns immediately and the
+  run winds down asynchronously: the interrupted task's partial work is captured, its
+  worktree is reset to the run base, and it is marked `NEEDS-REVIEW` with the reason
+  `cancelled by operator` (a `cancelled` event lands in its `run.log`). A task whose
+  commit had already started stays committed; queued tasks stay pending and no
+  `DRAIN-HALTED` marker is written. Poll `/state.cancelRequested` for the wind-down.
   The destructive commands — `mark-done`, `rewrite-selected`, `reset-selected` — mirror the
   GUI confirm modal: each needs `{"confirm":true}` (else `409`, no-op) and is awaited to
   completion, so `{"ok":true}` means the effect took.

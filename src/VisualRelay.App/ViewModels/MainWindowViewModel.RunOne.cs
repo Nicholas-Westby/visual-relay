@@ -32,7 +32,14 @@ public partial class MainWindowViewModel
             config,
             VerboseSandboxDiagnostics);
 
-    private async Task RunOneAsync(TaskRowViewModel task, bool resume = false)
+    /// <summary>
+    /// Test seam: builds the runner a single-task run drives. Null in production,
+    /// where <see cref="RunOneAsync"/> builds the real <see cref="RelayDriver"/> over
+    /// the stage agents; a test installs a fake to exercise the run's wiring.
+    /// </summary>
+    internal Func<RelayConfig, IRelayEventSink, IRelayTaskRunner>? SingleRunTaskRunnerFactory { get; set; }
+
+    private async Task RunOneAsync(TaskRowViewModel task, CancellationToken cancellationToken, bool resume = false)
     {
         if (resume) { ResetStages(task.Id); } else { ResetStages(); }
         ClearLogState();
@@ -45,13 +52,10 @@ public partial class MainWindowViewModel
         var observable = new ObservableRelayEventSink(HandleRelayEvent);
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
-        var subagentRunner = SubagentRunnerFactory.Create(
-            config, sink, Env, VerboseSandboxDiagnostics);
-        var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics), sink, new GitInvoker());
-        var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
+        var runner = SingleRunTaskRunnerFactory?.Invoke(config, sink) ?? CreateSingleRunDriver(config, sink, resume);
         try
         {
-            var outcome = await driver.RunTaskAsync(RootPath, task.Id);
+            var outcome = await runner.RunTaskAsync(RootPath, task.Id, cancellationToken);
             StatusText = outcome.Status == RelayTaskOutcomeStatus.Committed ? $"Committed {task.Id}" : $"Flagged {task.Id}";
             await ExportSummaryOnCompletion(task.Id, outcome);
             await LoadRunHistoryAsync(task.Id);
@@ -71,5 +75,13 @@ public partial class MainWindowViewModel
             RefreshSelectedTaskErrorAfterRun(task.Id);
             NotifyPauseStateChanged();
         }
+    }
+
+    /// <summary>The real single-task runner: the full pipeline over the stage agents.</summary>
+    private RelayDriver CreateSingleRunDriver(RelayConfig config, IRelayEventSink sink, bool resume)
+    {
+        var subagentRunner = SubagentRunnerFactory.Create(config, sink, Env, VerboseSandboxDiagnostics);
+        var dependencies = new RelayDriverDependencies(subagentRunner, CreateSandboxedTestRunner(config), sink, new GitInvoker());
+        return new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
     }
 }

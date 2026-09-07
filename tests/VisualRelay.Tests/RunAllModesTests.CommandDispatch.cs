@@ -21,8 +21,7 @@ public sealed partial class RunAllModesTests
 
         // The DrainQueueAsync method must pass SelectedRunAllMode to the
         // controller's DrainAsync call so the mode selection takes effect.
-        Assert.Contains("SelectedRunAllMode", executionSource, StringComparison.Ordinal);
-        Assert.Contains("DrainAsync(mode:", executionSource, StringComparison.Ordinal);
+        Assert.Contains("DrainAsync(cancellationToken, SelectedRunAllMode)", executionSource, StringComparison.Ordinal);
     }
 
     // ── CLI Program.cs dispatch coverage ─────────────────────────────────

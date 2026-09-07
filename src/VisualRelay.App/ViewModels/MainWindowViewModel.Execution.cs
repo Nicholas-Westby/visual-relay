@@ -26,12 +26,7 @@ public partial class MainWindowViewModel
             return;
         }
 
-        var task = SelectedTask;
-        await RunBusyAsync(async () =>
-        {
-            await RunOneAsync(task);
-            await ReloadTaskListAsync(task.Id);
-        });
+        await RunSelectedTaskAsync(SelectedTask);
     }
 
     [RelayCommand(CanExecute = nameof(CanRunSelected))]
@@ -47,13 +42,20 @@ public partial class MainWindowViewModel
             return;
         }
 
-        var task = SelectedTask;
-        await RunBusyAsync(async () =>
+        await RunSelectedTaskAsync(SelectedTask, resume: true);
+    }
+
+    /// <summary>
+    /// The cancellable single-task run behind both Run and Resume: one scope, one
+    /// token, threaded into the driver so a cancel reaches the running stage.
+    /// Internal so a test can drive it without re-running the pre-run gate.
+    /// </summary>
+    internal Task RunSelectedTaskAsync(TaskRowViewModel task, bool resume = false) =>
+        RunCancellableAsync(async cancellationToken =>
         {
-            await RunOneAsync(task, resume: true);
+            await RunOneAsync(task, cancellationToken, resume);
             await ReloadTaskListAsync(task.Id);
         });
-    }
 
     [RelayCommand(CanExecute = nameof(CanDrain))]
     private async Task DrainQueueAsync()
@@ -69,7 +71,7 @@ public partial class MainWindowViewModel
             return;
         }
 
-        await RunBusyAsync(async () =>
+        await RunCancellableAsync(async cancellationToken =>
         {
             var config = await RelayConfigLoader.LoadAsync(RootPath);
 
@@ -124,14 +126,16 @@ public partial class MainWindowViewModel
                     controller.Tasks.RemoveAt(i);
 
             IReadOnlyList<RelayTaskOutcome> results;
-            try { results = await controller.DrainAsync(mode: SelectedRunAllMode); }
+            try { results = await controller.DrainAsync(cancellationToken, SelectedRunAllMode); }
             finally { _activeDrainController = null; }
 
             var flaggedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Flagged);
             var committedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Committed);
             var plannedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Planned);
 
-            if (controller.State == RelayQueueState.Paused)
+            if (controller.State == RelayQueueState.Cancelled)
+                StatusText = "Run cancelled";
+            else if (controller.State == RelayQueueState.Paused)
                 StatusText = "Paused at task boundary";
             else if (controller.State == RelayQueueState.Failed)
                 StatusText = "Drain halted: commit gate rejected consecutive tasks";

@@ -29,6 +29,9 @@ public sealed partial class ControlApi
             showArchive = vm.ShowArchive,
             isBusy = vm.IsBusy,
             pauseRequested = vm.PauseRequested,
+            // True from a cancel request until the run has finished winding down —
+            // the difference between "stopping" and "stopped".
+            cancelRequested = vm.CancelRequested,
             statusText = vm.StatusText,
             // True ⇒ testCmd is the no-op placeholder: a green Verify proves nothing.
             testCommandIsPlaceholder = vm.TestCommandIsPlaceholder,
@@ -170,7 +173,7 @@ public sealed partial class ControlApi
 
     private static readonly string[] IcommandNames =
     [
-        "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
+        "bootstrap", "run-all", "run-selected", "resume", "cancel", "refresh", "pause-toggle",
         "archive-toggle", "new-task", "follow-running", "edit",
         "rewrite-selected", "cancel-rewrite", "revert-rewrite", "mark-done", "reset-selected"
     ];
