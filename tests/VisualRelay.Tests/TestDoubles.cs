@@ -47,10 +47,12 @@ internal sealed class TestRepository : IDisposable
     public string AttemptReportPath(string taskId, int stage, int attempt) =>
         Path.Combine(Root, ".relay", taskId, $"stage{stage}-attempt{attempt}.report.json");
 
-    public void WriteConfig(string testCommand, string[] logSources, bool baselineVerify = true, bool enableFixVerify = false, bool archiveOnDone = true, string? formatCmd = null, int maxStageFailures = 3)
+    public void WriteConfig(string testCommand, string[] logSources, bool baselineVerify = true, bool enableFixVerify = false, bool archiveOnDone = true, string? formatCmd = null, int maxStageFailures = 3, string? testFileCmd = null, string? guardCmd = null)
     {
         Directory.CreateDirectory(Path.Combine(Root, ".relay"));
         var formatCmdLine = formatCmd is not null ? $",\n      \"formatCmd\": \"{formatCmd}\"" : "";
+        var testFileCmdLine = testFileCmd is not null ? $",\n      \"testFileCmd\": \"{testFileCmd}\"" : "";
+        var guardCmdLine = guardCmd is not null ? $",\n      \"guardCmd\": \"{guardCmd}\"" : "";
         File.WriteAllText(
             Path.Combine(Root, ".relay", "config.json"),
             $$"""
@@ -61,7 +63,7 @@ internal sealed class TestRepository : IDisposable
               "enableFixVerify": {{enableFixVerify.ToString().ToLowerInvariant()}},
               "maxStageFailures": {{maxStageFailures}},
               "archiveOnDone": {{archiveOnDone.ToString().ToLowerInvariant()}},
-              "tierProfiles": { "vision": "vision" }{{formatCmdLine}}
+              "tierProfiles": { "vision": "vision" }{{formatCmdLine}}{{testFileCmdLine}}{{guardCmdLine}}
             }
             """);
     }

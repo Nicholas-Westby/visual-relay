@@ -21,6 +21,16 @@ public static partial class SandboxedStage
     internal const int MaxManifestEntriesInPrompt = 100;
 
     /// <summary>
+    /// Stated in <c>## Verify command</c> whenever the targeted command degenerated to
+    /// the project's whole test command — no <c>{files}</c> form is configured, or the
+    /// manifest names no runnable test file. Without it a stage told to run "ONLY the
+    /// targeted test command" reads the full suite as a contradiction and improvises.
+    /// </summary>
+    internal const string FullSuiteIsTargetedNotice =
+        "This project has no narrower per-file test command available for this task, "
+        + "so its full test command below IS the targeted command for this stage.";
+
+    /// <summary>
     /// The manifest as the prompt carries it, capped and counted.
     /// </summary>
     /// <param name="manifest">Every path the manifest names.</param>
@@ -87,7 +97,12 @@ public static partial class SandboxedStage
 
         if (!string.IsNullOrWhiteSpace(invocation.TestCommand))
         {
-            parts.AddRange(["", "## Verify command", "Run this exact command to reproduce and confirm the fix:", invocation.TestCommand]);
+            parts.AddRange(["", "## Verify command"]);
+            if (invocation.TestCommandIsFullSuite) parts.Add(FullSuiteIsTargetedNotice);
+            // Deliberately neutral about WHAT is being checked: the same section serves
+            // the stage that must watch new tests fail and the stages that must watch
+            // them pass, and "confirm the fix" invited Author-tests to implement one.
+            parts.AddRange(["Run this exact command to verify your work:", invocation.TestCommand]);
         }
 
         if (!string.IsNullOrWhiteSpace(invocation.FullTestCommand) &&

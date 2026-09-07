@@ -110,22 +110,20 @@ public sealed partial class RelayDriver
     /// <summary>
     /// Plan-completeness gate: on coverage gap, issues one corrective retry
     /// of stage 4 with the gap error in <c>LastTestOutput</c>.  Returns the
-    /// (possibly updated) stage-4 JSON body, updated targeted test command,
-    /// and cost-tracking deltas.
+    /// (possibly updated) stage-4 JSON body and cost-tracking deltas.
     /// </summary>
-    private async Task<(string Body, string TargetedTestCommand, double CostDelta, int UnknownDelta)>
+    private async Task<(string Body, double CostDelta, int UnknownDelta)>
         TryPlanCompletenessRetryAsync(
             string body, JsonElement json, List<string> manifest,
             string rootPath, string runId, string taskId, string taskDirectory,
             RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
-            StringBuilder ledger, string targetedTestCommand,
-            CancellationToken cancellationToken)
+            StringBuilder ledger, CancellationToken cancellationToken)
     {
-        if (_options.LastStageToRun == 4) return (body, targetedTestCommand, 0, 0);
+        if (_options.LastStageToRun == 4) return (body, 0, 0);
         var pn = ReadOptionalString(json, "plan");
-        if (pn is null) return (body, targetedTestCommand, 0, 0);
+        if (pn is null) return (body, 0, 0);
         var ce = PlanCompletenessGate.CheckCoverage(pn, manifest, input.Markdown);
-        if (ce is null) return (body, targetedTestCommand, 0, 0);
+        if (ce is null) return (body, 0, 0);
 
         var ri = BuildInvocation(rootPath, runId, taskId, taskDirectory,
             config, stage, input, ledger, manifest);
@@ -142,10 +140,9 @@ public sealed partial class RelayDriver
                 .Distinct(StringComparer.Ordinal)
                 .Where(e => !IsPathUnderDirectory(rootPath, e, config.TasksDir))
                 .Select(e => e.StartsWith('+') ? e[1..] : e));
-            var ttc = BuildTargetedTestCommand(config, manifest);
             await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
-            return (rr.Json, ttc, cd, ud);
+            return (rr.Json, cd, ud);
         }
-        return (body, targetedTestCommand, cd, ud);
+        return (body, cd, ud);
     }
 }

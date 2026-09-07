@@ -43,7 +43,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var taskHash = string.Empty;
             var sessionCostUsd = 0d; var unknownCostStageCount = 0;
             var reviewPairHandled = false; string? fixSkipReason = null; var fixVerifyHandled = false;
-            var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
             var implementationFrontLoaded = false;
             var firstStageToRun = 1;
             if (_options.Resume) LoadResumeState(taskDirectory, taskId, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
@@ -155,7 +154,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     // Stage 10 Verify gets no imperative test command; only coding stages (6/9) do.
                     var invocation = BuildStageInvocation(rootPath, runId, taskId, taskDirectory,
-                        config, stage, input, ledger, manifest, targetedTestCommand,
+                        config, stage, input, ledger, manifest,
                         implementationFrontLoaded, stage10TestResult);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     // Fold every attempt RunAsync ran (escalation writes per-attempt reports), so
@@ -181,7 +180,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             config, stage, input, ledger, manifest, json, body,
                             implementationFrontLoaded, cancellationToken);
                         body = plan.Body;
-                        targetedTestCommand = plan.TargetedTestCommand;
                         sessionCostUsd += plan.CostDelta;
                         unknownCostStageCount += plan.UnknownCostDelta;
                         implementationFrontLoaded = plan.ImplementationFrontLoaded;

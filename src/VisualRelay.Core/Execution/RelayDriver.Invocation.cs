@@ -28,6 +28,17 @@ public sealed partial class RelayDriver
         var turns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;
         var ceilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;
         var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
+        // Every stage whose prompt names the section gets it, from every call site — the
+        // review pair and its retry build invocations here too and used to pass nothing,
+        // so Review was told to use a heading its input never contained.
+        var verifyCommand = testCommand;
+        if (verifyCommand is null && StageUsesVerifyCommand(stage.Number))
+            verifyCommand = BuildTargetedTestCommand(config, manifest);
+        // Fix-verify (11) is handed the full gate on purpose and its own prompt says so;
+        // the fallback notice would misdescribe a project that does have a {files} form.
+        var fullSuiteIsTargeted = stage.Number != 11
+            && verifyCommand is not null
+            && string.Equals(verifyCommand, config.TestCommand, StringComparison.Ordinal);
         return new StageInvocation(
             stage,
             stage.Tier,
@@ -43,24 +54,34 @@ public sealed partial class RelayDriver
             turns,
             LastTestOutput: lastTestOutput,
             TaskContext: input.Context,
-            TestCommand: testCommand,
+            TestCommand: verifyCommand,
             FullTestCommand: fullTestCommand,
             AbsoluteCeilingMs: ceilingMs,
             VerifyOutputPath: verifyOutputPath,
-            TasksDir: config.TasksDir);
+            TasksDir: config.TasksDir,
+            TestCommandIsFullSuite: fullSuiteIsTargeted);
     }
+
+    /// <summary>
+    /// Whether stage <paramref name="stageNumber"/>'s system prompt tells the model to
+    /// use the command in <c>## Verify command</c>. Verify (10) is excluded on purpose:
+    /// it is told NOT to run the suite itself.
+    /// </summary>
+    private static bool StageUsesVerifyCommand(int stageNumber) =>
+        stageNumber is 5 or 6 or 7 or 9 or 11;
 
     private StageInvocation BuildStageInvocation(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
         StringBuilder ledger, IReadOnlyList<string> manifest,
-        string targetedTestCommand, bool implementationFrontLoaded,
-        TestRunResult? verifyTestResult)
+        bool implementationFrontLoaded, TestRunResult? verifyTestResult)
     {
         var effectiveStage = implementationFrontLoaded && stage.Number == 6
             ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
+        // The targeted command is derived inside BuildInvocation from the live manifest,
+        // so it is right on a resumed run too — a threaded copy was computed before the
+        // resume restored the manifest and stayed the whole suite.
         return BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
-            testCommand: stage.Number is 6 or 9 ? targetedTestCommand : null,
             fullTestCommand: stage.Number is 6 or 9 ? config.TestCommand : null,
             lastTestOutput: verifyTestResult?.Output);
     }

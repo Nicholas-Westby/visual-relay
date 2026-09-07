@@ -10,7 +10,6 @@ public sealed partial class RelayDriver
 {
     /// <summary>What stage 4 leaves behind for the stages after it.</summary>
     /// <param name="Body">The plan body, possibly rewritten by the completeness retry.</param>
-    /// <param name="TargetedTestCommand">The manifest-narrowed test command.</param>
     /// <param name="CostDelta">USD the completeness retry added.</param>
     /// <param name="UnknownCostDelta">Unpriced stages the retry added.</param>
     /// <param name="ImplementationFrontLoaded">
@@ -18,7 +17,6 @@ public sealed partial class RelayDriver
     /// </param>
     private sealed record Stage4Result(
         string Body,
-        string TargetedTestCommand,
         double CostDelta,
         int UnknownCostDelta,
         bool ImplementationFrontLoaded);
@@ -57,7 +55,6 @@ public sealed partial class RelayDriver
         }
 
         manifest.AddRange(clean);
-        var targetedTestCommand = BuildTargetedTestCommand(config, manifest);
         if (dropped.Count > 0)
         {
             var note = dropped.Count == 1
@@ -68,13 +65,12 @@ public sealed partial class RelayDriver
         }
 
         await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
-        var (retriedBody, retriedCommand, costDelta, unknownDelta) = await TryPlanCompletenessRetryAsync(
+        var (retriedBody, costDelta, unknownDelta) = await TryPlanCompletenessRetryAsync(
             body, json, manifest, rootPath, runId, taskId, taskDirectory, config, stage, input,
-            ledger, targetedTestCommand, cancellationToken);
+            ledger, cancellationToken);
 
         return new Stage4Result(
             retriedBody,
-            retriedCommand,
             costDelta,
             unknownDelta,
             config.DownshiftOnEarlyImplementation

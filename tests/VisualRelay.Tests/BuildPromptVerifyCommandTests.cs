@@ -56,7 +56,8 @@ public sealed class BuildPromptVerifyCommandTests
     [Fact]
     public void BuildPrompt_Stage9_NullTestCommand_NoVerifySection()
     {
-        // Stage 9 (Verify) does not receive a testCommand — regression guard
+        // BuildPrompt renders nothing when the caller supplied no command, whatever
+        // the stage — the section is the invocation builder's decision, not this one's.
         var invocation = MakeInvocation(9, null);
 
         var prompt = SandboxedStage.BuildPrompt(invocation);

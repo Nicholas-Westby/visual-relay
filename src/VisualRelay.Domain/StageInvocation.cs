@@ -35,4 +35,9 @@ public sealed record StageInvocation(
     // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt
     // emits a "Protected paths" header line naming it as queue bookkeeping that is
     // never part of the task's diff. Null (default) omits the line.
-    string? TasksDir = null);
+    string? TasksDir = null,
+    // True when TestCommand is the project's WHOLE test command because no narrower
+    // one could be built (no {files} form configured, or no runnable test file in the
+    // manifest). BuildPrompt then says so in ## Verify command, so a stage told to run
+    // "ONLY the targeted test command" does not read the full suite as a contradiction.
+    bool TestCommandIsFullSuite = false);
