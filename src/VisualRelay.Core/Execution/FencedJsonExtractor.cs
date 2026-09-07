@@ -67,7 +67,15 @@ internal static class FencedJsonExtractor
         }
     }
 
-    private static string? ExtractFirstJsonValue(string text, int from)
+    /// <summary>
+    /// The first brace- or bracket-balanced JSON value at or after
+    /// <paramref name="from"/>, string- and escape-aware. Null when there is
+    /// none, or when it never closes.
+    /// </summary>
+    /// <param name="text">The text to scan.</param>
+    /// <param name="from">Where to start looking.</param>
+    /// <returns>The value's exact span, unparsed.</returns>
+    internal static string? ExtractFirstJsonValue(string text, int from)
     {
         var openIndex = -1;
         var open = '\0';

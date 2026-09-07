@@ -9,6 +9,13 @@ public sealed record StageContractResult(string? Json, string? Error)
 {
     /// <summary>True when a contract came out.</summary>
     public bool Succeeded => Json is not null;
+
+    /// <summary>
+    /// What had to be repaired before the block would parse, empty when it parsed
+    /// as written. A stage announces these, because a contract that only survived
+    /// repair is a defect worth seeing even though the stage went on.
+    /// </summary>
+    public IReadOnlyList<string> Repairs { get; init; } = [];
 }
 
 /// <summary>
@@ -20,15 +27,17 @@ public sealed record StageContractResult(string? Json, string? Error)
 /// no stdout: this reads the model's own answer.
 /// </para>
 /// <para>
-/// The scan runs FORWARD from the start of the answer, tracking string state, so
-/// it only ever considers braces that are genuinely at the top level. Searching
-/// backwards from the last brace is what an earlier version did, and it is
-/// wrong: the last brace is frequently INSIDE a string value — a plan describing
-/// code says things like <c>returns {"a": 1}</c> — and a scan starting there has
-/// no idea it is inside a string, so it can lift a fragment out of the middle of
-/// the contract and hand back an object that parses but is not the contract. A
-/// benchmark run failed exactly that way, reporting a missing key against text
-/// that had the key.
+/// Where the contract is comes from <see cref="StageContractLocator"/>, which
+/// asks the model's own fence before it guesses. Candidates are tried in that
+/// order and the first that both parses and satisfies the contract wins, so an
+/// example object the model wrote in passing can never displace the real one.
+/// </para>
+/// <para>
+/// Only when nothing in the answer parses as written does
+/// <see cref="StageContractRepair"/> get a turn. Across a 27-task run, five
+/// stages were discarded whose reasoning and code were correct and whose block
+/// was one escape or one comma away from valid; nothing else about them was
+/// wrong.
 /// </para>
 /// </summary>
 public static class StageContractReader
@@ -46,37 +55,56 @@ public static class StageContractReader
             return new StageContractResult(null, "the model returned an empty answer");
 
         var required = RequiredKeys(contract).ToList();
-        var candidates = TopLevelObjects(answer);
+        var candidates = StageContractLocator.Candidates(answer);
         if (candidates.Count == 0)
             return new StageContractResult(
                 null, "no JSON object found in the answer; the contract block is required");
 
-        // Prefer the LAST candidate that satisfies the contract: the contract is
-        // the last thing the model writes, and preferring one that fits means an
-        // example object earlier in the prose can never win.
-        string? lastParseable = null;
-        for (var i = candidates.Count - 1; i >= 0; i--)
-        {
-            if (!TryReadObject(candidates[i], out var element)) continue;
+        // Strict first. Repair is only ever reached when NOTHING in the answer
+        // parses as written, so a well-formed answer is never touched.
+        return Choose(candidates, required, repair: false)
+            ?? Choose(candidates, required, repair: true)
+            ?? new StageContractResult(null, "the contract block is not valid JSON");
+    }
 
-            lastParseable ??= candidates[i];
+    /// <summary>
+    /// The first candidate that parses and satisfies the contract, or the
+    /// complaint about the first that merely parsed. Null when none parsed at
+    /// all, which is the caller's cue to try again with repair.
+    /// </summary>
+    private static StageContractResult? Choose(
+        List<string> candidates, List<string> required, bool repair)
+    {
+        string? parsed = null;
+        IReadOnlyList<string> parsedRepairs = [];
+
+        foreach (var candidate in candidates)
+        {
+            var text = candidate;
+            IReadOnlyList<string> repairs = [];
+            if (repair) (text, repairs) = StageContractRepair.Apply(candidate);
+            if (!TryReadObject(text, out var element)) continue;
+
             if (required.All(key => element.TryGetProperty(key, out _)))
-                return new StageContractResult(candidates[i], null);
+                return new StageContractResult(text, null) { Repairs = repairs };
+
+            if (parsed is null) (parsed, parsedRepairs) = (text, repairs);
         }
 
-        if (lastParseable is null)
-            return new StageContractResult(
-                null, "the contract block is not valid JSON");
+        if (parsed is null) return null;
 
         // Something parsed but did not fit; name the first key it lacks so the
         // model has something specific to correct.
-        TryReadObject(lastParseable, out var best);
+        TryReadObject(parsed, out var best);
         var missing = required.FirstOrDefault(key => !best.TryGetProperty(key, out _));
         return new StageContractResult(
             null,
             missing is null
                 ? "the contract object did not match the required shape"
-                : $"the contract is missing the required key \"{missing}\"");
+                : $"the contract is missing the required key \"{missing}\"")
+        {
+            Repairs = parsedRepairs,
+        };
     }
 
     private static bool TryReadObject(string json, out JsonElement element)
@@ -123,54 +151,5 @@ public static class StageContractReader
 
             i = end;
         }
-    }
-
-    /// <summary>
-    /// Every top-level brace-balanced span in the answer, in order. One forward,
-    /// string-aware pass, so a brace inside a string value is never mistaken for
-    /// the start or end of an object.
-    /// </summary>
-    private static List<string> TopLevelObjects(string answer)
-    {
-        var found = new List<string>();
-        var depth = 0;
-        var start = -1;
-        var inString = false;
-        var escaped = false;
-
-        for (var i = 0; i < answer.Length; i++)
-        {
-            var c = answer[i];
-
-            if (inString)
-            {
-                if (escaped) escaped = false;
-                else if (c == '\\') escaped = true;
-                else if (c == '"') inString = false;
-                continue;
-            }
-
-            switch (c)
-            {
-                case '"':
-                    inString = true;
-                    break;
-                case '{':
-                    if (depth == 0) start = i;
-                    depth++;
-                    break;
-                case '}' when depth > 0:
-                    depth--;
-                    if (depth == 0 && start >= 0)
-                    {
-                        found.Add(answer[start..(i + 1)]);
-                        start = -1;
-                    }
-
-                    break;
-            }
-        }
-
-        return found;
     }
 }

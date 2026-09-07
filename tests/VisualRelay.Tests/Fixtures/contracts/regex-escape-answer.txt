@@ -1,0 +1,41 @@
+The task is an ideation/planning stage — no files should be edited yet. I've inspected the relevant code and tests to ground the options.
+
+## Problem framing
+
+`negativeNumberArg()` in `lib/command.js` (line 1769) is the single gate that decides whether a dash-prefixed argument is a negative number or an option. It uses a regex that only accepts a lowercase `e` exponent:
+
+```js
+if (!/^-(\d+|\d*\.\d+)(e[+-]?\d+)?$/.test(arg)) return false;
+```
+
+So `-1e5` is consumed but `-1E5` falls through to `maybeOption`/`_findOption` and is reported as `commander.unknownOption`. The regex appears exactly once (confirmed by grep), so the fix is localized. The test file drives every case from the `negativeNumbers` table of `[value, consume]` pairs, so the uppercase-exponent rows can be added beside the lowercase ones and all existing parameterized tests will cover them automatically.
+
+The fix must be narrowly scoped: `E` accepted exactly where `e` is, while `-0x1234`, `-1e-3.0`/`-1E-3.0`, `-1x`, etc. remain rejected, and the digit-short-flag protection in the hierarchy is untouched.
+
+## Candidate solution options
+
+**Option 1 — Character-class expansion (`[eE]`), most targeted**
+Change the exponent token from `(e[+-]?\d+)?` to `([eE][+-]?\d+)?`:
+```js
+if (!/^-(\d+|\d*\.\d+)([eE][+-]?\d+)?$/.test(arg)) return false;
+```
+Case-insensitivity is confined to the exponent literal; digits and the decimal parts are unaffected. Add the uppercase rows to `negativeNumbers` in `tests/negatives.test.js`. Behavior change is strictly "accept `E` where `e` is accepted."
+
+**Option 2 — Case-insensitive flag (`/i`)**
+Add the `i` flag: `/^-(\d+|\d*\.\d+)(e[+-]?\d+)?$/i`. Since `e` is the only alphabetic character in the whole pattern, the behavior is effectively identical to Option 1, and the regex line is shorter. Same test additions. Slightly less explicit about the intent, and it applies case-insensitivity to the entire pattern (harmless here, but broader than needed).
+
+**Option 3 — Extract a named pattern constant + comment (clarity refactor)**
+Hoist the pattern into a named constant, e.g. `const negativeNumberPattern = /^-(\d+|\d*\.\d+)([eE][+-]?\d+)?$/;` with a comment noting it intentionally supports scientific notation in both exponent cases, then reference it in the helper. Same behavior as Option 1, plus documents the "`E` is intentional, not an oversight" rationale. Slightly larger diff surface.
+
+All three require the same test addition in `tests/negatives.test.js`: add `['-1E3', true]`, `['-1E+3', true]`, `['-1E-3', true]`, `['-1.2E3', true]`, `['-1.2E+3', true]`, `['-1.2E-3', true]` (and `['-1E-3.0', false]` to pin the reject case) alongside the existing lowercase entries, then run `npm test` and confirm it exits 0.
+
+```json
+{
+  "summary": "negativeNumberArg() in lib/command.js (line 1769) uses the regex /^-(\d+|\d*\\.\\d+)(e[+-]?\\d+)?$/ to classify dash-prefixed args as negative numbers. It only accepts a lowercase 'e' exponent, so an otherwise-identical value written with 'E' (e.g. -1E5) is treated as an unknown option instead of a consumable negative number. The fix is to make the exponent case-insensitive exactly where 'e' is accepted, leaving the digit-short-flag protection and all still-invalid forms (-0x1234, -1e-3.0/-1E-3.0, -1x) unchanged. Tests are driven by the negativeNumbers [value, consume] table in tests/negatives.test.js, so adding the uppercase-exponent rows there covers them across all existing parameterized tests. Verification is npm test exiting 0.",
+  "options": [
+    "Expand the exponent character class: change (e[+-]?\\d+)? to ([eE][+-]?\\d+)? in the negativeNumberArg regex, confining case-insensitivity to the exponent literal, and add the uppercase rows to the negativeNumbers table in tests/negatives.test.js.",
+    "Add the case-insensitive 'i' flag to the regex (/^-(\d+|\d*\\.\\d+)(e[+-]?\\d+)?$/i). Since 'e' is the only alphabetic character in the pattern, behavior is equivalent to option 1 but the line is shorter; same test additions.",
+    "Extract the regex into a named constant (e.g. negativeNumberPattern = /^-(\d+|\d*\\.\\d+)([eE][+-]?\\d+)?$/) with a comment documenting that uppercase exponents are intentional, then use it in the helper. Same behavior as option 1 plus an explicit rationale; slightly larger diff."
+  ]
+}
+```

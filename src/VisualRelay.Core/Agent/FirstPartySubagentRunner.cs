@@ -177,6 +177,7 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
                 Kill: kill);
 
         var contract = StageContractReader.Read(result.Answer, invocation.Stage.OutputContract);
+        AnnounceRepairs(invocation, contract.Repairs);
         if (!contract.Succeeded || contract.Json is not { } json)
             return new SubagentResult(result.Answer, contract.Json, contract.Succeeded, contract.Error);
 

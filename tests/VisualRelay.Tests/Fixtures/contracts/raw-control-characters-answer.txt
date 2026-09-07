@@ -1,0 +1,28 @@
+```json
+{
+  "findings": "Root cause is in `parse_hex` (src/color.rs, fn declared at line 245). It selects the 3-digit or 6-digit branch using `s.len()` (byte count) and then slices the string with byte ranges (`&s[0..2]`, `&s[0..1]`, `&s[2..4]`, etc.). For a non-ASCII string whose UTF-8 encoding is exactly 6 or 3 bytes, it enters a hex branch and panics as soon as a slice boundary falls inside a multi-byte character. Reproduced (probe in .relay/scratch/probe.rs replicating the function):
+- `\"#éa\"` -> after `FromStr` lowercases and strips `#`, `s=\"éa\"` is 3 bytes (é = 0xC3 0xA9) -> 3-digit branch -> `&s[0..1]` at src/color.rs:252 panics: `end byte index 1 is not a char boundary; it is inside 'é' (bytes 0..2 of string)`.
+- `\"#€abc\"` -> `s=\"€abc\"` is 6 bytes (€ = 0xE2 0x82 0xAC) -> 6-digit branch -> `&s[0..2]` at src/color.rs:247 panics: `end byte index 2 is not a char boundary; it is inside '€' (bytes 0..3 of string)`.
+These exact line numbers (247 and 252) match the panic report in the task. Both paths are reachable from the public API: `FromStr for Color`, `From<&str>/From<String> for Color`, and through `Colorize::color`/`on_color` (which take `C: Into<Color>` and funnel through those `From` impls). Separately, `u8::from_str_radix` accepts a leading `+`, so `\"#+1+2+3\"` (s=\"+1+2+3\", 6 bytes, byte_len 6) enters the 6-digit branch and is mis-parsed — probe confirmed `from_str_radix(\"+1\",16)==Ok(1)`, `=Ok(2)`, `=Ok(3)`, giving `parse_hex(\"+1+2+3\") -> Some((1,2,3))` i.e. `TrueColor{r:1,g:2,b:3}` instead of `Err(())`.
+
+Required fix (per spec): at the very top of `parse_hex`, before any length check or slice, return `None` unless every byte of `s` is an ASCII hex digit. Recommended: `if !s.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }`. This rejects non-ASCII bytes (prevents panics), rejects non-hex ASCII like `+` (fixes `#+1+2+3`), and — because the string is now known ASCII (one byte per char) — makes every subsequent byte-range slice a valid char boundary. `u8::is_ascii_hexdigit` accepts 0-9, a-f and A-F, so uppercase letters stay accepted and the existing `hex3_upper`/`hex6_upper` tests remain green. The accepted valid forms are unchanged: any 3 ASCII hex digits expand via `r | (r << 4)`, any 6 ASCII hex digits map directly; the length checks (`==6`, `==3`, else `None`) are untouched.
+
+Notes on edges: because `from_str_radix` parses the string content as digits (not raw bytes), a byte-length-6 non-ASCII string whose slice boundaries happen to align with char boundaries (e.g. `\"éabcd\"`) does not get mis-parsed — `from_str_radix(\"é\",16)` fails and returns `None`; the new guard also rejects it, consistent with the spec that returns `None` unless every byte is an ASCII hex digit. `to_lowercase()` in `FromStr for Color` is identity for the table inputs (`#éa`, `#€abc`, `#+1+2+3`), so byte lengths and branches match the report.
+
+Baseline state: running `CLICOLOR_FORCE=1 COLORTERM=truecolor INSTA_UPDATE=no cargo test` (verified in this environment) exits 0 — 128 lib unit tests (including `color::tests::from_str::*`, `color::tests::from_string::*`, `color::tests::fromstr::{parse,error}`, `color::tests::closest_euclidean::*`), 27 ansi_term_compat tests, 17 doc-tests, 0 failures. Dependencies resolve (no Cargo.lock initially; network available). No source files were modified during research.",
+  "constraints": [
+    "Only edit src/color.rs; no other source file may change.",
+    "In `parse_hex`, add the ASCII-hex guard as the FIRST statement, before any `s.len()` check and before any slicing. Return `None` (never panic, never return Ok) unless every byte of `s` is an ASCII hex digit — e.g. `if !s.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }`.",
+    "Use `u8::is_ascii_hexdigit` (accepts 0-9, a-f, A-F). Do not reject uppercase A-F; existing `hex3_upper`/`hex6_upper` tests must stay green.",
+    "Do not change the accepted 3-digit and 6-digit forms or their expansion (the `r | (r << 4)` expansion and the `.ok()?`/`?` error handling).",
+    "Do not change the `#` prefix handling or the `to_lowercase()` in `FromStr for Color` (src/color.rs ~line 220/239).",
+    "Do not change the `Color::White` fallback in `From<&str>`/`From<String>` for Color (src/color.rs ~lines 205-214).",
+    "No other function may change beyond the `parse_hex` guard.",
+    "Add the new test cases to the `mod fromstr` submodule (src/color.rs line 370, the lowercase one) of the `#[cfg(test)] mod tests` block — NOT to `mod from_str` (line 268) or `mod from_string` (line 319). Add them alongside the existing `parse` and `error` tests as plain `#[test]` functions using `assert_eq!` in that same style.",
+    "Cover each row of the table (7 cases): `\"#éa\".parse::<Color>()` -> `Err(())`; `\"#€abc\".parse::<Color>()` -> `Err(())`; `\"#+1+2+3\".parse::<Color>()` -> `Err(())`; `Color::from(\"#éa\")` -> `Color::White`; `Color::from(\"#+1+2+3\")` -> `Color::White`; `Color::from(\"#abc\")` -> `Color::TrueColor{r:170,g:187,b:204}`; `Color::from(\"#abcdef\")` -> `Color::TrueColor{r:171,g:205,b:239}`.",
+    "Existing tests must keep passing unchanged.",
+    "Verification must exit 0: `CLICOLOR_FORCE=1 COLORTERM=truecolor INSTA_UPDATE=no cargo test` (confirmed runnable here; deps resolve, no Cargo.lock present).",
+    "Do not touch the protected paths `llm-tasks/` and `.relay/` as part of the task diff; write any throwaway artifacts (screenshots/probes/temp files) to `.relay/scratch/`."
+  ]
+}
+```
