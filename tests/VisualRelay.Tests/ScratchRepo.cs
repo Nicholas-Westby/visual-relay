@@ -5,7 +5,8 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// A throwaway git repository under the git-ignored <c>.relay-scratch/</c> tree,
 /// driven through a real <see cref="GitInvoker"/>. Used by the
-/// <see cref="AuthorshipClaimerTests"/> integration tests; deleted on dispose.
+/// <see cref="HistoryRewriterTests"/> and <see cref="CommitLintRunnerTests"/>
+/// integration tests; deleted on dispose.
 /// </summary>
 internal sealed class ScratchRepo : IDisposable
 {
@@ -15,7 +16,7 @@ internal sealed class ScratchRepo : IDisposable
 
     public static ScratchRepo Create()
     {
-        var baseDir = Path.Combine(RepoSetup.Root, ".relay-scratch", "claim-authorship-tests");
+        var baseDir = Path.Combine(RepoSetup.Root, ".relay-scratch", "scratch-repos");
         var root = Path.Combine(baseDir, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         return new ScratchRepo(root);
@@ -32,7 +33,7 @@ internal sealed class ScratchRepo : IDisposable
     /// <summary>
     /// Writes a file and commits it with explicit author/committer identity and
     /// dates. Defaults to the foreign "Managed via Tart" identity, matching the
-    /// real-world scenario the claimer fixes.
+    /// real-world identity a rewrite has to preserve.
     /// </summary>
     public async Task SeedCommitAsync(
         IGitInvoker git, string fileName, string content, string message,
@@ -85,14 +86,13 @@ internal sealed class ScratchRepo : IDisposable
         return output.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
     }
 
-    /// <summary>Returns per-commit identity + full message, oldest-&gt;newest.</summary>
+    /// <summary>Returns per-commit author identity + full message, oldest-&gt;newest.</summary>
     public async Task<List<CommitMeta>> CommitMetaAsync(IGitInvoker git, int count)
     {
         const string sep = "";
         const string recordSep = "";
         var (_, output, _) = await RunAsync(git,
-            ["log", "--reverse", $"-{count}",
-             $"--format=%an{sep}%ae{sep}%cn{sep}%ce{sep}%B{recordSep}"]);
+            ["log", "--reverse", $"-{count}", $"--format=%an{sep}%ae{sep}%B{recordSep}"]);
 
         var rows = new List<CommitMeta>();
         foreach (var record in output.Split(recordSep, StringSplitOptions.RemoveEmptyEntries))
@@ -101,9 +101,9 @@ internal sealed class ScratchRepo : IDisposable
             if (trimmed.Length == 0)
                 continue;
             var parts = trimmed.Split(sep);
-            if (parts.Length < 5)
+            if (parts.Length < 3)
                 continue;
-            rows.Add(new CommitMeta(parts[0], parts[1], parts[2], parts[3], parts[4]));
+            rows.Add(new CommitMeta(parts[0], parts[1], parts[2]));
         }
 
         return rows;
@@ -145,6 +145,4 @@ internal sealed class ScratchRepo : IDisposable
     }
 }
 
-internal sealed record CommitMeta(
-    string AuthorName, string AuthorEmail,
-    string CommitterName, string CommitterEmail, string Body);
+internal sealed record CommitMeta(string AuthorName, string AuthorEmail, string Body);

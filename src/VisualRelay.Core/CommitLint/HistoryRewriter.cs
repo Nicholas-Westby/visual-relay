@@ -8,8 +8,8 @@ namespace VisualRelay.Core.CommitLint;
 /// validate them all, then rebuild from root via <c>git commit-tree</c> and move
 /// the branch ref last. The new tip's tree equals the old tip's tree, so the
 /// working tree and index are untouched. Idempotent, linear-history only, and
-/// it routes every git call through <see cref="IGitInvoker"/> — it does not
-/// reuse the authorship-claim engine.
+/// it routes every git call through <see cref="IGitInvoker"/> rather than
+/// shelling out directly.
 /// </summary>
 public sealed partial class HistoryRewriter(IGitInvoker git)
 {
