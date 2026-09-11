@@ -46,6 +46,35 @@ public sealed class ControlApiCreateTaskTests
     }
 
     [AvaloniaFact]
+    public async Task CreateTask_AfterADialogPickedATemplate_ShipsNoAttachments()
+    {
+        // The dialog's template selection outlives the dialog, and the create
+        // command copies the selected template's files into the new folder. A
+        // headless caller passed its whole task in the request and asked for no
+        // template, so nothing of that session may ride along.
+        using var repo = TestRepository.Create();
+        var templatesDir = Path.Combine(repo.Root, "llm-tasks", "templates");
+        Directory.CreateDirectory(Path.Combine(templatesDir, "kit"));
+        await File.WriteAllTextAsync(Path.Combine(templatesDir, "kit.md"),
+            "---\nname: Kit\ntitle: Use the kit\n---\nBody\n");
+        await File.WriteAllTextAsync(Path.Combine(templatesDir, "kit", "checklist.md"), "step one\n");
+        var api = NewApi(repo, out var viewModel);
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var kit = viewModel.NewTaskTemplateNames.IndexOf("Kit");
+        Assert.True(kit >= 0, "the Kit template must be in the list");
+        viewModel.SelectedNewTaskTemplateIndex = kit;
+
+        var (status, _) = await api.InvokeCommandAsync("create-task", Body("From the api", "Body.\n"));
+
+        Assert.Equal(200, status);
+        var taskDirectory = Path.Combine(repo.Root, "llm-tasks", "from-the-api");
+        Assert.Equal(
+            ["from-the-api.md"],
+            Directory.GetFiles(taskDirectory).Select(file => Path.GetFileName(file)!).ToArray());
+    }
+
+    [AvaloniaFact]
     public async Task CreateTask_WithoutABody_WritesTitleOnlyMarkdown()
     {
         using var repo = TestRepository.Create();

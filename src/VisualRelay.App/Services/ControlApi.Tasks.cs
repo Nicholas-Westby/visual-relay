@@ -38,6 +38,12 @@ public sealed partial class ControlApi
             return (409, Json.Object(("ok", false), ("command", name), ("error", "disabled")));
         }
 
+        // A headless caller passes the whole task in its own request, so no template
+        // applies. The selection is the dialog's, it survives the dialog closing,
+        // and the create command copies the selected template's attachments into
+        // the new folder — so without this a GUI session's last pick would quietly
+        // ship its files with every task the API creates afterwards.
+        viewModel.SelectedNewTaskTemplateIndex = -1;
         viewModel.NewTaskTitle = title;
         viewModel.NewTaskBody = Json.ReadString(body, "body") ?? string.Empty;
 
