@@ -1,0 +1,88 @@
+name: wsl-probe
+
+# The Windows runtime proof the machine that wrote the WSL sandbox could not run:
+# a hosted windows-2025 runner (WSL 2.7.12 preinstalled, nested virtualization
+# available) installs Ubuntu and nono, records the kernel/Landlock/nono facts, and
+# runs the Windows-gated probes (argv round trip, the watchdog kill, the confinement
+# verdict table on ext4 and on DrvFs, exit codes and UTF-8). Manual on purpose: it
+# costs minutes and proves a platform no other job touches.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: wsl2 + nono probe
+    runs-on: windows-2025
+    env:
+      WSL_UTF8: '1'
+      WSL_DISABLE_WARNINGS: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      NONO_VERSION: '0.75.0'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install WSL2 and Ubuntu
+        shell: pwsh
+        run: |
+          # --no-launch installs without the interactive first-run user setup, so the
+          # distro's default user is root and nothing blocks on a prompt.
+          wsl --install Ubuntu --no-launch
+          if ($LASTEXITCODE -ne 0) { wsl --install Ubuntu --no-launch --web-download }
+          if ($LASTEXITCODE -ne 0) { throw "wsl --install Ubuntu failed ($LASTEXITCODE)" }
+          wsl --set-default Ubuntu
+
+      - name: Keep the WSL VM alive
+        shell: pwsh
+        run: |
+          # A wsl.exe that exits lets the VM shut down between steps; a backgrounded
+          # dbus keeps it up. Fall back to a plain start when dbus-x11 is absent.
+          wsl -d Ubuntu --exec dbus-launch true
+          if ($LASTEXITCODE -ne 0) { wsl -d Ubuntu --exec true }
+          exit 0
+
+      - name: Install nono and the probe tools inside the distro
+        shell: pwsh
+        run: |
+          # -u root because --no-launch leaves no user created, and because the
+          # install must work whatever the distro's default user turns out to be.
+          wsl -d Ubuntu -u root --exec sh -lc "apt-get update -qq && apt-get install -y -qq git curl ca-certificates procps util-linux"
+          if ($LASTEXITCODE -ne 0) { throw "apt-get in the distro failed ($LASTEXITCODE)" }
+          $deb = "nono-cli_${env:NONO_VERSION}_amd64.deb"
+          $url = "https://github.com/nolabs-ai/nono/releases/download/v${env:NONO_VERSION}/$deb"
+          wsl -d Ubuntu -u root --exec sh -lc "cd /tmp && curl -fsSLO $url && dpkg -i $deb"
+          if ($LASTEXITCODE -ne 0) { throw "installing nono ${env:NONO_VERSION} in the distro failed ($LASTEXITCODE)" }
+
+      - name: Record the probe facts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path probe | Out-Null
+          $facts = 'probe/wsl-facts.txt'
+          wsl --version                                     | Tee-Object -FilePath $facts
+          wsl -l -v                                         | Tee-Object -FilePath $facts -Append
+          wsl -d Ubuntu --exec uname -r                     | Tee-Object -FilePath $facts -Append
+          wsl -d Ubuntu --exec cat /sys/kernel/security/lsm | Tee-Object -FilePath $facts -Append
+          wsl -d Ubuntu --exec sh -lc 'command -v nono && nono --version' | Tee-Object -FilePath $facts -Append
+          wsl -d Ubuntu --exec sh -lc 'printf "%s\n" "$HOME"; command -v setsid ps git curl' | Tee-Object -FilePath $facts -Append
+
+      - name: Run the Windows-gated WSL probes
+        shell: pwsh
+        env:
+          VR_RUN_NONO_INTEGRATION: '1'
+          VR_WSL_DISTRO: Ubuntu
+        run: >
+          dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj
+          --filter "FullyQualifiedName~Wsl"
+          --results-directory probe
+          --logger "trx;LogFileName=wsl-probe.trx"
+          --logger "console;verbosity=detailed"
+
+      - name: Upload the probe output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wsl-probe
+          path: probe/
