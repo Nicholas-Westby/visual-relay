@@ -193,7 +193,8 @@ public static partial class RelayConfigLoader
                 RetryFlakyVerify = OptionalBool(root, "retryFlakyVerify", defaults.RetryFlakyVerify),
                 SandboxExtraAllowPaths = sandboxExtraAllowPaths,
                 TierModelOverrides = tierModelOverrides,
-                TestPaths = OptionalStringArray(root, "testPaths", [])
+                TestPaths = OptionalStringArray(root, "testPaths", []),
+                AuthorTests = ParseAuthorTests(root, defaults.AuthorTests)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }

@@ -66,6 +66,22 @@ public sealed partial class MainWindowViewModelTests
         Assert.Contains(ConfigNote, viewModel.StatusText, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The detected languages decide how Stage 5 gates the operator's test files,
+    /// so bootstrap says what it found even when the answer is nothing.
+    /// </summary>
+    [Fact]
+    public async Task BootstrapProjectCommand_StatusText_NamesTheDetectedLanguages()
+    {
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        await viewModel.BootstrapProjectCommand.ExecuteAsync(null);
+
+        Assert.Contains("Detected languages: none.", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
     private const string ConfigNote = "Config written to .relay/config.json and left uncommitted.";
 
     [Fact]

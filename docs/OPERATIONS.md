@@ -67,3 +67,41 @@ For exotic toolchains whose cache paths the baseline profile does not cover, add
 Each entry is appended as `-a <path>` to both the agent and verification nono invocations.
 Entries are validated at config load: `..` (path traversal) is rejected; `~` and `$HOME`
 are expanded; and each path must resolve under `$HOME` or the workspace root.
+
+## Author-test gating
+
+Whether a test can be told from an implementation by its path is a property of the
+language, not of the repository: Rust and Zig keep unit tests inside the file under
+test, while Go, Python and most others keep them in files of their own. Bootstrap reads
+the repository's tracked files (`git ls-files` — never a filesystem walk, so vendored,
+generated and build trees never vote), works out which languages it is written in, and
+writes what it found into `.relay/config.json`:
+
+```json
+{
+  "testCmd": "cargo test",
+  "authorTests": {
+    "detectedLanguages": ["rust"],
+    "inlineTestExtensions": [".rs"],
+    "diffAudit": "auto"
+  },
+  "testPaths": []
+}
+```
+
+- `detectedLanguages` — informational, what init detected, so the defaults below can be
+  read back to a reason. Re-running bootstrap refreshes it.
+- `inlineTestExtensions` — the extensions whose files may legitimately carry tests next
+  to the implementation. Files with these extensions are never reverted for being "not a
+  test". Empty for a repository whose languages all keep tests in separate files, which
+  is also the right answer for a static site or an infrastructure repository. **Opt a
+  language in by adding its extension** (`.ml` for OCaml's `ppx_inline_test`, `.erl` for
+  EUnit behind `-ifdef(TEST)`, `.ts` for in-source Vitest); the key is per extension, so
+  a Rust and Python repository can treat `.rs` as inline-capable while `.py` stays gated
+  by path. Re-running bootstrap refreshes it.
+- `diffAudit` — `auto` (default) audits the Author-tests diff only when an
+  inline-capable or unrecognized file was edited, `always` audits every one, `off`
+  disables the audit. Yours to set: bootstrap seeds it once and never overwrites it.
+- `testPaths` — repo-specific globs (`"spec/**"`, `"examples/*_example.go"`) that count
+  as test paths on top of the built-in filename and directory heuristics. Also yours:
+  bootstrap only creates the key when it is missing.

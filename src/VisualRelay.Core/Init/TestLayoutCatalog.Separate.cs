@@ -64,7 +64,8 @@ public static partial class TestLayoutCatalog
         new("jsx", TestLayoutBucket.Separate, [".jsx"], [], ["__tests__/", "*.test.jsx", "*.spec.jsx"]),
         new("tsx", TestLayoutBucket.Separate, [".tsx"], [], ["__tests__/", "*.test.tsx", "*.spec.tsx"]),
         new("cuda-cpp", TestLayoutBucket.Separate, [".cu", ".cuh"], [], ["test/", "*_test.cu"]),
-        new("smalltalk", TestLayoutBucket.Separate, [".st"], [".project"], ["*-Tests/", "*Test.class.st"]),
+        // No marker: ".project" is Eclipse's, written into countless Java repos.
+        new("smalltalk", TestLayoutBucket.Separate, [".st"], [], ["*-Tests/", "*Test.class.st"]),
         new("raku", TestLayoutBucket.Separate, [".raku", ".rakumod", ".p6"], ["META6.json"], ["t/*.t", "xt/*.t"]),
         new("elm", TestLayoutBucket.Separate, [".elm"], ["elm.json"], ["tests/*.elm", "tests/Tests.elm"]),
         new("crystal", TestLayoutBucket.Separate, [".cr"], ["shard.yml"], ["spec/*_spec.cr", "spec/spec_helper.cr"]),

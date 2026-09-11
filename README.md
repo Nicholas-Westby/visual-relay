@@ -95,7 +95,8 @@ The code is mostly C# and the UI is built with [Avalonia](https://avaloniaui.net
 
 ## Learn more
 
-- [docs/OPERATIONS.md](docs/OPERATIONS.md) - provider keys, model routing, and the nono sandbox.
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) - provider keys, model routing, the nono sandbox,
+  and the `authorTests` / `testPaths` config keys that decide how test files are gated.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - diagnosing the dev loop and test hangs.
 - [AGENTS.md](AGENTS.md) - contributing, the control API, and dev-only tooling.
 - [docs/DESIGN.md](docs/DESIGN.md) for the full architecture and the 12-stage mapping.

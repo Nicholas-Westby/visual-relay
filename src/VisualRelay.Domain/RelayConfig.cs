@@ -129,6 +129,13 @@ public sealed record RelayConfig(
     // elsewhere should override.  Set to [] to disable.
     public IReadOnlyList<string> NewGuardPatterns { get; init; } = ["tools/guards/**/*.sh"];
 
+    // How the Author-tests stage (stage 5) is gated here: the languages init
+    // detected, the extensions whose files may legitimately carry tests beside
+    // the implementation, and whether the model audit of the stage diff runs.
+    // Absent from a config → AuthorTestsConfig.Default, so every repository that
+    // predates the key keeps the classical path gate.
+    public AuthorTestsConfig AuthorTests { get; init; } = AuthorTestsConfig.Default;
+
     // Grace window (ms) for the sandboxed test-run path's idle-reap watchdog
     // (SandboxedTestRunner). Once the wrapped test process tree goes
     // output-silent AND CPU-idle for this long, the runner reaps the sandbox

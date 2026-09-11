@@ -59,6 +59,23 @@ public partial class MainWindowViewModel
                 ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
                   + "scaffolds the project; the real test command is adopted automatically once a toolchain appears."
                 : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.");
-        return headline + " Config written to .relay/config.json and left uncommitted.";
+        return headline + " " + DescribeTestLayout(result.TestLayout)
+               + " Config written to .relay/config.json and left uncommitted.";
+    }
+
+    /// <summary>
+    /// What init read off the tracked files. The languages decide how the
+    /// Author-tests stage gates the operator's test files, so the sentence is
+    /// written even when nothing was detected.
+    /// </summary>
+    private static string DescribeTestLayout(TestLayoutDetection? layout)
+    {
+        if (layout is null || layout.DetectedLanguages.Count == 0)
+            return "Detected languages: none.";
+
+        var languages = string.Join(", ", layout.DetectedLanguages);
+        return layout.InlineTestExtensions.Count == 0
+            ? $"Detected languages: {languages}."
+            : $"Detected languages: {languages} (inline tests: {string.Join(", ", layout.InlineTestExtensions)}).";
     }
 }

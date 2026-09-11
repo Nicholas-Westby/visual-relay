@@ -8,7 +8,7 @@ namespace VisualRelay.Core.Init;
 // existing file at that path; callers gate on status before invoking.
 // Pass null for testCommand to write "testCmd": null — the loader treats this
 // as Incomplete, which is the deliberate exhaustion signal.
-public static class RelayConfigWriter
+public static partial class RelayConfigWriter
 {
     public static string Write(string rootPath, string? testCommand)
     {

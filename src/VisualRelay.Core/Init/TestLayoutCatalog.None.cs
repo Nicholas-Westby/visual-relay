@@ -121,7 +121,8 @@ public static partial class TestLayoutCatalog
         new("twig", TestLayoutBucket.None, [".twig"], [], ["tests/*Test.php"]),
         new("pug", TestLayoutBucket.None, [".pug"], [], []),
         new("haml", TestLayoutBucket.None, [".haml"], [], ["spec/"]),
-        new("tex", TestLayoutBucket.None, [".tex", ".sty"], ["latexmkrc", "build.lua", "*.ins"], ["testfiles/*.lvt", "*.tlg"]),
+        // "build.lua" is gone: a generic build-script name, not a TeX signal.
+        new("tex", TestLayoutBucket.None, [".tex", ".sty"], ["latexmkrc", "*.ins"], ["testfiles/*.lvt", "*.tlg"]),
         new("ansible", TestLayoutBucket.None, [], ["ansible.cfg", "galaxy.yml"], ["molecule/*/converge.yml", "molecule/*/verify.yml", "roles/*/tests/", "tests/"]),
         new("dockerfile", TestLayoutBucket.None, [".dockerfile"], ["Dockerfile", "compose.yaml"], ["tests/"]),
         new("jupyter-notebook", TestLayoutBucket.None, [".ipynb"], [], ["tests/test_*.py"]),

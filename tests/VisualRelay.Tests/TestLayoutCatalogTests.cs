@@ -197,6 +197,23 @@ public sealed class TestLayoutCatalogTests
     }
 
     [Fact]
+    public void ByMarker_EclipseProjectFile_BelongsToNoLanguage()
+    {
+        // Eclipse writes .project into countless Java repositories, so reading it
+        // as Smalltalk would report the wrong language for a whole ecosystem.
+        Assert.Null(TestLayoutCatalog.ByMarker(".project"));
+    }
+
+    [Fact]
+    public void ByMarker_GenericBuildScriptName_BelongsToNoLanguage()
+    {
+        // build.lua is a plain build-script name any Lua project may carry; only
+        // latexmkrc and *.ins are specific enough to mean TeX.
+        Assert.Null(TestLayoutCatalog.ByMarker("build.lua"));
+        Assert.Equal("tex", TestLayoutCatalog.ByMarker("latexmkrc")?.Id);
+    }
+
+    [Fact]
     public void ById_KnownAndUnknownIds_ResolveAsExpected()
     {
         Assert.Equal(TestLayoutBucket.Separate, TestLayoutCatalog.ById("python")?.Bucket);

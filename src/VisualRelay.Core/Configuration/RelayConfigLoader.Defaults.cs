@@ -54,6 +54,7 @@ public static partial class RelayConfigLoader
             TierModelOverrides: null)
         {
             NewGuardPatterns = ["tools/guards/**/*.sh"],
-            TestPaths = []
+            TestPaths = [],
+            AuthorTests = AuthorTestsConfig.Default
         };
 }
