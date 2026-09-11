@@ -8,7 +8,7 @@ public sealed partial class RelayCostEstimatorTests
     // ── Tier-alias resolution ──────────────────────────────────────
 
     [Fact]
-    public void EstimateReport_TierAliasCheap_MatchesConcreteDeepseekV4FlashVisionExp()
+    public void EstimateReport_TierAliasCheap_MatchesConcreteDeepseekFlash()
     {
         // Identical token stats, model "cheap" vs the concrete model the cheap
         // alias resolves to → same cost.
@@ -33,7 +33,7 @@ public sealed partial class RelayCostEstimatorTests
         using var concreteDoc = JsonDocument.Parse(
             """
             {
-              "model": "deepseek-v4-flash-vision-exp",
+              "model": "deepseek-flash",
               "result": { "answer": "abcdefghijkl" },
               "stats": {
                 "total_llm_time_s": 1.5,
@@ -54,9 +54,9 @@ public sealed partial class RelayCostEstimatorTests
         Assert.True(cheapCost.Priced);
         Assert.True(concreteCost.Priced);
         Assert.Equal("cheap", cheapCost.Model);
-        Assert.Equal("deepseek-v4-flash-vision-exp", concreteCost.Model);
+        Assert.Equal("deepseek-flash", concreteCost.Model);
         Assert.Equal(cheapCost.CostUsd, concreteCost.CostUsd);
-        Assert.Equal(0.00039868, cheapCost.CostUsd, precision: 10);
+        Assert.Equal(0.0002871, cheapCost.CostUsd, precision: 10);
     }
 
     [Fact]

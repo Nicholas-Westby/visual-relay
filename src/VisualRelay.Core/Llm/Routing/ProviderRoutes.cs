@@ -53,6 +53,17 @@ public static class ProviderRoutes
                 "kimi-k2", "Moonshot", Moonshot, "kimi-k2.7-code",
                 "MOONSHOT_API_KEY", 256_000, Reasoning),
 
+            // DeepSeek V4.1 Flash, the cheap and balanced head. The window is
+            // the million tokens the provider serves, not the 128k its
+            // predecessors are recorded at: compaction measures against this
+            // number, so recording the smaller one would truncate context the
+            // model would have accepted. It defaults to reasoning effort "high",
+            // which is why the Fast profile's 30s time to first byte is the
+            // budget to watch.
+            ["deepseek-flash"] = new(
+                "deepseek-flash", "DeepSeek", DeepSeek, "deepseek-flash",
+                "DEEPSEEK_API_KEY", 1_000_000, Fast),
+
             ["deepseek-v4-pro"] = new(
                 "deepseek-v4-pro", "DeepSeek", DeepSeek, "deepseek-v4-pro",
                 "DEEPSEEK_API_KEY", 128_000, Fast),

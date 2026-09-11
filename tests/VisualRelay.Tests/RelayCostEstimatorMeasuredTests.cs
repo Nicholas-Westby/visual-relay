@@ -127,13 +127,15 @@ public sealed class RelayCostEstimatorMeasuredTests
     public void CostIsAttributed_ToTheServedModelNotTheTier()
     {
         var onFlash = RelayCostEstimator.EstimateReport(Parse(WithMeasured));
-        var onPro = RelayCostEstimator.EstimateReport(Parse(
-            WithMeasured.Replace("deepseek-v4-flash", "deepseek-v4-pro", StringComparison.Ordinal)));
+        var onKimi = RelayCostEstimator.EstimateReport(Parse(
+            WithMeasured.Replace("deepseek-v4-flash", "kimi-k2", StringComparison.Ordinal)));
 
-        // The pro model is three times the price of flash, so a fallback hop
-        // that used to be invisible now moves the number.
-        Assert.True(onPro.CostUsd > onFlash.CostUsd,
-            $"flash {onFlash.CostUsd} should be cheaper than pro {onPro.CostUsd}");
+        // Kimi is several times the price of Flash, so a fallback hop that used
+        // to be invisible now moves the number. The comparison is against Kimi
+        // rather than a DeepSeek sibling because every DeepSeek name is now
+        // served by, and billed as, the same V4.1 Flash weights.
+        Assert.True(onKimi.CostUsd > onFlash.CostUsd,
+            $"flash {onFlash.CostUsd} should be cheaper than kimi {onKimi.CostUsd}");
         Assert.Equal("cheap", onFlash.Model);
     }
 

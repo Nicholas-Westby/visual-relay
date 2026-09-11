@@ -42,22 +42,31 @@ internal static class RelayPricing
     public static IReadOnlyDictionary<string, ModelPricing> Default { get; } =
         new Dictionary<string, ModelPricing>(StringComparer.Ordinal)
         {
-            // deepseek-v4-flash → DeepSeek-V4-Flash-0731 (api-docs.deepseek.com, 2026-08-17);
-            // off-peak base rates. CacheWrite == Input because DeepSeek bills a cache miss
-            // at the standard input rate and charges nothing extra to populate the cache.
-            ["deepseek-v4-flash"] = new(0.22, 0.66, 0.007, 0.22) { Windows = DeepseekPeakWindows },
-            // deepseek-v4-pro → DeepSeek-V4-Pro-0813 (api-docs.deepseek.com, 2026-08-17);
-            // off-peak base rates; same cache-write rationale as -flash above.
-            ["deepseek-v4-pro"] = new(0.66, 1.98, 0.022, 0.66) { Windows = DeepseekPeakWindows },
-            // deepseek-v4-flash-vision-exp → DeepSeek-V4-Flash-Vision-Exp
-            // (api-docs.deepseek.com, 2026-08-31); billed at the text-only -flash rates
-            // on the same peak schedule. No separate image rate is recorded because
-            // DeepSeek bills images AS input tokens, at the Input rate above. This
-            // used to rest on a second, now-false claim — that images never reached
-            // DeepSeek at all. They do: image parts are sent verbatim on the direct
-            // path. The rate still holds, because the estimator prices the provider's
-            // own prompt_tokens, which already include the image tokens.
-            ["deepseek-v4-flash-vision-exp"] = new(0.22, 0.66, 0.007, 0.22) { Windows = DeepseekPeakWindows },
+            // deepseek-flash → DeepSeek-V4.1-Flash (api-docs.deepseek.com/quick_start/pricing,
+            // 2026-09-10); off-peak base rates. CacheWrite == Input because DeepSeek bills a
+            // cache miss at the standard input rate and charges nothing extra to populate
+            // the cache. The three V4 rows below are the same model upstream and so carry
+            // the same figures.
+            ["deepseek-flash"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
+            // deepseek-v4-flash → DeepSeek-V4-Flash-0731, RETIRED 2026-09-10 and routed to
+            // V4.1 Flash, so it is billed at the V4.1 rates above rather than the 0.22 /
+            // 0.66 / 0.007 it used to publish. Those rates are no longer offered anywhere.
+            ["deepseek-v4-flash"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
+            // deepseek-v4-pro → DeepSeek-V4-Pro-0813. DeepSeek serves it until
+            // 2026-09-14 04:00 UTC and routes it to V4.1 Flash at the V4.1 price from
+            // then, which is what this row records. Until that date a hop that actually
+            // lands on V4-Pro is under-counted; it is the third DeepSeek fallback of a
+            // tier whose head is up, so it is reached rarely and only briefly.
+            ["deepseek-v4-pro"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
+            // deepseek-v4-flash-vision-exp → DeepSeek-V4-Flash-Vision-Exp, likewise
+            // retired 2026-09-10 and routed to V4.1 Flash, which is natively multimodal.
+            // No separate image rate is recorded because DeepSeek bills images AS input
+            // tokens, at the Input rate above. This used to rest on a second, now-false
+            // claim — that images never reached DeepSeek at all. They do: image parts are
+            // sent verbatim on the direct path. The rate still holds, because the
+            // estimator prices the provider's own prompt_tokens, which already include
+            // the image tokens.
+            ["deepseek-v4-flash-vision-exp"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
             // GLM 5.3 Flash first-party on Z.AI (docs.z.ai/guides/overview/pricing,
             // 2026-08-26). These are the sticker rates: Z.AI is running a 50%-off
             // promotion on this model until 2026-09-09, and pricing the promo

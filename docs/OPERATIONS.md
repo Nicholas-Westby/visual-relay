@@ -25,7 +25,7 @@ reads them any more and they are safe to delete.
 
 ### Provider keys
 
-`ModelCatalog` defines the model aliases each tier resolves to (`cheap`, `balanced`, `frontier`, `vision`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.3-flash`, `hf-glm-5.3-flash`, `fallback`), and `ProviderRoutes` maps each alias to its endpoint, upstream model id and timeouts. No secrets are committed: every key is read from the environment.
+`ModelCatalog` defines the model aliases each tier resolves to (`cheap`, `balanced`, `frontier`, `vision`, `deepseek-flash`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.3-flash`, `hf-glm-5.3-flash`, `fallback`), and `ProviderRoutes` maps each alias to its endpoint, upstream model id and timeouts. No secrets are committed: every key is read from the environment.
 
 The **`fallback`** tier is the always-available floor: it resolves to `hf-qwen3-coder-next` (Hugging Face Novita Qwen3-Coder-480B, ~$0.38/$1.55 per 1M tokens in/out) and requires only `HF_TOKEN`. Every other tier can fall through to it when its provider keys are absent. Override the default model via `tierProfiles.fallback` in `.relay/config.json`.
 

@@ -16,7 +16,7 @@ public sealed class RelayPricingWeekendScheduleTests
 {
     /// <summary>Same token stats as the weekday peak cases in
     /// <c>RelayPricingScheduleTests</c>: uncached=1500, cached=100, output=103.
-    /// Base cost 0.00039868, doubled to 0.00079736 inside a peak window.</summary>
+    /// Base cost 0.0002871, doubled to 0.0005742 inside a peak window.</summary>
     private static JsonDocument ReportAt(string timestamp) => JsonDocument.Parse(
         $$"""
         {
@@ -46,7 +46,7 @@ public sealed class RelayPricingWeekendScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
+        Assert.Equal(0.0002871, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class RelayPricingWeekendScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
+        Assert.Equal(0.0002871, cost.CostUsd, precision: 10);
     }
 
     /// <summary>
@@ -74,7 +74,7 @@ public sealed class RelayPricingWeekendScheduleTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal(0.00079736, cost.CostUsd, precision: 10);
+        Assert.Equal(0.0005742, cost.CostUsd, precision: 10);
     }
 
     /// <summary>

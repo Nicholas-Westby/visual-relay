@@ -22,6 +22,7 @@ public sealed class ModelCatalogTests
 
         // No absent-key model appears as a primary.
         Assert.DoesNotContain("kimi-k2", aliases.Values);
+        Assert.DoesNotContain("deepseek-flash", aliases.Values);
         Assert.DoesNotContain("deepseek-v4-pro", aliases.Values);
         Assert.DoesNotContain("deepseek-v4-flash", aliases.Values);
         Assert.DoesNotContain("deepseek-v4-flash-vision-exp", aliases.Values);
@@ -31,14 +32,14 @@ public sealed class ModelCatalogTests
 
     // ── 2. HF + DeepSeek ─────────────────────────────────────────────────
     [Fact]
-    public void HfPlusDeepSeek_CheapFlashVision_BalancedPro_FrontierPro()
+    public void HfPlusDeepSeek_CheapAndBalancedLeadWithFlash_FrontierGlm()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
         var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
         var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
-        Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
-        Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
+        Assert.Equal("deepseek-flash", aliases["cheap"]);
+        Assert.Equal("deepseek-flash", aliases["balanced"]);
         // The frontier primary needs HF_TOKEN (present), so it wins ahead
         // of the deepseek-v4-pro fallback even when DEEPSEEK_API_KEY is set.
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
@@ -64,8 +65,8 @@ public sealed class ModelCatalogTests
         var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
         var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
-        Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
-        Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
+        Assert.Equal("deepseek-flash", aliases["cheap"]);
+        Assert.Equal("deepseek-flash", aliases["balanced"]);
         // The HF route to GLM 5.3 Flash is the frontier primary; kimi-k2 drops
         // to the first fallback.
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
@@ -163,11 +164,11 @@ public sealed class ModelCatalogTests
         var ds = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
         var dsRows = ModelCatalog.GetTierRows(ds);
         var cheapDs = dsRows.First(r => r.Tier == "cheap");
-        Assert.Equal("deepseek-v4-flash-vision-exp", cheapDs.Model);
+        Assert.Equal("deepseek-flash", cheapDs.Model);
         Assert.Equal("DeepSeek", cheapDs.ProviderName);
         Assert.True(cheapDs.KeyPresent);
         var balanced = dsRows.First(r => r.Tier == "balanced");
-        Assert.Equal("deepseek-v4-pro", balanced.Model);
+        Assert.Equal("deepseek-flash", balanced.Model);
         Assert.Equal("DeepSeek", balanced.ProviderName);
     }
 

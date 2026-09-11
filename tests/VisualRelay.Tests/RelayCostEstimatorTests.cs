@@ -83,9 +83,9 @@ public sealed partial class RelayCostEstimatorTests
         Assert.Equal(103, cost.OutputTokens);
         Assert.Equal(1.75, cost.DurationSeconds, precision: 2);
         Assert.True(cost.CostUsd > 0);
-        // cheap rates: input 0.22, cached 0.007, output 0.66.
-        // (1500*0.22 + 100*0.007 + 103*0.66) / 1_000_000 = 398.68 / 1_000_000.
-        Assert.Equal(0.00039868, cost.CostUsd, precision: 10);
+        // cheap rates: input 0.15, cached 0.003, output 0.60.
+        // (1500*0.15 + 100*0.003 + 103*0.60) / 1_000_000 = 287.1 / 1_000_000.
+        Assert.Equal(0.0002871, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -112,9 +112,9 @@ public sealed partial class RelayCostEstimatorTests
         Assert.Equal(1_500, cost.PromptTokens);
         Assert.Equal(2_000, cost.CachedTokens);
         Assert.Equal(200, cost.OutputTokens);
-        // balanced rates: input 0.66, cached 0.022, output 1.98.
-        // (1500*0.66 + 2000*0.022 + 200*1.98) / 1_000_000 = 1430 / 1_000_000.
-        Assert.Equal(0.00143, cost.CostUsd, precision: 10);
+        // balanced rates: input 0.15, cached 0.003, output 0.60.
+        // (1500*0.15 + 2000*0.003 + 200*0.60) / 1_000_000 = 351 / 1_000_000.
+        Assert.Equal(0.000351, cost.CostUsd, precision: 10);
     }
 
     [Fact]
@@ -176,16 +176,16 @@ public sealed partial class RelayCostEstimatorTests
         Assert.Equal(10_000, cost.PromptTokens);
         Assert.True(cost.PromptTokens > 0, "uncached input must be > 0 for a multi-turn report");
         Assert.True(cost.CostUsd > 0.0004,
-            $"expected cost > $0.0004 (has uncached input at $0.66/M), got {cost.CostUsd:F10}");
-        // (10000*0.66 + 50000*0.022 + 201*1.98) / 1_000_000 = 8097.98 / 1_000_000.
-        Assert.Equal(0.00809798, cost.CostUsd, precision: 8);
+            $"expected cost > $0.0004 (has uncached input at $0.15/M), got {cost.CostUsd:F10}");
+        // (10000*0.15 + 50000*0.003 + 201*0.60) / 1_000_000 = 1770.6 / 1_000_000.
+        Assert.Equal(0.0017706, cost.CostUsd, precision: 8);
     }
 
     [Fact]
     public void EstimateReport_EveryTokenClassContributes()
     {
         // uncached = 3000, cached = 1000, cache_write = 500, output = ceil(64/4)+3*50 = 166.
-        // balanced rates: input $0.66, cached $0.022, cache-write $0.66, output $1.98.
+        // balanced rates: input $0.15, cached $0.003, cache-write $0.15, output $0.60.
         using var document = JsonDocument.Parse(
             """
             {
@@ -209,14 +209,14 @@ public sealed partial class RelayCostEstimatorTests
         Assert.Equal(1_000, cost.CachedTokens);
         Assert.Equal(500, cost.CacheWriteTokens);
         Assert.Equal(166, cost.OutputTokens);
-        // (3000*0.66 + 1000*0.022 + 500*0.66 + 166*1.98) / 1_000_000 = 2660.68 / 1_000_000.
-        Assert.Equal(0.00266068, cost.CostUsd, precision: 6);
+        // (3000*0.15 + 1000*0.003 + 500*0.15 + 166*0.60) / 1_000_000 = 627.6 / 1_000_000.
+        Assert.Equal(0.0006276, cost.CostUsd, precision: 8);
 
         // Sanity: removing any one class must strictly lower the total.
-        var withoutUncached = (0 + 1000 * 0.022 + 500 * 0.66 + 166 * 1.98) / 1_000_000d;
-        var withoutCached = (3000 * 0.66 + 0 + 500 * 0.66 + 166 * 1.98) / 1_000_000d;
-        var withoutCacheWrite = (3000 * 0.66 + 1000 * 0.022 + 0 + 166 * 1.98) / 1_000_000d;
-        var withoutOutput = (3000 * 0.66 + 1000 * 0.022 + 500 * 0.66 + 0) / 1_000_000d;
+        var withoutUncached = (0 + 1000 * 0.003 + 500 * 0.15 + 166 * 0.60) / 1_000_000d;
+        var withoutCached = (3000 * 0.15 + 0 + 500 * 0.15 + 166 * 0.60) / 1_000_000d;
+        var withoutCacheWrite = (3000 * 0.15 + 1000 * 0.003 + 0 + 166 * 0.60) / 1_000_000d;
+        var withoutOutput = (3000 * 0.15 + 1000 * 0.003 + 500 * 0.15 + 0) / 1_000_000d;
 
         Assert.True(cost.CostUsd > withoutUncached, "removing uncached input should lower cost");
         Assert.True(cost.CostUsd > withoutCached, "removing cached read should lower cost");

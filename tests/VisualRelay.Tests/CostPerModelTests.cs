@@ -38,12 +38,13 @@ public sealed partial class CostPerModelTests
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
 
+        // One card now carries both badges: V4.1 Flash heads cheap and balanced.
         var cheapCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("cheap"));
-        Assert.Equal("deepseek-v4-flash-vision-exp", cheapCard.ModelKey);
+        Assert.Equal("deepseek-flash", cheapCard.ModelKey);
         Assert.True(cheapCard.IsActive);
 
         var balancedCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("balanced"));
-        Assert.Equal("deepseek-v4-pro", balancedCard.ModelKey);
+        Assert.Equal("deepseek-flash", balancedCard.ModelKey);
         Assert.True(balancedCard.IsActive);
 
         var frontierCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("frontier"));
@@ -84,7 +85,7 @@ public sealed partial class CostPerModelTests
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
 
-        Assert.Equal("deepseek-v4-flash-vision-exp", vm.ModelCostRows[0].ModelKey);
+        Assert.Equal("deepseek-flash", vm.ModelCostRows[0].ModelKey);
         Assert.Contains("cheap", vm.ModelCostRows[0].TierBadges);
     }
 

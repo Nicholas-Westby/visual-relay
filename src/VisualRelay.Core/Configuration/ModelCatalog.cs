@@ -36,12 +36,18 @@ public static partial class ModelCatalog
     /// </summary>
     internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {
-        // The vision-exp head and the text-only -flash behind it are the same
-        // size at the same rates, so the second DeepSeek hop costs nothing and
-        // covers the one risk the experimental model carries: withdrawal without
-        // notice. Provider diversification resumes at the fallback tier.
+        // Both tiers lead with DeepSeek V4.1 Flash, a million-token model at a
+        // quarter of the old Flash input rate. The V4 names behind it are not
+        // other models any more: DeepSeek retired the two Flash ids on
+        // 2026-09-10 and routes v4-pro to the same weights from 2026-09-14, so
+        // every DeepSeek hop reaches V4.1 Flash. They are kept in their former
+        // order anyway, because "temporarily routed" is exactly the notice that
+        // a name can be withdrawn, and a dead name costs one round trip here
+        // instead of the tier. Real provider diversification therefore starts at
+        // kimi-k2 on balanced and at the fallback tier on cheap.
         ["cheap"] =
         [
+            ("deepseek-flash", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-flash-vision-exp", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
@@ -49,6 +55,7 @@ public static partial class ModelCatalog
         ],
         ["balanced"] =
         [
+            ("deepseek-flash", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("kimi-k2", "MOONSHOT_API_KEY"),
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),

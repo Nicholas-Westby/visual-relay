@@ -4,28 +4,29 @@ using VisualRelay.Core.Costs;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// The cheap tier runs DeepSeek V4 Flash Vision Exp: same context, same rates
-/// and same peak schedule as the text-only V4 Flash it takes over from. The
-/// "exp" model is experimental and DeepSeek can withdraw it without notice, so
-/// the text-only Flash is demoted rather than dropped: it sits directly behind
-/// as the first fallback, where a withdrawal costs one failed round trip instead
-/// of the whole tier. Images DO reach the model on the direct path, but the
-/// vision tier is still the one sized and priced for image work.
+/// The cheap tier runs DeepSeek V4.1 Flash, and the V4 Flash Vision Exp that
+/// used to lead it sits directly behind as the first fallback. All three V4
+/// names are served by V4.1 Flash upstream, so they share its rates and its peak
+/// schedule, and a hop between them costs nothing but the round trip. They are
+/// kept because a routed-away name can be withdrawn without notice. Images DO
+/// reach the model on the direct path, but the vision tier is still the one
+/// sized and priced for image work.
 /// </summary>
 public sealed class ModelCatalogDeepSeekCheapTierTests
 {
     [Fact]
-    public void Cheap_ResolvesToFlashVisionExp_WhenDeepSeekKeyPresent()
+    public void Cheap_ResolvesToV41Flash_WhenDeepSeekKeyPresent()
     {
         var present = new HashSet<string> { "DEEPSEEK_API_KEY", "HF_TOKEN" };
 
         var aliases = ModelCatalogTestHelpers.GeneratedAliases(present);
         var fallbacks = ModelCatalogTestHelpers.GeneratedFallbacks(present);
 
-        Assert.Equal("deepseek-v4-flash-vision-exp", aliases["cheap"]);
+        Assert.Equal("deepseek-flash", aliases["cheap"]);
 
-        // Demoted, not removed: the text-only Flash is the first fallback.
-        Assert.Equal("deepseek-v4-flash", fallbacks["cheap"][0]);
+        // Demoted, not removed: the former head is the first fallback.
+        Assert.Equal("deepseek-v4-flash-vision-exp", fallbacks["cheap"][0]);
+        Assert.Contains("deepseek-v4-flash", fallbacks["cheap"]);
         Assert.True(ModelCatalogTestHelpers.ChainTerminatesInFallback("cheap", fallbacks));
     }
 
@@ -36,34 +37,37 @@ public sealed class ModelCatalogDeepSeekCheapTierTests
             new HashSet<string> { "DEEPSEEK_API_KEY", "HF_TOKEN" });
 
         var cheap = rows.Single(r => r.Tier == "cheap");
-        Assert.Equal("deepseek-v4-flash-vision-exp", cheap.Model);
+        Assert.Equal("deepseek-flash", cheap.Model);
         Assert.Equal("DeepSeek", cheap.ProviderName);
         Assert.True(cheap.KeyPresent);
 
+        Assert.Equal("DeepSeek", ModelCatalog.ProviderFor("deepseek-flash"));
         Assert.Equal("DeepSeek", ModelCatalog.ProviderFor("deepseek-v4-flash-vision-exp"));
     }
 
     /// <summary>
-    /// Both Flash routes stay in the cheap picker. A saved
-    /// <c>tierModelOverrides</c> entry is silently dropped by
+    /// Both Flash routes stay in the cheap picker behind the new default. A
+    /// saved <c>tierModelOverrides</c> entry is silently dropped by
     /// <c>RelayConfigLoader</c> once its model leaves the selectable list, so
-    /// removing the demoted model would reset every user who had pinned it.
+    /// removing a demoted model would reset every user who had pinned it.
     /// </summary>
     [Fact]
     public void BothFlashRoutes_AreSelectableForTheCheapTier()
     {
         var cheap = ModelCatalog.SelectableModelsByTier["cheap"];
 
-        Assert.Equal("deepseek-v4-flash-vision-exp", cheap[0]);
+        Assert.Equal("deepseek-flash", cheap[0]);
+        Assert.Contains("deepseek-v4-flash-vision-exp", cheap);
         Assert.Contains("deepseek-v4-flash", cheap);
     }
 
     /// <summary>
     /// DeepSeek's published rates (api-docs.deepseek.com/quick_start/pricing,
-    /// 2026-08-31): the vision model bills at the text-only Flash rates of $0.22
-    /// input, $0.66 output and $0.007 cached input per 1M tokens. Images are
-    /// converted to input tokens and billed as input, so no separate image rate
-    /// is needed. Equal rates are what make the demotion free.
+    /// 2026-09-10): the vision model is one of the names retired that day and
+    /// routed to V4.1 Flash, so it bills at the V4.1 rates of $0.15 input, $0.60
+    /// output and $0.003 cached input per 1M tokens. Images are converted to
+    /// input tokens and billed as input, so no separate image rate is needed.
+    /// Equal rates are what make the demotion free.
     /// </summary>
     [Fact]
     public void FlashVisionExp_PricesAtTheTextOnlyFlashRates()
@@ -71,10 +75,10 @@ public sealed class ModelCatalogDeepSeekCheapTierTests
         var vision = RelayPricing.Default["deepseek-v4-flash-vision-exp"];
         var text = RelayPricing.Default["deepseek-v4-flash"];
 
-        Assert.Equal(0.22, vision.Input);
-        Assert.Equal(0.66, vision.Output);
-        Assert.Equal(0.007, vision.EffectiveCachedInput);
-        Assert.Equal(0.22, vision.EffectiveCacheWrite);
+        Assert.Equal(0.15, vision.Input);
+        Assert.Equal(0.60, vision.Output);
+        Assert.Equal(0.003, vision.EffectiveCachedInput);
+        Assert.Equal(0.15, vision.EffectiveCacheWrite);
 
         Assert.Equal(text.Input, vision.Input);
         Assert.Equal(text.Output, vision.Output);

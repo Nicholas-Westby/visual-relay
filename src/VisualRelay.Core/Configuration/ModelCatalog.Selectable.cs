@@ -22,15 +22,15 @@ public static partial class ModelCatalog
             },
             ["balanced"] = new List<string>
             {
-                "deepseek-v4-pro", "kimi-k2", "deepseek-v4-flash",
-                "hf-qwen3-coder-next",
+                "deepseek-flash", "deepseek-v4-pro", "kimi-k2",
+                "deepseek-v4-flash", "hf-qwen3-coder-next",
             },
-            // deepseek-v4-flash keeps its slot behind the vision-exp default: it
-            // is the auto-resolved first fallback, and dropping it from the
-            // picker would silently discard a saved override that names it.
+            // Every V4 name keeps its slot behind the V4.1 Flash default. They
+            // are the auto-resolved fallbacks, and dropping one from the picker
+            // would silently discard a saved override that names it.
             ["cheap"] = new List<string>
             {
-                "deepseek-v4-flash-vision-exp", "deepseek-v4-flash",
+                "deepseek-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-flash",
                 "deepseek-v4-pro", "hf-qwen3-coder-next",
             },
             // Mirrors the chain, tail included: a DeepSeek-only install must be
