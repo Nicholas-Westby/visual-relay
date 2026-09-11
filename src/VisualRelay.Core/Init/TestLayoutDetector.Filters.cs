@@ -13,6 +13,7 @@ public static partial class TestLayoutDetector
         "node_modules", "vendor", "third_party", "thirdparty", "dist", "build", "out", "target",
         "bin", "obj", ".venv", "venv", "site-packages", "Pods", "Carthage", "bower_components",
         ".terraform", "_build", "deps", "generated", "gen", ".gradle", ".next", ".svelte-kit", "coverage",
+        "testdata", "fixtures", "__fixtures__",
     };
 
     private static readonly string[] ExcludedNames = ["package-lock.json", "yarn.lock", "Cargo.lock"];

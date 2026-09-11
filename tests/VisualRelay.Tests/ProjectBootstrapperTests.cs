@@ -90,7 +90,8 @@ public sealed class ProjectBootstrapperTests
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module example.com/m\n\ngo 1.22\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
-        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(repo.Root, accepting);
+        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(
+            repo.Root, validationRunner: accepting, gitInvoker: sim);
 
         Assert.True(upgraded);
         var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
@@ -98,15 +99,42 @@ public sealed class ProjectBootstrapperTests
         Assert.Contains("go test", loaded.Config.TestCommand);
     }
 
+    /// <summary>
+    /// The upgrade is also the first time the repo's test layout can be
+    /// detected from real tracked source — bootstrap ran that detection
+    /// against an empty tree and found nothing, so the upgrade must refresh
+    /// it rather than leave that stale "nothing detected" snapshot in place.
+    /// </summary>
+    [Fact]
+    public async Task TryUpgrade_PlaceholderConfigGainsToolchain_RefreshesTestLayout()
+    {
+        var (repo, sim) = CreateSimRepo();
+        await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
+        // Simulate a scaffold task adding a real, tracked Rust toolchain.
+        sim.Seed(repo.Root, "Cargo.toml", "[package]\nname = \"m\"\n");
+        sim.Seed(repo.Root, "src/lib.rs", "pub fn add(a: i32, b: i32) -> i32 { a + b }\n");
+        sim.Seed(repo.Root, "src/main.rs", "fn main() {}\n");
+        sim.Commit(repo.Root, "scaffold rust");
+        var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
+
+        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(
+            repo.Root, validationRunner: accepting, gitInvoker: sim);
+
+        Assert.True(upgraded);
+        var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal([".rs"], loaded.Config.AuthorTests.InlineTestExtensions);
+    }
+
     [Fact]
     public async Task TryUpgrade_NonPlaceholderConfig_LeavesItUnchanged()
     {
-        using var repo = TestRepository.Create();
+        var (repo, sim) = CreateSimRepo();
         RelayConfigWriter.Write(repo.Root, "dotnet test");
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
-        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(repo.Root, accepting);
+        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(
+            repo.Root, validationRunner: accepting, gitInvoker: sim);
 
         Assert.False(upgraded);
         var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
@@ -120,7 +148,8 @@ public sealed class ProjectBootstrapperTests
         await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
-        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(repo.Root, accepting);
+        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(
+            repo.Root, validationRunner: accepting, gitInvoker: sim);
 
         Assert.False(upgraded);
         var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
@@ -137,7 +166,8 @@ public sealed class ProjectBootstrapperTests
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
-        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(repo.Root, accepting);
+        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(
+            repo.Root, validationRunner: accepting, gitInvoker: sim);
 
         Assert.True(upgraded);
         var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);

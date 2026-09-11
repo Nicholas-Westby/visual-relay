@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Core.Init;
@@ -27,9 +28,12 @@ public sealed record TestLayoutDetection(
 /// </summary>
 public static partial class TestLayoutDetector
 {
-    // Nothing tracked, nothing detected.
+    // Nothing tracked, nothing detected. Frozen (not a plain Dictionary) so this
+    // shared singleton can never be corrupted by a caller that downcasts
+    // CountsByExtension and mutates it — every DetectAsync/Detect caller that
+    // finds nothing gets back the exact same safe-to-share instance.
     private static readonly TestLayoutDetection Empty =
-        new([], [], new Dictionary<string, int>(StringComparer.Ordinal), 0);
+        new([], [], FrozenDictionary<string, int>.Empty, 0);
 
     // A marker only speaks for the project it sits in: monorepos keep Cargo.toml
     // under packages/*, but a manifest buried deeper is a fixture or an example.

@@ -122,14 +122,20 @@ public static class ProjectBootstrapper
     /// When the config's test command is still the placeholder and the project has
     /// since gained a recognizable toolchain (e.g. a scaffold task added Cargo.toml),
     /// detect + validate the real test command and adopt it, preserving all other
-    /// config keys. Returns true when an upgrade was applied. No-op (returns false)
-    /// when the command is not the placeholder or no toolchain is detectable yet.
+    /// config keys, and refresh the test-layout detection behind it (bootstrap's
+    /// detection ran against an empty tree and found nothing; that snapshot must
+    /// not survive the project's first real scaffold untouched). Returns true when
+    /// an upgrade was applied. No-op (returns false) when the command is not the
+    /// placeholder or no toolchain is detectable yet.
     /// </summary>
     public static async Task<bool> TryUpgradePlaceholderTestCommandAsync(
         string rootPath,
+        IGitInvoker? gitInvoker = null,
         ITestRunner? validationRunner = null,
         CancellationToken cancellationToken = default)
     {
+        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
+
         var loaded = await RelayConfigLoader.TryLoadAsync(rootPath, cancellationToken);
         if (loaded.Status != RelayConfigStatus.Loaded
             || !string.Equals(loaded.Config.TestCommand, PlaceholderTestCommand, StringComparison.Ordinal))
@@ -145,6 +151,10 @@ public static class ProjectBootstrapper
         }
 
         RelayConfigWriter.UpsertResolvedToolchain(rootPath, command);
+
+        var layout = await TestLayoutDetector.DetectAsync(rootPath, gi, cancellationToken);
+        RelayConfigWriter.UpsertAuthorTests(rootPath, layout);
+
         return true;
     }
 

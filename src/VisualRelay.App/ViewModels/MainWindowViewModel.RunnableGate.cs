@@ -19,7 +19,7 @@ public partial class MainWindowViewModel
         // a failure here must never block an otherwise-runnable task.
         try
         {
-            await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(RootPath);
+            await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(RootPath, new GitInvoker());
         }
         catch
         {

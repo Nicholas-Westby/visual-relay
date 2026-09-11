@@ -73,6 +73,29 @@ public sealed class TestLayoutDetectorTests
     }
 
     [Fact]
+    public void A_manifest_at_exactly_three_directory_segments_still_counts()
+    {
+        var detection = Detect("a/b/c/Cargo.toml", "a/b/c/src/lib.rs");
+
+        Assert.Equal(["rust"], detection.DetectedLanguages);
+        Assert.Equal([".rs"], detection.InlineTestExtensions);
+    }
+
+    [Fact]
+    public void Fixture_directories_do_not_mark_a_language_present()
+    {
+        var detection = Detect(
+            "go.mod", "mux.go", "route.go", "tree.go",
+            "testdata/sample/Cargo.toml", "testdata/sample/src/lib.rs",
+            "fixtures/other/Cargo.toml", "fixtures/other/src/lib.rs",
+            "__fixtures__/more/Cargo.toml", "__fixtures__/more/src/lib.rs");
+
+        Assert.Equal(["go"], detection.DetectedLanguages);
+        Assert.Empty(detection.InlineTestExtensions);
+        Assert.False(detection.CountsByExtension.ContainsKey(".rs"));
+    }
+
+    [Fact]
     public void Vendored_and_generated_paths_are_ignored()
     {
         var detection = Detect(
