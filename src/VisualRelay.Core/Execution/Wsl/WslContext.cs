@@ -5,6 +5,7 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// absolute nono path inside it (a non-login <c>--exec</c> has no profile PATH),
 /// and the distro user's home (where the guard profile is placed).
 /// </summary>
+// ReSharper disable once NotAccessedPositionalProperty.Global — NonoPath heads the nono prefix at the launch site, which lands with the executor's WSL arm
 public sealed record WslContext(string WslExePath, string Distro, string NonoPath, string DistroHome);
 
 /// <summary>

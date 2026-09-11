@@ -10,10 +10,10 @@ namespace VisualRelay.Tests;
 internal static class WslProbeFixtures
 {
     public const string WslExe = @"C:\Windows\System32\wsl.exe";
-    public const string Kernel = "5.15.167.4-microsoft-standard-WSL2";
+    private const string Kernel = "5.15.167.4-microsoft-standard-WSL2";
 
-    public static readonly WslDistro Ubuntu = new("Ubuntu", 2, true, "Running");
-    public static readonly WslDistro Debian = new("Debian", 1, false, "Stopped");
+    private static readonly WslDistro Ubuntu = new("Ubuntu", 2, true, "Running");
+    private static readonly WslDistro Debian = new("Debian", 1, false, "Stopped");
 
     public static WslProbe Usable() => new(
         WslExeFound: true, WslExePath: WslExe, Distros: [Ubuntu, Debian], RequestedDistro: null,

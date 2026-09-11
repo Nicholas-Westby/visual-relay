@@ -13,7 +13,7 @@ namespace VisualRelay.Cli.Gates;
 public static class WslGate
 {
     /// <summary>The nono release the distro install instructions pin (matches the Nix and Homebrew pins).</summary>
-    public const string PinnedNonoVersion = "0.75.0";
+    private const string PinnedNonoVersion = "0.75.0";
 
     private const string SuggestedDistro = "Ubuntu";
 

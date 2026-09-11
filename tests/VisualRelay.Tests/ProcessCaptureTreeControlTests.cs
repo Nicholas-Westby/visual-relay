@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
@@ -39,11 +40,11 @@ public sealed class ProcessCaptureTreeControlTests
     {
         var tp = new ManualTimeProvider();
         var control = new RecordingTreeControl();
-        var exited = false;
+        var exited = new StrongBox<bool>(false);
         var localKills = 0;
 
-        var stop = ProcessCapture.StopTreeAsync(control, () => exited, () => localKills++, tp);
-        exited = true; // the tree honoured the polite stop
+        var stop = ProcessCapture.StopTreeAsync(control, () => exited.Value, () => localKills++, tp);
+        exited.Value = true; // the tree honoured the polite stop
         tp.Advance(TimeSpan.FromMilliseconds(200));
         await stop;
 

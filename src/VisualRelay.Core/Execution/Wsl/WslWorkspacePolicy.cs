@@ -3,6 +3,7 @@ namespace VisualRelay.Core.Execution.Wsl;
 public enum WslWorkspaceDecision
 {
     Allow,
+    // ReSharper disable once UnusedMember.Global — the downgrade target for MntPolicy once the DrvFs probe proves enforcement
     Warn,
     Refuse,
 }

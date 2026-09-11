@@ -19,7 +19,7 @@ public static partial class WslProber
     public const string DistroEnvVar = "VR_WSL_DISTRO";
 
     /// <summary>The kernel-release suffix Microsoft's stock WSL2 kernels carry.</summary>
-    public const string Wsl2KernelMarker = "microsoft-standard-WSL2";
+    private const string Wsl2KernelMarker = "microsoft-standard-WSL2";
 
     private const string LsmPath = "/sys/kernel/security/lsm";
     private const int DiagnosticsCap = 400;

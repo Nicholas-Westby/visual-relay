@@ -9,8 +9,8 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// </summary>
 public static class WslExeEnvironment
 {
-    public const string Utf8 = "WSL_UTF8";
-    public const string DisableWarnings = "WSL_DISABLE_WARNINGS";
+    private const string Utf8 = "WSL_UTF8";
+    private const string DisableWarnings = "WSL_DISABLE_WARNINGS";
 
     public static IReadOnlyDictionary<string, string> Variables { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal) { [Utf8] = "1", [DisableWarnings] = "1" };

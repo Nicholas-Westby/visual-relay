@@ -49,11 +49,7 @@ public sealed class WslListParserTests
         var distros = WslListParser.Parse(English.Replace("\n", "\r\n"));
 
         Assert.Equal(3, distros.Count);
-        Assert.All(distros, d =>
-        {
-            Assert.DoesNotContain('\r', d.Name);
-            Assert.DoesNotContain('\r', d.State);
-        });
+        Assert.DoesNotContain(distros, d => d.Name.Contains('\r') || d.State.Contains('\r'));
         Assert.Equal(new WslDistro("docker-desktop", 2, false, "Running"), distros[2]);
     }
 

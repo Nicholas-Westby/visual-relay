@@ -22,13 +22,16 @@ public sealed class WslLauncherArgvTests
         "--allow-cwd", "--silent", "--",
     ];
 
-    public static TheoryData<string> HostileArguments => new()
-    {
-        "a b", "c\"d", "e'f", "g\\h", "$i", "`j`", "k\nl", "héllo/日本", "",
-    };
-
     [Theory]
-    [MemberData(nameof(HostileArguments))]
+    [InlineData("a b")]
+    [InlineData("c\"d")]
+    [InlineData("e'f")]
+    [InlineData("g\\h")]
+    [InlineData("$i")]
+    [InlineData("`j`")]
+    [InlineData("k\nl")]
+    [InlineData("héllo/日本")]
+    [InlineData("")]
     public void Build_EveryArgumentStaysOneElementVerbatim(string hostile)
     {
         var launch = WslLauncher.Build(Exe, "Ubuntu", Workspace, PidFile, Prefix, "/bin/sh", ["-c", hostile]);

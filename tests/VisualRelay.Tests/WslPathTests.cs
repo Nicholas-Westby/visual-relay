@@ -19,7 +19,7 @@ public sealed class WslPathTests
     [InlineData(@"\\wsl$\D\a b\ü", "D", "/a b/ü")]
     [InlineData(@"\\wsl.localhost\D\a b\ü", "D", "/a b/ü")]
     [InlineData(@"\\wsl.localhost\D\a b\ü\", "D", "/a b/ü")]
-    [InlineData(@"//wsl$/D/a b/ü", "D", "/a b/ü")]
+    [InlineData("//wsl$/D/a b/ü", "D", "/a b/ü")]
     [InlineData(@"\\wsl$\D/a b\ü//", "D", "/a b/ü")]
     [InlineData(@"\\wsl$\D", "D", "/")]
     [InlineData(@"\\wsl$\D\", "D", "/")]
@@ -102,7 +102,7 @@ public sealed class WslPathTests
     [InlineData(@"C:\x y\ü", "/mnt/c/x y/ü")]
     [InlineData(@"c:\repo", "/mnt/c/repo")]
     [InlineData(@"D:\", "/mnt/d")]
-    [InlineData(@"C:/x/y", "/mnt/c/x/y")]
+    [InlineData("C:/x/y", "/mnt/c/x/y")]
     [InlineData(@"C:\x\", "/mnt/c/x")]
     public void TryDriveToMnt_LowercasesTheDriveLetter(string windows, string linux)
     {
@@ -113,8 +113,8 @@ public sealed class WslPathTests
     [Theory]
     [InlineData("")]
     [InlineData(@"x\y")]
-    [InlineData(@"C:x")]
-    [InlineData(@"C:")]
+    [InlineData("C:x")]
+    [InlineData("C:")]
     [InlineData(@"\x")]
     [InlineData("/home/u")]
     [InlineData(@"\\wsl$\D\x")]

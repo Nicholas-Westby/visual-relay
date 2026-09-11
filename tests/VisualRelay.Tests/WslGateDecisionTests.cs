@@ -15,14 +15,6 @@ public sealed class WslGateDecisionTests
         "install the toolchain there. A Windows-only toolchain (MSBuild against .NET Framework, " +
         "Visual Studio build tools, Unity on Windows, anything that needs an .exe) is not supported.";
 
-    public static TheoryData<string> FailingProbes => new()
-    {
-        nameof(WslProbeFixtures.NoWsl), nameof(WslProbeFixtures.NoDistro),
-        nameof(WslProbeFixtures.RequestedDistroMissing), nameof(WslProbeFixtures.Wsl1),
-        nameof(WslProbeFixtures.NonoMissing), nameof(WslProbeFixtures.LandlockInactive),
-        nameof(WslProbeFixtures.HomeUnknown),
-    };
-
     private static WslProbe Fixture(string name) => name switch
     {
         nameof(WslProbeFixtures.NoWsl) => WslProbeFixtures.NoWsl(),
@@ -42,7 +34,13 @@ public sealed class WslGateDecisionTests
     }
 
     [Theory]
-    [MemberData(nameof(FailingProbes))]
+    [InlineData(nameof(WslProbeFixtures.NoWsl))]
+    [InlineData(nameof(WslProbeFixtures.NoDistro))]
+    [InlineData(nameof(WslProbeFixtures.RequestedDistroMissing))]
+    [InlineData(nameof(WslProbeFixtures.Wsl1))]
+    [InlineData(nameof(WslProbeFixtures.NonoMissing))]
+    [InlineData(nameof(WslProbeFixtures.LandlockInactive))]
+    [InlineData(nameof(WslProbeFixtures.HomeUnknown))]
     public void EveryFailure_Exits127AndEndsWithTheToolchainConsequence(string fixture)
     {
         var (exitCode, message) = WslGate.Decide(Fixture(fixture));
