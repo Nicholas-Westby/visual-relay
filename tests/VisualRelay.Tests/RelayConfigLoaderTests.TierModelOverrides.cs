@@ -17,14 +17,14 @@ public sealed partial class RelayConfigLoaderTests
             """
             {
               "testCmd": "dotnet test",
-              "tierModelOverrides": { "cheap": "deepseek-v4-pro", "frontier": "kimi-k2" }
+              "tierModelOverrides": { "cheap": "deepseek-v4-flash", "frontier": "kimi-k2" }
             }
             """);
 
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.NotNull(result.Config.TierModelOverrides);
-        Assert.Equal("deepseek-v4-pro", result.Config.TierModelOverrides!["cheap"]);
+        Assert.Equal("deepseek-v4-flash", result.Config.TierModelOverrides!["cheap"]);
         Assert.Equal("kimi-k2", result.Config.TierModelOverrides!["frontier"]);
     }
 
@@ -88,7 +88,7 @@ public sealed partial class RelayConfigLoaderTests
             {
               "testCmd": "dotnet test",
               "baselineVerify": false,
-              "tierModelOverrides": { "cheap": "deepseek-v4-pro" }
+              "tierModelOverrides": { "cheap": "deepseek-v4-flash" }
             }
             """);
 
@@ -97,6 +97,6 @@ public sealed partial class RelayConfigLoaderTests
         Assert.Equal("dotnet test", result.Config.TestCommand);
         Assert.False(result.Config.BaselineVerify);
         Assert.NotNull(result.Config.TierModelOverrides);
-        Assert.Equal("deepseek-v4-pro", result.Config.TierModelOverrides!["cheap"]);
+        Assert.Equal("deepseek-v4-flash", result.Config.TierModelOverrides!["cheap"]);
     }
 }

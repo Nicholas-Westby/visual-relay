@@ -136,9 +136,9 @@ public sealed class FirstPartySubagentRunnerTests
     public async Task ChainHops_ReachDifferentProviders()
     {
         // Every DeepSeek hop is down. One retry each, so two attempts per model
-        // across the four DeepSeek models, then the Hugging Face floor answers.
+        // across the two DeepSeek models, then the Hugging Face floor answers.
         var transport = new ScriptedModelTransport();
-        for (var i = 0; i < 8; i++) transport.Fails(503, """{"error":{"message":"down"}}""");
+        for (var i = 0; i < 4; i++) transport.Fails(503, """{"error":{"message":"down"}}""");
         transport.Answer("""{"summary":"eventually","options":[]}""");
         var sink = new Sink();
 

@@ -16,7 +16,7 @@ public sealed partial class RelayConfigWriterTests
 
         var overrides = new Dictionary<string, string>
         {
-            ["cheap"] = "deepseek-v4-pro",
+            ["cheap"] = "deepseek-v4-flash",
             ["frontier"] = "kimi-k2",
         };
         RelayConfigWriter.UpsertTierModelOverrides(repo.Root, overrides);
@@ -24,7 +24,7 @@ public sealed partial class RelayConfigWriterTests
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.NotNull(result.Config.TierModelOverrides);
-        Assert.Equal("deepseek-v4-pro", result.Config.TierModelOverrides!["cheap"]);
+        Assert.Equal("deepseek-v4-flash", result.Config.TierModelOverrides!["cheap"]);
         Assert.Equal("kimi-k2", result.Config.TierModelOverrides!["frontier"]);
     }
 
@@ -39,13 +39,13 @@ public sealed partial class RelayConfigWriterTests
         Assert.True(before.Config.BaselineVerify);
 
         RelayConfigWriter.UpsertTierModelOverrides(repo.Root,
-            new Dictionary<string, string> { ["cheap"] = "deepseek-v4-pro" });
+            new Dictionary<string, string> { ["cheap"] = "deepseek-v4-flash" });
 
         var after = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, after.Status);
         Assert.True(after.Config.BaselineVerify);
         Assert.Equal("dotnet test", after.Config.TestCommand);
         Assert.NotNull(after.Config.TierModelOverrides);
-        Assert.Equal("deepseek-v4-pro", after.Config.TierModelOverrides!["cheap"]);
+        Assert.Equal("deepseek-v4-flash", after.Config.TierModelOverrides!["cheap"]);
     }
 }

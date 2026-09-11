@@ -23,9 +23,7 @@ public sealed class ModelCatalogTests
         // No absent-key model appears as a primary.
         Assert.DoesNotContain("kimi-k2", aliases.Values);
         Assert.DoesNotContain("deepseek-flash", aliases.Values);
-        Assert.DoesNotContain("deepseek-v4-pro", aliases.Values);
         Assert.DoesNotContain("deepseek-v4-flash", aliases.Values);
-        Assert.DoesNotContain("deepseek-v4-flash-vision-exp", aliases.Values);
 
         Assert.Contains("HF_TOKEN", summary, StringComparison.Ordinal);
     }
@@ -40,8 +38,8 @@ public sealed class ModelCatalogTests
 
         Assert.Equal("deepseek-flash", aliases["cheap"]);
         Assert.Equal("deepseek-flash", aliases["balanced"]);
-        // The frontier primary needs HF_TOKEN (present), so it wins ahead
-        // of the deepseek-v4-pro fallback even when DEEPSEEK_API_KEY is set.
+        // The frontier primary needs HF_TOKEN (present), so it wins even when
+        // DEEPSEEK_API_KEY is set — no DeepSeek model is on that tier at all.
         Assert.Equal("hf-glm-5.3-flash", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
         Assert.Equal("hf-qwen3-coder-next", aliases["fallback"]);
@@ -75,7 +73,9 @@ public sealed class ModelCatalogTests
         Assert.True(fallbacks.ContainsKey("frontier"));
         var chain = fallbacks["frontier"];
         Assert.Contains("kimi-k2", chain);
-        Assert.Contains("deepseek-v4-pro", chain);
+        // The frontier tier lost its only DeepSeek hop when the v4-pro alias was
+        // retired on 2026-09-11; the tier is Z.AI, HF and Moonshot now.
+        Assert.DoesNotContain(chain, m => m.StartsWith("deepseek", StringComparison.Ordinal));
         Assert.Contains("hf-qwen3-coder-next", chain);
         Assert.Equal(ModelCatalog.FallbackFloorModel, chain[^1]);
 

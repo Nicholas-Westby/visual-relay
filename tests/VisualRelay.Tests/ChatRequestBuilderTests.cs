@@ -35,7 +35,7 @@ public sealed class ChatRequestBuilderTests
     public void StreamingRequest_AsksForUsage()
     {
         var body = Build([new ChatMessage("user", "hi")],
-            new ChatRequestOptions("deepseek-v4-pro", Stream: true), DeepSeek);
+            new ChatRequestOptions("deepseek-flash", Stream: true), DeepSeek);
 
         Assert.True(body.GetProperty("stream").GetBoolean());
         Assert.True(body.GetProperty("stream_options").GetProperty("include_usage").GetBoolean());
@@ -46,7 +46,7 @@ public sealed class ChatRequestBuilderTests
     public void NonStreamingRequest_OmitsStreamKeys()
     {
         var body = Build([new ChatMessage("user", "hi")],
-            new ChatRequestOptions("deepseek-v4-pro"), DeepSeek);
+            new ChatRequestOptions("deepseek-flash"), DeepSeek);
 
         Assert.False(body.TryGetProperty("stream", out _));
         Assert.False(body.TryGetProperty("stream_options", out _));
@@ -60,7 +60,7 @@ public sealed class ChatRequestBuilderTests
     public void DeveloperRole_IsMappedToSystem()
     {
         var body = Build([new ChatMessage("developer", "be terse")],
-            new ChatRequestOptions("deepseek-v4-pro"), DeepSeek);
+            new ChatRequestOptions("deepseek-flash"), DeepSeek);
 
         Assert.Equal("system", body.GetProperty("messages")[0].GetProperty("role").GetString());
     }
@@ -78,7 +78,7 @@ public sealed class ChatRequestBuilderTests
             ContentPart.FromImage("data:image/png;base64,AAAA"),
         ]);
 
-        var content = Build([message], new ChatRequestOptions("deepseek-v4-flash-vision-exp"), DeepSeek)
+        var content = Build([message], new ChatRequestOptions("deepseek-flash"), DeepSeek)
             .GetProperty("messages")[0].GetProperty("content");
 
         Assert.Equal(JsonValueKind.Array, content.ValueKind);
@@ -93,7 +93,7 @@ public sealed class ChatRequestBuilderTests
     public void TextMessage_SendsContentAsAString()
     {
         var content = Build([new ChatMessage("user", "hi")],
-            new ChatRequestOptions("deepseek-v4-pro"), DeepSeek)
+            new ChatRequestOptions("deepseek-flash"), DeepSeek)
             .GetProperty("messages")[0].GetProperty("content");
 
         Assert.Equal(JsonValueKind.String, content.ValueKind);
@@ -110,7 +110,7 @@ public sealed class ChatRequestBuilderTests
             ReasoningContent: "the user wants a sum",
             ToolCalls: [new ToolCall("call_1", "add", """{"a":2,"b":2}""")]);
 
-        var message = Build([assistant], new ChatRequestOptions("deepseek-v4-pro"), DeepSeek)
+        var message = Build([assistant], new ChatRequestOptions("deepseek-flash"), DeepSeek)
             .GetProperty("messages")[0];
 
         Assert.Equal("the user wants a sum", message.GetProperty("reasoning_content").GetString());
@@ -126,7 +126,7 @@ public sealed class ChatRequestBuilderTests
     public void MessageWithoutReasoning_OmitsTheField()
     {
         var message = Build([new ChatMessage("assistant", "done")],
-            new ChatRequestOptions("deepseek-v4-pro"), DeepSeek).GetProperty("messages")[0];
+            new ChatRequestOptions("deepseek-flash"), DeepSeek).GetProperty("messages")[0];
 
         Assert.False(message.TryGetProperty("reasoning_content", out _));
     }
@@ -155,7 +155,7 @@ public sealed class ChatRequestBuilderTests
     public void RequiredToolChoice_IsWithheldFromDeepSeekToo()
     {
         var body = Build([new ChatMessage("user", "add 2 and 2")],
-            new ChatRequestOptions("deepseek-v4-pro", RequireToolCall: true), DeepSeek, [Tool()]);
+            new ChatRequestOptions("deepseek-flash", RequireToolCall: true), DeepSeek, [Tool()]);
 
         Assert.False(body.TryGetProperty("tool_choice", out _));
     }
@@ -194,7 +194,7 @@ public sealed class ChatRequestBuilderTests
         var zai = Build([new ChatMessage("user", "hi")],
             new ChatRequestOptions("glm-5.3-flash", ReasoningEffort: "low"), Zai);
         var deepseek = Build([new ChatMessage("user", "hi")],
-            new ChatRequestOptions("deepseek-v4-pro", ReasoningEffort: "none"), DeepSeek);
+            new ChatRequestOptions("deepseek-flash", ReasoningEffort: "none"), DeepSeek);
 
         Assert.Equal("low", zai.GetProperty("reasoning_effort").GetString());
         Assert.Equal("none", deepseek.GetProperty("reasoning_effort").GetString());
@@ -218,7 +218,7 @@ public sealed class ChatRequestBuilderTests
     public void ToolResultMessage_CarriesItsCallId()
     {
         var message = Build([new ChatMessage("tool", "4", ToolCallId: "call_1")],
-            new ChatRequestOptions("deepseek-v4-pro"), DeepSeek).GetProperty("messages")[0];
+            new ChatRequestOptions("deepseek-flash"), DeepSeek).GetProperty("messages")[0];
 
         Assert.Equal("tool", message.GetProperty("role").GetString());
         Assert.Equal("call_1", message.GetProperty("tool_call_id").GetString());

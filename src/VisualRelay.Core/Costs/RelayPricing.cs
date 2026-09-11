@@ -45,33 +45,15 @@ internal static class RelayPricing
             // deepseek-flash → DeepSeek-V4.1-Flash (api-docs.deepseek.com/quick_start/pricing,
             // 2026-09-10); off-peak base rates. CacheWrite == Input because DeepSeek bills a
             // cache miss at the standard input rate and charges nothing extra to populate
-            // the cache. The three V4 rows below are the same model upstream and so carry
-            // the same figures.
+            // the cache. No separate image rate is recorded because DeepSeek bills images
+            // AS input tokens, at the Input rate: the estimator prices the provider's own
+            // prompt_tokens, which already include them. The V4 Flash row below is the
+            // same model upstream and so carries the same figures.
             ["deepseek-flash"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
             // deepseek-v4-flash → DeepSeek-V4-Flash-0731, RETIRED 2026-09-10 and routed to
             // V4.1 Flash, so it is billed at the V4.1 rates above rather than the 0.22 /
             // 0.66 / 0.007 it used to publish. Those rates are no longer offered anywhere.
             ["deepseek-v4-flash"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
-            // deepseek-v4-pro → DeepSeek-V4-Pro-0813. DeepSeek serves it until
-            // 2026-09-14 04:00 UTC and routes it to V4.1 Flash at the V4.1 price from
-            // then, which is what this row records. Until that date a hop that really
-            // lands on V4-Pro is billed here at roughly a QUARTER of its true rate, and
-            // that hop is not remote: V4-Pro is the FIRST fallback on balanced, the tier
-            // six of the twelve stages run on, reached as soon as the head's two
-            // attempts fail. It is also the fourth frontier hop and the third cheap
-            // fallback. Under-counting for these few days is the deliberate lesser
-            // evil: recording rates that expire on 2026-09-14 would over-count every
-            // V4-Pro hop from then on, and those hops keep arriving.
-            ["deepseek-v4-pro"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
-            // deepseek-v4-flash-vision-exp → DeepSeek-V4-Flash-Vision-Exp, likewise
-            // retired 2026-09-10 and routed to V4.1 Flash, which is natively multimodal.
-            // No separate image rate is recorded because DeepSeek bills images AS input
-            // tokens, at the Input rate above. This used to rest on a second, now-false
-            // claim — that images never reached DeepSeek at all. They do: image parts are
-            // sent verbatim on the direct path. The rate still holds, because the
-            // estimator prices the provider's own prompt_tokens, which already include
-            // the image tokens.
-            ["deepseek-v4-flash-vision-exp"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
             // GLM 5.3 Flash first-party on Z.AI (docs.z.ai/guides/overview/pricing,
             // 2026-08-26). These are the sticker rates: Z.AI is running a 50%-off
             // promotion on this model until 2026-09-09, and pricing the promo

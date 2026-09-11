@@ -5,17 +5,16 @@ using VisualRelay.Core.Llm.Routing;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// DeepSeek V4.1 Flash leads the cheap and balanced tiers. It is a million-token
-/// model at a quarter of the old Flash input rate. DeepSeek serves the two V4
-/// Flash names from it since 2026-09-10, and V4 Pro joins them on 2026-09-14, so
-/// the hops behind the head are converging on the same weights. Those hops are
-/// kept because a retired name can be withdrawn at any time, and two failed
-/// attempts are cheaper than losing the tier.
+/// DeepSeek V4.1 Flash leads the cheap, balanced and (on a DeepSeek-only
+/// install) vision tiers. It is a million-token model at a quarter of the old
+/// Flash input rate. DeepSeek has served V4 Flash from it since 2026-09-10, so
+/// the one hop behind the head is the same weights; it is kept because a retired
+/// name can be withdrawn at any time, and two failed attempts are cheaper than
+/// losing the tier. The other two V4 aliases were dropped on 2026-09-11.
 /// </summary>
 public sealed class ModelCatalogDeepSeekFlashTests
 {
-    private static readonly string[] LegacyDeepSeekModels =
-        ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro"];
+    private static readonly string[] LegacyDeepSeekModels = ["deepseek-v4-flash"];
 
     private static HashSet<string> AllKeys() => new(StringComparer.Ordinal)
     {
@@ -77,16 +76,16 @@ public sealed class ModelCatalogDeepSeekFlashTests
     public void DeepSeekFlash_SharesTheDeepSeekPeakWindows()
     {
         var flash = RelayPricing.Default["deepseek-flash"];
-        var sibling = RelayPricing.Default["deepseek-v4-pro"];
+        var sibling = RelayPricing.Default["deepseek-v4-flash"];
 
         Assert.NotNull(flash.Windows);
         Assert.Equal<IEnumerable<RateWindow>>(sibling.Windows!, flash.Windows!);
     }
 
     /// <summary>
-    /// The three V4 names are served by V4.1 Flash upstream, so they are billed
-    /// at its rates. Pricing them at their withdrawn sticker rates would
-    /// over-count every fallback hop by up to four times.
+    /// The surviving V4 name is served by V4.1 Flash upstream, so it is billed
+    /// at its rates. Pricing it at its withdrawn sticker rates would over-count
+    /// every fallback hop by up to four times.
     /// </summary>
     [Fact]
     public void TheLegacyDeepSeekRows_ArePricedAsV41Flash()
@@ -105,20 +104,17 @@ public sealed class ModelCatalogDeepSeekFlashTests
     }
 
     /// <summary>
-    /// The cheap chain leads with V4.1 Flash and keeps every model it replaced,
-    /// in the order they used to resolve, so a withdrawn name costs one round
-    /// trip rather than the tier.
+    /// The cheap chain leads with V4.1 Flash and keeps one V4 name behind it, so
+    /// a withdrawn head costs one round trip rather than the tier — without
+    /// spending eight attempts on DeepSeek before any other provider is tried.
     /// </summary>
     [Fact]
-    public void CheapChain_LeadsWithFlashAndKeepsTheFormerHeadsInOrder()
+    public void CheapChain_LeadsWithFlashAndKeepsOneV4HopBehindIt()
     {
         var chain = ModelCatalog.ResolveChains(AllKeys())["cheap"];
 
         Assert.Equal(
-            [
-                "deepseek-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-flash",
-                "deepseek-v4-pro", ModelCatalog.FallbackFloorModel,
-            ],
+            ["deepseek-flash", "deepseek-v4-flash", ModelCatalog.FallbackFloorModel],
             chain);
     }
 
@@ -133,33 +129,33 @@ public sealed class ModelCatalogDeepSeekFlashTests
 
         Assert.Equal(
             [
-                "deepseek-flash", "deepseek-v4-pro", "kimi-k2", "deepseek-v4-flash",
+                "deepseek-flash", "kimi-k2", "deepseek-v4-flash",
                 ModelCatalog.FallbackFloorModel,
             ],
             chain);
     }
 
     /// <summary>
-    /// The frontier and vision chains are untouched: this change is about the
-    /// two tiers DeepSeek already led.
+    /// Frontier reaches no DeepSeek model at all, and vision ends on V4.1 Flash
+    /// so a DeepSeek-only install keeps a tier that can read an image.
     /// </summary>
     [Fact]
-    public void FrontierAndVisionChains_AreUnchanged()
+    public void FrontierHasNoDeepSeekHop_AndVisionEndsOnFlash()
     {
         var chains = ModelCatalog.ResolveChains(AllKeys());
 
         Assert.Equal("glm-5.3-flash", chains["frontier"][0]);
-        Assert.DoesNotContain("deepseek-flash", chains["frontier"]);
-        Assert.DoesNotContain("deepseek-flash", chains["vision"]);
+        Assert.DoesNotContain(chains["frontier"], m => m.StartsWith("deepseek", StringComparison.Ordinal));
+        Assert.Equal("deepseek-flash", chains["vision"][^1]);
     }
 
     /// <summary>
-    /// The picker leads with the new default in both tiers and keeps every name
-    /// it used to offer: a saved override naming a model that leaves the list is
-    /// silently dropped on load, resetting whoever pinned it.
+    /// The picker leads with the default in both tiers and offers every name
+    /// still routable behind it: a saved override naming a model that leaves the
+    /// list is silently dropped on load, resetting whoever pinned it.
     /// </summary>
     [Fact]
-    public void SelectableLists_LeadWithFlashAndKeepEveryFormerEntry()
+    public void SelectableLists_LeadWithFlashAndKeepEveryRoutableEntry()
     {
         var cheap = ModelCatalog.SelectableModelsByTier["cheap"];
         var balanced = ModelCatalog.SelectableModelsByTier["balanced"];
@@ -168,10 +164,10 @@ public sealed class ModelCatalogDeepSeekFlashTests
         Assert.Equal("deepseek-flash", balanced[0]);
 
         Assert.Equal(
-            ["deepseek-v4-flash-vision-exp", "deepseek-v4-flash", "deepseek-v4-pro", "hf-qwen3-coder-next"],
+            ["deepseek-v4-flash", "hf-qwen3-coder-next"],
             cheap.Skip(1));
         Assert.Equal(
-            ["deepseek-v4-pro", "kimi-k2", "deepseek-v4-flash", "hf-qwen3-coder-next"],
+            ["kimi-k2", "deepseek-v4-flash", "hf-qwen3-coder-next"],
             balanced.Skip(1));
     }
 

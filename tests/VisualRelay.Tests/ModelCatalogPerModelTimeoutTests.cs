@@ -22,8 +22,7 @@ public sealed class ModelCatalogPerModelTimeoutTests
 
     private static readonly string[] Fast =
     [
-        "deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash",
-        "deepseek-v4-flash-vision-exp",
+        "deepseek-flash", "deepseek-v4-flash",
         "hf-qwen3-coder-next", "hf-qwen3-vl-235b", "hf-qwen3-vl-30b",
     ];
 

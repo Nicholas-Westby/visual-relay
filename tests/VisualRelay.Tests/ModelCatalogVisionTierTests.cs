@@ -11,7 +11,7 @@ public sealed class ModelCatalogVisionTierTests
 {
     /// <summary>Models known to be vision-capable in the current config.</summary>
     private static readonly HashSet<string> VisionCapableModels =
-        ["hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "deepseek-v4-flash-vision-exp"];
+        ["hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "deepseek-flash"];
 
     // ── 1. Template model strings ────────────────────────────────────────
 
@@ -54,7 +54,7 @@ public sealed class ModelCatalogVisionTierTests
         // and the DeepSeek route is the tail, so nobody's routing changes while
         // a key that backs a leader is present.
         Assert.Equal(
-            ["hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "deepseek-v4-flash-vision-exp"],
+            ["hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "deepseek-flash"],
             chain.Select(c => c.Model));
         Assert.Equal(
             ["HF_TOKEN", "HF_TOKEN", "DEEPSEEK_API_KEY"],
@@ -97,11 +97,10 @@ public sealed class ModelCatalogVisionTierTests
         Assert.DoesNotContain("kimi-k2", chain);
         Assert.DoesNotContain("fallback", chain);
         Assert.DoesNotContain("hf-qwen3-coder-next", chain);
-        Assert.DoesNotContain("deepseek-v4-pro", chain);
         Assert.DoesNotContain("deepseek-v4-flash", chain);
         // Absent here only because this case supplies no DEEPSEEK_API_KEY. It
         // IS in the vision chain, as its tail; with the key present it appears.
-        Assert.DoesNotContain("deepseek-v4-flash-vision-exp", chain);
+        Assert.DoesNotContain("deepseek-flash", chain);
         // Vision-capable or not, the frontier primary is not a vision route: GLM
         // 5.3 Flash does take images, but the vision chain stays the two VL
         // models the tier is sized and priced around.
@@ -154,6 +153,10 @@ public sealed class ModelCatalogVisionTierTests
     /// route, so an image sent there was silently lost. That proxy was deleted
     /// the next day and image parts now reach the provider verbatim, so the
     /// reason is gone.</para>
+    ///
+    /// <para>The tail is V4.1 Flash since the experimental route it replaced was
+    /// dropped on 2026-09-11: that model is natively multimodal per DeepSeek's
+    /// vision guide, so the tier survives the old name going away.</para>
     /// </summary>
     [Fact]
     public void VisionTier_ResolvesOnADeepSeekOnlyInstall()
@@ -163,6 +166,6 @@ public sealed class ModelCatalogVisionTierTests
         var aliases = ModelCatalogTestHelpers.GeneratedAliases(dsOnly);
 
         Assert.True(aliases.ContainsKey("vision"), "a vision-capable key must yield a vision tier");
-        Assert.Equal("deepseek-v4-flash-vision-exp", aliases["vision"]);
+        Assert.Equal("deepseek-flash", aliases["vision"]);
     }
 }

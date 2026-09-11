@@ -37,29 +37,24 @@ public static partial class ModelCatalog
     internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {
         // Both tiers lead with DeepSeek V4.1 Flash, a million-token model at a
-        // quarter of the old Flash input rate. The V4 names behind it are on
-        // their way to being the same weights: DeepSeek retired the two Flash
-        // ids on 2026-09-10 and routes them to V4.1 Flash today, and v4-pro is
-        // still served as itself until 2026-09-14, when it joins them. They are
-        // kept in their former order anyway, because "temporarily routed" is
-        // exactly the notice that a name can be withdrawn. That safety net is
-        // not free: each model gets one retry, so a dead name burns TWO attempts
-        // before the next hop, and cheap now spends eight attempts on DeepSeek
-        // before it reaches another provider, up from six. Real provider
-        // diversification still starts at kimi-k2 on balanced and at the
-        // fallback tier on cheap.
+        // quarter of the old Flash input rate. One V4 name is kept behind it as
+        // a fallback: deepseek-v4-flash was retired on 2026-09-10 and is routed
+        // to V4.1 Flash today, which is worth a hop but not a long queue. The
+        // other two V4 aliases were dropped on 2026-09-11 — a name the provider
+        // calls "temporarily routed" can be withdrawn, and each dead name burns
+        // TWO attempts (one retry apiece) before the next hop. Cheap now spends
+        // four attempts on DeepSeek before it reaches another provider, down
+        // from eight. Real provider diversification still starts at kimi-k2 on
+        // balanced and at the fallback tier on cheap.
         ["cheap"] =
         [
             ("deepseek-flash", "DEEPSEEK_API_KEY"),
-            ("deepseek-v4-flash-vision-exp", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),
-            ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("fallback", "HF_TOKEN"),
         ],
         ["balanced"] =
         [
             ("deepseek-flash", "DEEPSEEK_API_KEY"),
-            ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("kimi-k2", "MOONSHOT_API_KEY"),
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),
             ("fallback", "HF_TOKEN"),
@@ -69,23 +64,24 @@ public static partial class ModelCatalog
             ("glm-5.3-flash", "ZAI_API_KEY"),
             ("hf-glm-5.3-flash", "HF_TOKEN"),
             ("kimi-k2", "MOONSHOT_API_KEY"),
-            ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("hf-qwen3-coder-next", "HF_TOKEN"),
             ("fallback", "HF_TOKEN"),
         ],
         // The DeepSeek route is the TAIL, so an install holding HF_TOKEN routes
         // exactly as before and only reaches it when both VL models are gone.
         // It earns its place at the other end: without it, a DeepSeek-only
-        // install got no vision tier at all and could not run a visual review,
-        // while a vision-capable DeepSeek model sat on its cheap tier. That
-        // exclusion was made on 2026-08-31 because the proxy then in front of
-        // the agent stripped image parts on the DeepSeek route; the proxy was
-        // deleted the next day and images now reach the provider verbatim.
+        // install got no vision tier at all and could not run a visual review.
+        // The tail is deepseek-flash itself — V4.1 Flash is natively multimodal
+        // per DeepSeek's vision guide, so it keeps that install a vision tier
+        // now that the experimental route it replaced is gone. The exclusion of
+        // DeepSeek here was made on 2026-08-31 because the proxy then in front
+        // of the agent stripped image parts on that route; the proxy was deleted
+        // the next day and images now reach the provider verbatim.
         ["vision"] =
         [
             ("hf-qwen3-vl-235b", "HF_TOKEN"),
             ("hf-qwen3-vl-30b", "HF_TOKEN"),
-            ("deepseek-v4-flash-vision-exp", "DEEPSEEK_API_KEY"),
+            ("deepseek-flash", "DEEPSEEK_API_KEY"),
         ],
         ["fallback"] =
         [

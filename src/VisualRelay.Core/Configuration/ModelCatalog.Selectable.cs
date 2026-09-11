@@ -18,27 +18,24 @@ public static partial class ModelCatalog
             ["frontier"] = new List<string>
             {
                 "glm-5.3-flash", "hf-glm-5.3-flash", "kimi-k2",
-                "deepseek-v4-pro",
             },
             ["balanced"] = new List<string>
             {
-                "deepseek-flash", "deepseek-v4-pro", "kimi-k2",
+                "deepseek-flash", "kimi-k2",
                 "deepseek-v4-flash", "hf-qwen3-coder-next",
             },
-            // Every V4 name keeps its slot behind the V4.1 Flash default. They
-            // are the auto-resolved fallbacks, and dropping one from the picker
-            // would silently discard a saved override that names it.
+            // The surviving V4 name keeps its slot behind the V4.1 Flash
+            // default. It is the auto-resolved fallback, and dropping it from
+            // the picker would silently discard a saved override that names it.
             ["cheap"] = new List<string>
             {
-                "deepseek-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-flash",
-                "deepseek-v4-pro", "hf-qwen3-coder-next",
+                "deepseek-flash", "deepseek-v4-flash", "hf-qwen3-coder-next",
             },
             // Mirrors the chain, tail included: a DeepSeek-only install must be
             // able to see and pick the one vision model its keys can reach.
             ["vision"] = new List<string>
             {
-                "hf-qwen3-vl-235b", "hf-qwen3-vl-30b",
-                "deepseek-v4-flash-vision-exp",
+                "hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "deepseek-flash",
             },
             ["fallback"] = new List<string>
             {

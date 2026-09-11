@@ -107,7 +107,7 @@ public sealed class ProviderRoutesTests
     [Fact]
     public void Headers_CarryTheKeyAndAskForAStream()
     {
-        var headers = ProviderRoutes.For("deepseek-v4-pro")!.Headers("sk-example");
+        var headers = ProviderRoutes.For("deepseek-flash")!.Headers("sk-example");
 
         Assert.Equal("Bearer sk-example", headers["Authorization"]);
         Assert.Equal("text/event-stream", headers["Accept"]);
@@ -117,7 +117,7 @@ public sealed class ProviderRoutesTests
     [Fact]
     public void Capabilities_ResolveThroughTheRoutesProvider()
     {
-        Assert.True(ProviderRoutes.CapabilitiesFor("deepseek-v4-pro").CanDisableReasoning);
+        Assert.True(ProviderRoutes.CapabilitiesFor("deepseek-flash").CanDisableReasoning);
         Assert.False(ProviderRoutes.CapabilitiesFor("glm-5.3-flash").CanDisableReasoning);
         Assert.False(ProviderRoutes.CapabilitiesFor("kimi-k2").SupportsRequiredToolChoiceWhileThinking);
     }

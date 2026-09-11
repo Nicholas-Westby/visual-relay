@@ -64,16 +64,8 @@ public static class ProviderRoutes
                 "deepseek-flash", "DeepSeek", DeepSeek, "deepseek-flash",
                 "DEEPSEEK_API_KEY", 1_000_000, Fast),
 
-            ["deepseek-v4-pro"] = new(
-                "deepseek-v4-pro", "DeepSeek", DeepSeek, "deepseek-v4-pro",
-                "DEEPSEEK_API_KEY", 128_000, Fast),
-
             ["deepseek-v4-flash"] = new(
                 "deepseek-v4-flash", "DeepSeek", DeepSeek, "deepseek-v4-flash",
-                "DEEPSEEK_API_KEY", 128_000, Fast),
-
-            ["deepseek-v4-flash-vision-exp"] = new(
-                "deepseek-v4-flash-vision-exp", "DeepSeek", DeepSeek, "deepseek-v4-flash-vision-exp",
                 "DEEPSEEK_API_KEY", 128_000, Fast),
 
             ["hf-qwen3-coder-next"] = new(
