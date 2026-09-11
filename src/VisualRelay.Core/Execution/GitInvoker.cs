@@ -1,5 +1,4 @@
-using System.Diagnostics;
-using System.Runtime.InteropServices;
+using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Core.Execution;
 
@@ -8,9 +7,14 @@ namespace VisualRelay.Core.Execution;
 /// and sanitizes the environment so nix-store churn on macOS cannot rot git
 /// invocations mid-run. Resolution is cached process-wide via Lazy&lt;string&gt;;
 /// the first instance pays the probe, all later ones reuse the resolved path.
+/// A workspace inside a WSL distro is served by the git INSIDE that distro
+/// instead (<see cref="GitRouting"/>), decided here per call, so no call site
+/// ever chooses an invoker.
 /// </summary>
-public sealed class GitInvoker : IGitInvoker
+public sealed partial class GitInvoker : IGitInvoker
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private static readonly Lazy<string> CachedGitBinary = new(() =>
     {
         Interlocked.Increment(ref _probeCount);
@@ -20,6 +24,8 @@ public sealed class GitInvoker : IGitInvoker
     internal static int ProbeCount => Volatile.Read(ref _probeCount);
 
     private readonly object _lock = new();
+    private readonly WslContext? _wsl;
+    private readonly Func<WslLaunch, CancellationToken, Task<(int ExitCode, string Output, bool TimedOut)>>? _runWsl;
     private string? _gitBinary;
     private IReadOnlySet<string>? _envRemove;
 
@@ -43,6 +49,17 @@ public sealed class GitInvoker : IGitInvoker
         }
     }
 
+    /// <summary>
+    /// Test constructor: routes against <paramref name="wsl"/> and runs each
+    /// wsl.exe launch through <paramref name="runWsl"/>, so no process starts.
+    /// </summary>
+    internal GitInvoker(
+        WslContext wsl, Func<WslLaunch, CancellationToken, Task<(int ExitCode, string Output, bool TimedOut)>> runWsl)
+    {
+        _wsl = wsl;
+        _runWsl = runWsl;
+    }
+
     public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
         string rootPath,
         IEnumerable<string> arguments,
@@ -52,6 +69,20 @@ public sealed class GitInvoker : IGitInvoker
         CancellationToken killToken = default,
         Action<string>? onActivity = null)
     {
+        var context = ContextFor(rootPath);
+        if (GitRouting.Decide(rootPath, context) is GitRoute.Wsl route)
+        {
+            var launch = GitRouting.Launch(route, WslExe.Resolve(context), [.. arguments], environment);
+            if (_runWsl is not null)
+                return await _runWsl(launch, cancellationToken);
+
+            // git gets its root through -C, so wsl.exe's own working directory
+            // only has to be one it can translate; the temp directory always is.
+            return await ProcessCapture.RunAsync(
+                launch.FileName, launch.Arguments, Path.GetTempPath(), timeout ?? DefaultTimeout,
+                cancellationToken, launch.Environment, killToken, onActivity, reapProcessTree: false);
+        }
+
         var gitBinary = EnsureResolved();
         var sanitizedEnv = SanitizeEnvironment(environment);
 
@@ -59,13 +90,28 @@ public sealed class GitInvoker : IGitInvoker
             gitBinary,
             ["-C", rootPath, .. arguments],
             rootPath,
-            timeout ?? TimeSpan.FromSeconds(30),
+            timeout ?? DefaultTimeout,
             cancellationToken,
             sanitizedEnv,
             killToken,
             onActivity,
             _envRemove,
             reapProcessTree: false);
+    }
+
+    /// <summary>
+    /// The WSL context a root is routed against: the injected one, else on Windows
+    /// the process-wide probe, except for a Windows drive root, which Git for
+    /// Windows serves and which therefore never waits on the probe (VR's own
+    /// tooling on its Windows checkout stays as fast as before).
+    /// </summary>
+    private WslContext? ContextFor(string rootPath)
+    {
+        if (_wsl is not null)
+            return _wsl;
+        if (!OperatingSystem.IsWindows() || WslPath.TryDriveToMnt(rootPath, out _))
+            return null;
+        return WslContextResolver.TryGetCurrent();
     }
 
     /// <summary>
@@ -133,150 +179,6 @@ public sealed class GitInvoker : IGitInvoker
             }
 
             return _gitBinary;
-        }
-    }
-
-    // ── Resolution order ──────────────────────────────────────────────
-
-    private static string ResolveGitBinary()
-    {
-        // 0. On Windows resolve git.exe through the shared PATHEXT helper (Git for
-        //    Windows on PATH). There is no xcrun and no POSIX shell to fall back to.
-        if (OperatingSystem.IsWindows())
-        {
-            var windowsGit = PathExecutables.Find("git");
-            if (windowsGit is not null && ProbeGit(windowsGit))
-                return windowsGit;
-            throw new InvalidOperationException(
-                "git: not found on PATH. Install Git for Windows (winget install Git.Git) "
-                + "and ensure it is on PATH.");
-        }
-
-        // 1. On macOS, prefer /usr/bin/git — it is immune to nix-shell rot
-        //    and does not go through the xcrun shim.
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            var systemGit = "/usr/bin/git";
-            if (File.Exists(systemGit) && ProbeGit(systemGit))
-                return systemGit;
-        }
-
-        // 2. Try xcrun --find git (macOS Xcode toolchain); clear
-        //    DEVELOPER_DIR so xcrun uses the Xcode-selected default
-        //    instead of a potentially stale nix store path.
-        var xcrunPath = ResolveViaXcrun();
-        if (xcrunPath is not null)
-            return xcrunPath;
-
-        // 3. Try command -v git (shell PATH lookup).
-        var pathGit = ResolveViaCommandV();
-        if (pathGit is not null)
-            return pathGit;
-
-        // 4. Fallback: /usr/bin/git on non-macOS.
-        var usrBinGit = "/usr/bin/git";
-        if (File.Exists(usrBinGit) && ProbeGit(usrBinGit))
-            return usrBinGit;
-
-        throw new InvalidOperationException(
-            "git: no working git binary found — tried xcrun --find git, " +
-            "command -v git, and /usr/bin/git. Install git or ensure it is on PATH.");
-    }
-
-    private static string? ResolveViaXcrun()
-    {
-        try
-        {
-            using var process = new Process();
-            process.StartInfo = new ProcessStartInfo("xcrun")
-            {
-                Arguments = "--find git",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            process.StartInfo.Environment.Remove("DEVELOPER_DIR");
-            process.StartInfo.Environment.Remove("SDKROOT");
-
-            process.Start();
-            var stdout = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit(5_000);
-
-            if (process.ExitCode == 0 && !string.IsNullOrEmpty(stdout))
-            {
-                try { stdout = Path.GetFullPath(stdout); } catch { /* not a valid path */ }
-                if (File.Exists(stdout) && ProbeGit(stdout))
-                    return stdout;
-            }
-        }
-        catch
-        {
-            // xcrun not available — fall through.
-        }
-
-        return null;
-    }
-
-    private static string? ResolveViaCommandV()
-    {
-        try
-        {
-            using var process = new Process();
-            process.StartInfo = new ProcessStartInfo("/bin/sh")
-            {
-                Arguments = "-lc \"command -v git\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-
-            process.Start();
-            var stdout = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit(5_000);
-
-            if (process.ExitCode == 0 && !string.IsNullOrEmpty(stdout))
-            {
-                try { stdout = Path.GetFullPath(stdout); } catch { /* not a valid path */ }
-                if (File.Exists(stdout) && ProbeGit(stdout))
-                    return stdout;
-            }
-        }
-        catch
-        {
-            // Shell not available — fall through.
-        }
-
-        return null;
-    }
-
-    private static bool ProbeGit(string gitPath)
-    {
-        try
-        {
-            using var process = new Process();
-            process.StartInfo = new ProcessStartInfo(gitPath)
-            {
-                Arguments = "--version",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            // When probing a non-nix binary, neutralise any inherited
-            // DEVELOPER_DIR / SDKROOT so the probe matches run-time
-            // conditions.
-            if (!gitPath.Contains("/nix/store/", StringComparison.Ordinal))
-            {
-                process.StartInfo.Environment.Remove("DEVELOPER_DIR");
-                process.StartInfo.Environment.Remove("SDKROOT");
-            }
-
-            process.Start();
-            process.WaitForExit(5_000);
-            return process.ExitCode == 0;
-        }
-        catch
-        {
-            return false;
         }
     }
 }

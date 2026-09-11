@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Core.Init;
 
@@ -11,6 +12,7 @@ public static class HookInstaller
 {
     private const string Marker = "# Visual Relay pre-commit hook";
     private const string HookFileName = "pre-commit";
+    private static readonly TimeSpan ChmodTimeout = TimeSpan.FromSeconds(30);
 
     private static readonly string HookContent = @"#!/usr/bin/env bash
 # Visual Relay pre-commit hook
@@ -54,11 +56,17 @@ exit 1
     /// Installs the Visual Relay pre-commit hook into the target repo.
     /// Idempotent: re-running is safe and reports Installed=true.
     /// Preserves a foreign pre-commit hook (no VR marker) and returns a warning.
-    /// Respects an existing git config core.hooksPath.
+    /// Respects an existing git config core.hooksPath. A root inside a WSL distro
+    /// gets its hook marked executable from inside the distro
+    /// (<see cref="MarkExecutableAsync"/>); <paramref name="runWsl"/> runs that
+    /// wsl.exe launch, injected by tests, the real process by default.
     /// </summary>
-    public static async Task<HookInstallResult> InstallAsync(string rootPath, CancellationToken cancellationToken, IGitInvoker? gitInvoker = null)
+    public static async Task<HookInstallResult> InstallAsync(
+        string rootPath, CancellationToken cancellationToken, IGitInvoker? gitInvoker = null,
+        Func<WslLaunch, CancellationToken, Task<(int ExitCode, string Output)>>? runWsl = null)
     {
         var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided");
+        var run = runWsl ?? RunWslAsync;
 
         // Guard: without a real repository there is nowhere for a pre-commit hook to
         // run. Refuse rather than fabricate a bogus .git/hooks directory (which would
@@ -88,8 +96,7 @@ exit 1
             if (existing.Contains(Marker, StringComparison.Ordinal))
             {
                 // VR-owned — overwrite with the current version.
-                await WriteHookAsync(hookPath, cancellationToken);
-                return new HookInstallResult(true, hookPath, null);
+                return await WriteHookAsync(hookPath, run, cancellationToken);
             }
 
             // Foreign hook — preserve it.
@@ -99,17 +106,66 @@ exit 1
         }
 
         // No existing hook — install.
-        await WriteHookAsync(hookPath, cancellationToken);
-        return new HookInstallResult(true, hookPath, null);
+        return await WriteHookAsync(hookPath, run, cancellationToken);
     }
 
-    private static async Task WriteHookAsync(string hookPath, CancellationToken cancellationToken)
+    /// <summary>
+    /// The wsl.exe launch that marks a hook inside a WSL distro executable
+    /// (<c>chmod +x</c> against its Linux path, in the distro the UNC path names),
+    /// or null for a native hook path.
+    /// </summary>
+    internal static WslLaunch? WslChmodLaunch(string hookPath) =>
+        WslPath.TryParseUnc(hookPath, out var distro, out var linuxHook)
+            ? WslLauncher.BuildPlain(WslExe.Resolve(CurrentContext), distro, ["chmod", "+x", linuxHook])
+            : null;
+
+    /// <summary>
+    /// Gives the written hook its exec bit. A hook inside a WSL distro was written
+    /// through the distro's share, which leaves a default non-executable mode, so
+    /// chmod runs inside the distro through <paramref name="runWsl"/>; a native hook
+    /// takes the bit directly (Windows has none). Returns the warning that says why
+    /// enforcement is inactive when the chmod fails, else null.
+    /// </summary>
+    internal static async Task<string?> MarkExecutableAsync(
+        string hookPath, Func<WslLaunch, CancellationToken, Task<(int ExitCode, string Output)>> runWsl,
+        CancellationToken cancellationToken)
+    {
+        var launch = WslChmodLaunch(hookPath);
+        if (launch is null)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(hookPath,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            return null;
+        }
+
+        var (exitCode, output) = await runWsl(launch, cancellationToken);
+        if (exitCode == 0)
+            return null;
+        return $"The pre-commit hook was written to {hookPath}, but making it executable inside its WSL distro failed " +
+               $"(`{string.Join(' ', launch.Arguments.Skip(3))}` exited {exitCode}: {output.Trim()}). " +
+               "Visual Relay pre-commit enforcement will not be active in this repository until the hook is executable.";
+    }
+
+    private static WslContext? CurrentContext =>
+        OperatingSystem.IsWindows() ? WslContextResolver.TryGetCurrent() : null;
+
+    private static async Task<HookInstallResult> WriteHookAsync(
+        string hookPath, Func<WslLaunch, CancellationToken, Task<(int ExitCode, string Output)>> runWsl,
+        CancellationToken cancellationToken)
     {
         await File.WriteAllTextAsync(hookPath, HookContent, cancellationToken);
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(hookPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
+        var warning = await MarkExecutableAsync(hookPath, runWsl, cancellationToken);
+        return new HookInstallResult(warning is null, hookPath, warning);
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunWslAsync(WslLaunch launch, CancellationToken cancellationToken)
+    {
+        var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
+            launch.FileName, launch.Arguments, Path.GetTempPath(), ChmodTimeout, cancellationToken,
+            environment: launch.Environment);
+        return (timedOut ? -1 : exitCode, output);
     }
 }

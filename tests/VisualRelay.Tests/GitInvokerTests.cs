@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;
 
@@ -187,5 +188,44 @@ public sealed class GitInvokerTests
             repo.Root, ["status", "--porcelain"], CancellationToken.None);
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("readme.md", result.Output, StringComparison.Ordinal);
+    }
+
+    // ── WSL routing: decided inside the invoker, never at a call site ──
+
+    private static readonly WslContext Wsl =
+        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+
+    [Fact]
+    public async Task RunAsync_UncRoot_RunsGitInsideTheDistroThroughTheInjectedRunner()
+    {
+        var launches = new List<WslLaunch>();
+        var invoker = new GitInvoker(Wsl, (launch, _) => { launches.Add(launch); return Task.FromResult((0, "M x.txt", false)); });
+
+        var result = await invoker.RunAsync(
+            @"\\wsl.localhost\Ubuntu\home\alice\repo", ["status", "--porcelain"], CancellationToken.None,
+            environment: new Dictionary<string, string> { ["RELAY_COMMIT_TOKEN"] = "t" });
+
+        Assert.Equal((0, "M x.txt", false), result);
+        var launch = Assert.Single(launches);
+        Assert.Equal(Wsl.WslExePath, launch.FileName);
+        string[] expected =
+        [
+            "-d", "Ubuntu", "--exec", "env", "RELAY_COMMIT_TOKEN=t",
+            "git", "-C", "/home/alice/repo", "status", "--porcelain",
+        ];
+        Assert.Equal(expected, launch.Arguments);
+    }
+
+    [Fact]
+    public async Task RunAsync_LinuxRoot_WithAContext_RunsInTheContextDistro()
+    {
+        var launches = new List<WslLaunch>();
+        var invoker = new GitInvoker(Wsl, (launch, _) => { launches.Add(launch); return Task.FromResult((0, "", false)); });
+
+        await invoker.RunAsync("/home/alice/repo", ["log", "-1"], CancellationToken.None);
+
+        var launch = Assert.Single(launches);
+        string[] expected = ["-d", "Ubuntu", "--exec", "git", "-C", "/home/alice/repo", "log", "-1"];
+        Assert.Equal(expected, launch.Arguments);
     }
 }

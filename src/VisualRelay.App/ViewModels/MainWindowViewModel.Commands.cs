@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.Input;
+using VisualRelay.App.Services;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Tasks;
 
@@ -15,8 +16,21 @@ public partial class MainWindowViewModel
             return;
         }
 
-        RootPath = selected;
+        // A folder inside a WSL distro is kept as its UNC path; a Windows drive
+        // folder gets the workspace policy's answer (refused today, with the reason).
+        var pick = FolderPickerWslTranslation.Decide(selected, OperatingSystem.IsWindows());
+        if (pick.Root is null)
+        {
+            StatusText = pick.Message!;
+            return;
+        }
+
+        RootPath = pick.Root;
         await RefreshAsync();
+        if (pick.Message is not null)
+        {
+            StatusText = pick.Message;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
