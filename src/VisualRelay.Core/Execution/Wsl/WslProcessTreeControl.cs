@@ -36,6 +36,11 @@ public sealed class WslProcessTreeControl(
             return;
 
         await RunAsync(WslProcessControl.KillArgv(pgid.Value, graceful ? "TERM" : "KILL"), ct);
+
+        // The forced stop is the reap step every launch ends with, and the pid file
+        // outlives the envelope that wrote it: remove it here or it stays forever.
+        if (!graceful)
+            await RunAsync(WslProcessControl.RemovePidFileArgv(pidFile), ct);
     }
 
     private async Task<int?> ResolvePgidAsync(CancellationToken ct)

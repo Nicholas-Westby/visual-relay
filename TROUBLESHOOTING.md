@@ -149,6 +149,7 @@ standard Windows folders (XDG/`HOME` still win when explicitly set):
 | UI state, settings (`.env`) | `%APPDATA%\visual-relay\` |
 | Provisioned .NET SDK (when the launcher installs it) | `%LOCALAPPDATA%\visual-relay\dotnet\` |
 | Sandbox profile (`vr-guard.json`) | `~/.config/visual-relay/` **inside the distro**, written through `\\wsl.localhost\<distro>\...` |
+| Planning worktrees, verify snapshots, the flagged-work index | `~/.cache/visual-relay/wt/…` and `/tmp/visual-relay/` **inside the distro** (the git that serves a workspace runs there, and a Windows temp path means nothing to it) |
 
 An `mxc-policy.json` beside the settings is left over from the deleted Windows sandbox.
 Nothing reads it any more — delete it.
@@ -219,14 +220,27 @@ run before trusting the Windows arm:
 - the watchdog kill proof (the Linux process is gone, not just wsl.exe)
 - that wsl.exe is started from the Windows temp directory, never the UNC workspace
 - the exit-code and UTF-8 round trip through wsl.exe
+- that planning worktrees, verify snapshots and the flagged-work index live inside the
+  distro (`~/.cache/visual-relay/wt/…` and `/tmp/visual-relay/`), never under the Windows
+  temp directory — a run whose worktree lands in `C:\…` is the failure this checks for
 - the `-a <templates dir>` DrvFs grant
 - the folder-picker UNC round trip
 - the GUI end to end through the control API
 
-The Windows-gated tests in the suite cover the first four (`./visual-relay test Wsl` with
-`VR_RUN_NONO_INTEGRATION=1` on Windows; they skip everywhere else), and the manual
-`wsl-probe` GitHub Actions workflow runs them on a `windows-2025` runner. By hand, in
-PowerShell, with `$D = 'Ubuntu'`:
+What the Windows-gated tests already prove, run with `VR_RUN_NONO_INTEGRATION=1` on
+Windows (`./visual-relay test Wsl`; they skip everywhere else) and by the manual
+`wsl-probe` GitHub Actions workflow on a `windows-2025` runner:
+
+| Gated class | What it proves |
+|-------------|----------------|
+| `WslConfinementProbeTests` | the eight confinement verdicts and their timings, on the distro's own filesystem and on DrvFs — including the `~/.ssh` read denial the deleted Windows sandbox could not enforce. It runs at all only when the gate found Landlock active, so a pass is also the Landlock evidence |
+| `WslWatchdogKillsHungTreeTests` | the kill proof: the Linux process is gone, not just wsl.exe |
+| `WslExitCodeAndUtf8Tests` | the exit code, plain and through the envelope's `wait`, and the UTF-8 round trip |
+| `WslArgvRoundTripTests` | the hostile argv reaching the Linux child byte for byte |
+
+The Windows temp-directory start is pinned by the pure launch tests, which need no
+Windows machine; everything else on the list above still needs a person at one. By hand,
+in PowerShell, with `$D = 'Ubuntu'`:
 
 ```powershell
 $env:WSL_UTF8 = '1'

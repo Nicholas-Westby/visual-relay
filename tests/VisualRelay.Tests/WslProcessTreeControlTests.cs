@@ -80,9 +80,29 @@ public sealed class WslProcessTreeControlTests
         await control.StopAsync(graceful: true, CancellationToken.None);
         await control.StopAsync(graceful: false, CancellationToken.None);
 
-        Assert.Equal(["cat", "kill", "kill"], runner.Programs);
+        // The forced stop is the reap step, so it also takes the pid file with it.
+        Assert.Equal(["cat", "kill", "kill", "rm"], runner.Programs);
         Assert.Equal(["-d", "Ubuntu", "--exec", "kill", "-TERM", "--", "-4242"], runner.Launches[1].Arguments);
         Assert.Equal(["-d", "Ubuntu", "--exec", "kill", "-KILL", "--", "-4242"], runner.Launches[2].Arguments);
+    }
+
+    /// <summary>
+    /// The pid file the envelope wrote is removed once the tree is forced down —
+    /// the reap step every run ends with. A graceful stop is not the end of the
+    /// sequence, so it leaves the file for the forced stop that may follow.
+    /// </summary>
+    [Fact]
+    public async Task Stop_Forced_RemovesThePidFile_AndGracefulDoesNot()
+    {
+        var runner = new ScriptedRunner();
+        var control = Control(runner);
+
+        await control.StopAsync(graceful: true, CancellationToken.None);
+        Assert.DoesNotContain("rm", runner.Programs);
+
+        await control.StopAsync(graceful: false, CancellationToken.None);
+
+        Assert.Equal(["-d", "Ubuntu", "--exec", "rm", "-f", "--", PidFile], runner.Launches[^1].Arguments);
     }
 
     [Fact]
@@ -130,7 +150,7 @@ public sealed class WslProcessTreeControlTests
             {
                 "cat" => PidReplies.Count > 0 ? PidReplies.Dequeue() : (0, "4242\n"),
                 "ps" => PsReply,
-                "kill" => (0, ""),
+                "kill" or "rm" => (0, ""),
                 _ => (127, "unexpected program"),
             });
         }

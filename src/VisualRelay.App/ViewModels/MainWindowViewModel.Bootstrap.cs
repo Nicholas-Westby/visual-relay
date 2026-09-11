@@ -16,6 +16,11 @@ public partial class MainWindowViewModel
     // exercised without spawning a real build.
     public Func<RelayConfig, ITestRunner>? BaselineGuardRunnerFactory { get; init; }
 
+    // Injectable resolver for where the sandbox runs (EnsureRunnableAsync). Null →
+    // this machine, awaited rather than waited on. Tests inject a host so the Windows
+    // arm — whose real resolution is a wsl.exe probe — is gated on any OS.
+    public Func<Task<SandboxHost>>? SandboxHostResolver { get; init; }
+
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 
     // Makes an empty/greenfield folder runnable in one action: git init + a HEAD

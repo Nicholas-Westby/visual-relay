@@ -44,14 +44,17 @@ internal static partial class FlaggedWorkStore
                 preRunUntracked = new HashSet<string>(lines.Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l.Trim()), StringComparer.Ordinal);
             }
 
-            // Create a temporary index file. Use a directory under root so it's on the
-            // same filesystem (avoids cross-device rename issues with some git commands).
-            var tempIndex = Path.Combine(Path.GetTempPath(), $"git-index-{Guid.NewGuid():N}");
+            // Create a temporary index file where the git that serves this workspace
+            // can create it — inside the distro on the Windows arm, where a Windows
+            // temp path is a relative name — and where VR can still delete it.
+            var indexDirectory = WorktreeNamespace.TempIndexFor(rootPath, SandboxHost.Current);
+            Directory.CreateDirectory(indexDirectory.Io);
+            var tempIndex = indexDirectory.Child($"git-index-{Guid.NewGuid():N}");
             try
             {
                 var env = new Dictionary<string, string>(StringComparer.Ordinal)
                 {
-                    ["GIT_INDEX_FILE"] = tempIndex
+                    ["GIT_INDEX_FILE"] = tempIndex.Git
                 };
 
                 // Seed the temp index from the run base so tracked files carry
@@ -131,7 +134,7 @@ internal static partial class FlaggedWorkStore
             }
             finally
             {
-                try { File.Delete(tempIndex); } catch { /* best-effort */ }
+                try { File.Delete(tempIndex.Io); } catch { /* best-effort */ }
             }
         }
         catch (OperationCanceledException)

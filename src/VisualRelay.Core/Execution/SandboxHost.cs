@@ -24,6 +24,29 @@ public sealed record SandboxHost(bool IsWindows, WslContext? Wsl)
     public static SandboxHost Current =>
         OperatingSystem.IsWindows() ? Windows(WslContextResolver.TryGetCurrent()) : Local;
 
+    /// <summary>
+    /// This machine, resolved without blocking. The first Windows resolution is a
+    /// six-step wsl.exe probe, so a caller that can await — anything reachable from
+    /// the UI thread — takes this one and leaves the memo warm for every synchronous
+    /// reader after it.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the wait, never the shared probe.</param>
+    /// <returns>The host this machine launches from.</returns>
+    public static Task<SandboxHost> CurrentAsync(CancellationToken cancellationToken = default) =>
+        ResolveAsync(OperatingSystem.IsWindows(), cancellationToken);
+
+    /// <summary>
+    /// The host of a machine whose platform is given, so the Windows arm is resolved
+    /// on any OS (with an overridden context) without a platform check per caller.
+    /// </summary>
+    /// <param name="isWindows">Whether the sandbox runs inside a WSL distro.</param>
+    /// <param name="cancellationToken">Cancels the wait, never the shared probe.</param>
+    /// <returns>The resolved host.</returns>
+    internal static async Task<SandboxHost> ResolveAsync(bool isWindows, CancellationToken cancellationToken = default) =>
+        isWindows
+            ? Windows(await WslContextResolver.TryGetCurrentAsync(cancellationToken).ConfigureAwait(false))
+            : Local;
+
     /// <summary>The absolute path nono loads the guard profile from, as nono sees it.</summary>
     public string ProfilePath =>
         Wsl is { } context

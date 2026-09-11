@@ -13,6 +13,13 @@ public partial class MainWindowViewModel
     // launching a run; the App's commands call it the same way.
     internal async Task<bool> EnsureRunnableAsync(string? pendingTaskId)
     {
+        // Where the sandbox runs, resolved FIRST and with an await. On Windows that
+        // is a six-step wsl.exe probe, and both readers below take its answer
+        // synchronously — the placeholder upgrade through its git invoker's WSL
+        // routing, the tool-presence gate directly — so resolving it here is what
+        // keeps the first gate of a session off the UI thread.
+        var host = await ResolveSandboxHostAsync();
+
         // Greenfield: when the test command is still the placeholder and the project
         // has since gained a recognizable toolchain (a scaffold task ran), adopt the
         // real test command before gating. Best-effort: a no-op for normal repos, and
@@ -51,7 +58,7 @@ public partial class MainWindowViewModel
         // MissingToolsMessage verbatim so both surfaces never drift. PATH comes from
         // the injected accessor when present (tests), else the real process PATH.
         var missingTools = SandboxedStage.MissingRequiredTools(
-            result.Config, EnvironmentAccessor?.GetEnvironmentVariable("PATH"));
+            result.Config, EnvironmentAccessor?.GetEnvironmentVariable("PATH"), host: host);
         if (missingTools.Count > 0)
         {
             StatusText = SandboxedStage.MissingToolsMessage(missingTools);
@@ -72,6 +79,11 @@ public partial class MainWindowViewModel
         ConfigDiagnostic = null;
         return true;
     }
+
+    /// <summary>Where the sandbox runs; tests inject a host so the Windows arm gates anywhere.</summary>
+    /// <returns>The resolved sandbox host.</returns>
+    private Task<SandboxHost> ResolveSandboxHostAsync() =>
+        SandboxHostResolver?.Invoke() ?? SandboxHost.CurrentAsync();
 
     /// <summary>The runner the baseline guard check uses; tests inject a fake.</summary>
     /// <param name="config">The loaded configuration.</param>

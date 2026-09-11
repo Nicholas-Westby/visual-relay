@@ -40,6 +40,18 @@ public sealed class WslProcessControlTests
         Assert.Equal(["cat", "/tmp/visual-relay/x.pid"], WslProcessControl.ReadPidFileArgv("/tmp/visual-relay/x.pid"));
     }
 
+    /// <summary>
+    /// Nothing else removes the pid file: the envelope writes it and exits, and a
+    /// stray file per launch would accumulate in the distro's tmp forever.
+    /// </summary>
+    [Fact]
+    public void RemovePidFileArgv_ForcesTheRemovalAfterTheOptionTerminator()
+    {
+        Assert.Equal(
+            ["rm", "-f", "--", "/tmp/visual-relay/x.pid"],
+            WslProcessControl.RemovePidFileArgv("/tmp/visual-relay/x.pid"));
+    }
+
     [Fact]
     public void PidFilePath_LivesUnderTheDistrosTmpPerRunAndAttempt()
     {

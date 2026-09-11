@@ -1,4 +1,6 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.Cli;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
@@ -37,5 +39,56 @@ public sealed partial class MainWindowViewModelTests
         // No nono advisory red herrings leak into the gate message.
         Assert.DoesNotContain("deny_shell_configs", viewModel.StatusText, StringComparison.Ordinal);
         Assert.DoesNotContain("bypass-protection", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The gate probes for the sandbox host ONCE and gates on that answer, so the
+    /// Windows arm — where the requirement is a WSL2 distro with nono inside it, not
+    /// a binary on the Windows PATH — is what the message names. Injected, because
+    /// the real resolution is a wsl.exe probe that only exists on Windows.
+    /// </summary>
+    [Fact]
+    public async Task EnsureRunnableAsync_WindowsHostWithoutADistro_NamesTheWslRequirement()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(null)),
+        };
+        await viewModel.LoadInitialAsync();
+        viewModel.IsHuggingFaceConfigured = true;
+
+        var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
+
+        Assert.False(runnable);
+        Assert.Contains("WSL2 distro with nono", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The host is resolved FIRST, with an await. On Windows that resolution is a
+    /// six-step wsl.exe probe, and both readers after it — the placeholder upgrade,
+    /// through its git invoker's WSL routing, and the tool-presence gate — take the
+    /// answer SYNCHRONOUSLY: whatever runs before the await pays the probe on the
+    /// calling thread, which on the first run is the UI thread. Nothing off Windows
+    /// can observe the difference, so source order is what holds it.
+    /// </summary>
+    [Fact]
+    public void EnsureRunnableAsync_AwaitsTheSandboxHost_BeforeItsSynchronousReaders()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoPaths.Resolve().Root, "src", "VisualRelay.App", "ViewModels",
+            "MainWindowViewModel.RunnableGate.cs"));
+
+        var resolved = source.IndexOf("await ResolveSandboxHostAsync", StringComparison.Ordinal);
+        var upgrade = source.IndexOf("TryUpgradePlaceholderTestCommandAsync", StringComparison.Ordinal);
+        var gate = source.IndexOf("MissingRequiredTools", StringComparison.Ordinal);
+
+        Assert.True(resolved > 0, "the gate must resolve the sandbox host before it gates");
+        Assert.True(resolved < upgrade, "the placeholder upgrade reads the resolved context synchronously");
+        Assert.True(resolved < gate, "the tool-presence gate must take the resolved host");
     }
 }

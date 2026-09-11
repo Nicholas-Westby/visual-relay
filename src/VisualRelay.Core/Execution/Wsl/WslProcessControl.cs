@@ -27,6 +27,14 @@ public static class WslProcessControl
 
     public static IReadOnlyList<string> ReadPidFileArgv(string pidFile) => ["cat", pidFile];
 
+    /// <summary>
+    /// <c>rm -f -- &lt;pidFile&gt;</c>: the envelope writes the file and exits, so the
+    /// reap step is the only thing that can take it away again.
+    /// </summary>
+    /// <param name="pidFile">The pid file the envelope wrote.</param>
+    /// <returns>The removal argv.</returns>
+    public static IReadOnlyList<string> RemovePidFileArgv(string pidFile) => ["rm", "-f", "--", pidFile];
+
     public static string PidFilePath(string runId, string attemptTag) =>
         $"{PidFileDirectory}/{runId}-{attemptTag}.pid";
 }
