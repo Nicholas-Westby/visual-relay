@@ -111,7 +111,14 @@ Endpoints:
   `new-task`, `follow-running`, `edit`, `rewrite-selected`, `cancel-rewrite`,
   `revert-rewrite`, `mark-done`, `reset-selected`, plus property actions
   `open-folder` (body `{"path":"<dir>"}` — the programmatic Browse: point the app at a
-  project), `select-task` (body `{"id":"<taskId>"}`),
+  project), `create-task` (body `{"title":"<text>","body":"<markdown>"}`, `body`
+  optional — authors a task headlessly through the same view-model command the New
+  Task dialog's Create button runs: writes `llm-tasks/<slug>/<slug>.md` holding the
+  title line, a blank line and the body, and answers
+  `{"ok":true,"id":"<slug>","path":"<markdown path>"}` only once `/state.tasks[]`
+  lists it. `400` when the title is missing or its slug is empty, unsafe, reserved or
+  already taken — the error text is the one the dialog would show; `409` while the app
+  is busy or no project folder is open), `select-task` (body `{"id":"<taskId>"}`),
   `boost-turns` (body `{"value":true|false}`), `skip-tests` (body `{"value":true|false}`),
   `obsidian-scan`, `obsidian-bridge` (body `{"value":true|false}` or `{"path":"<vault>"}`),
   `select-activity-tab` and `select-detail-tab` (body `{"name":"<tab header>"}` or
@@ -133,6 +140,7 @@ Examples:
 
     curl -s -X POST -d '{"path":"/Users/me/Dev/my-project"}' http://127.0.0.1:8765/command/open-folder
     curl -s http://127.0.0.1:8765/state | jq .
+    curl -s -X POST -d '{"title":"My Task","body":"What to do.\n"}' http://127.0.0.1:8765/command/create-task
     curl -s -X POST -d '{"id":"my-task"}' http://127.0.0.1:8765/command/select-task
     curl -s -X POST -d '' http://127.0.0.1:8765/command/run-all
     curl -s http://127.0.0.1:8765/screenshot -o /tmp/vr.png

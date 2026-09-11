@@ -53,7 +53,7 @@ public sealed partial class ControlApi(
     // Property-backed user actions (not ICommands). Names mirror UI affordances.
     private static readonly string[] PropertyActions =
         ["select-task", "boost-turns", "skip-tests", "open-folder", "obsidian-scan", "obsidian-bridge",
-         "select-activity-tab", "select-detail-tab"];
+         "select-activity-tab", "select-detail-tab", "create-task"];
 
     // Destructive commands that mirror a GUI confirm modal. Their SOLE role here is
     // the {"confirm":true} gate: driven via the API they require an explicit confirm
@@ -108,7 +108,12 @@ public sealed partial class ControlApi(
 
         if (PropertyActions.Contains(name))
         {
-            return InvokePropertyAction(name, body);
+            // create-task is the one property action that writes to disk and reloads
+            // the queue, so it is awaited rather than answered synchronously: its
+            // {ok:true} means the task file exists and /state already lists it.
+            return name == "create-task"
+                ? await InvokeCreateTaskAsync(name, body)
+                : InvokePropertyAction(name, body);
         }
 
         return (404, Json.Object(("ok", false), ("error", "unknown command")));
