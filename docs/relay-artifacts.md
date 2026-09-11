@@ -42,14 +42,21 @@ in `red`, `unproven` with a reason, or a flag, and says so in `run.log`.
 | `verify_result` | info | `command` (the TARGETED command, not the full suite), `exitCode` (absent when nothing ran), `check`, `reason`, `strippedFiles` (comma-joined, may be empty), `scope`, `treeHash`, `outputFile` | Once per gate run, the same record stages 9-11 emit. `Attempt` is the stage attempt, so a re-ask leaves two. |
 | `author_test_scope_suspect` | warn | `files`, `scope` | A declared test file is neither a recognized test path nor an inline-capable extension. The entry is kept; this says it was believed, not verified. |
 | `author_test_gate_unusable` | warn | `command`, `reason`, `exitCode` and `outputTail` when a command ran | Exit 127, "no tests found/collected", or the bootstrap placeholder. |
-| `author_test_reask` | info | `reason`, `files` | The one re-ask: the tests passed with the implementation still in place and at least one declared file can carry implementation. |
+| `author_test_audit` | info | `mode`, `hunks` (count), `files`, `reasons` (clipped to 240 characters), or `error` when the call failed | One cheap-tier read of the stage's own diff, when `authorTests.diffAudit` asks for it. |
+| `author_test_reask` | info | `reason`, `files` | The one re-ask: either the tests passed with the implementation still in place and a declared file can carry implementation, or the audit reported a hunk. |
 | `author_test_unproven` | warn | `reason` | The stage's final check is `unproven`. |
 
 `scope` reads `path=separate;path=inline-capable;path=suspect` — how each declared
 file was classified from `testPaths` and `authorTests.inlineTestExtensions` (see
-[OPERATIONS.md](OPERATIONS.md)). The reasons are exactly: `green before
+[OPERATIONS.md](OPERATIONS.md)). The check reasons are exactly: `green before
 implementation`, `no implementation to strip`, `gate command unusable`,
-`placeholder test command`, `no test files declared`.
+`placeholder test command`, `no test files declared`. `author_test_reask` adds one
+reason of its own, `implementation hunks in the test diff`, for the re-ask the
+audit asks for; the audit never records a check.
+
+The audit's own call leaves `.relay/<task>/stage5-audit{n}/` and
+`stage5-audit{n}.report.json` beside the stage attempts — one per call, and its
+cost is folded into stage 5's like the re-ask's is.
 
 `status.json` carries the verdict per stage. Each entry holds `stage`, `name`,
 `status`, `check`, `reason`, `durationSeconds`, `costUsd`, `turns`, `model`,

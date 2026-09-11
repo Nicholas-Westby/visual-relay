@@ -17,12 +17,31 @@ internal sealed class AuthorTestStageRunner(
     IReadOnlyDictionary<string, string>? stage5Writes = null) : ISubagentRunner
 {
     private readonly List<string> _stage5Inputs = [];
+    private readonly List<StageInvocation> _auditCalls = [];
 
     /// <summary>The task input of each stage-5 call, in order.</summary>
     public IReadOnlyList<string> Stage5Inputs => _stage5Inputs;
 
+    /// <summary>Every diff-audit call, in order; empty when the audit never ran.</summary>
+    public IReadOnlyList<StageInvocation> AuditCalls => _auditCalls;
+
+    /// <summary>The audit's answer; null answers with no implementation hunks.</summary>
+    public string? AuditAnswer { get; init; }
+
+    /// <summary>When true the audit's call comes back invalid, as a failed call does.</summary>
+    public bool AuditFails { get; set; }
+
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
+        if (invocation.Stage.Name == AuthorTestDiffAuditor.StageName)
+        {
+            _auditCalls.Add(invocation);
+            var answer = AuditAnswer ?? """{"implementationHunks":[]}""";
+            return Task.FromResult(AuditFails
+                ? new SubagentResult(string.Empty, null, false, "audit call failed")
+                : new SubagentResult(answer, answer, true, null));
+        }
+
         if (invocation.Stage.Number == 5)
         {
             _stage5Inputs.Add(invocation.TaskInput);

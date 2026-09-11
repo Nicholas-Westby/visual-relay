@@ -13,8 +13,16 @@ public sealed partial class RelayDriver
     /// <param name="Outcome">Non-null when the pass flags (stop the pipeline).</param>
     /// <param name="Gate">What the gate established, or null when flagged.</param>
     /// <param name="TestDurationSeconds">How long the gate command ran, or null when nothing ran.</param>
+    /// <param name="Reask">The single re-ask this pass asks for, or null for none.</param>
+    /// <param name="CostDelta">USD the pass's own extra model call added.</param>
+    /// <param name="UnknownCostDelta">Unpriced runs that call added.</param>
     private readonly record struct Stage5Result(
-        RelayTaskOutcome? Outcome, AuthorTestGateOutcome? Gate, double? TestDurationSeconds);
+        RelayTaskOutcome? Outcome,
+        AuthorTestGateOutcome? Gate,
+        double? TestDurationSeconds,
+        AuthorTestReask? Reask = null,
+        double CostDelta = 0,
+        int UnknownCostDelta = 0);
 
     /// <summary>What stage 5 leaves behind for the stage loop.</summary>
     /// <param name="Outcome">Non-null when the stage flags.</param>
@@ -60,15 +68,15 @@ public sealed partial class RelayDriver
     {
         var pass = await HandleStage5Async(rootPath, runId, taskId, taskDirectory, config, stage,
             manifest, ledger, statusEntries, json, attempt: 1, reaskUsed: false, cancellationToken);
-        double costDelta = 0;
-        var unknownCostDelta = 0;
+        var costDelta = pass.CostDelta;
+        var unknownCostDelta = pass.UnknownCostDelta;
 
-        if (pass is { Outcome: null, Gate.ReaskRequested: true })
+        if (pass is { Outcome: null, Reask: { } request })
         {
             var reask = await ReaskAuthorTestsAsync(rootPath, runId, taskId, taskDirectory, config,
-                stage, input, ledger, manifest, pass.Gate!, cancellationToken);
-            costDelta = reask.CostDelta;
-            unknownCostDelta = reask.UnknownCostDelta;
+                stage, input, ledger, manifest, request, cancellationToken);
+            costDelta += reask.CostDelta;
+            unknownCostDelta += reask.UnknownCostDelta;
             // An unusable answer leaves attempt 1's outcome standing: it is
             // already the honest "unproven — green before implementation".
             if (reask.Contract is { } second)
@@ -76,6 +84,8 @@ public sealed partial class RelayDriver
                 body = reask.Body;
                 pass = await HandleStage5Async(rootPath, runId, taskId, taskDirectory, config, stage,
                     manifest, ledger, statusEntries, second, attempt: 2, reaskUsed: true, cancellationToken);
+                costDelta += pass.CostDelta;
+                unknownCostDelta += pass.UnknownCostDelta;
             }
         }
 
@@ -169,9 +179,11 @@ public sealed partial class RelayDriver
             ledger.AppendLine();
         }
 
-        // ── Step 3: Scope check, then the gate ───────────────────────
+        // ── Step 3: Scope check, the diff audit, then the gate ───────
         var verdicts = await CheckAuthorTestScopeAsync(
             rootPath, runId, taskId, stage, testFiles, config, ledger, cancellationToken);
+        var audit = await AuditAuthorTestDiffAsync(
+            rootPath, runId, taskId, config, testFiles, verdicts, ledger, cancellationToken);
         var (outcome, result) = await RunAuthorTestGateAsync(rootPath, runId, taskId, stage,
             config, manifest, testFiles, verdicts, reaskUsed, cancellationToken);
 
@@ -179,12 +191,14 @@ public sealed partial class RelayDriver
             return new Stage5Result(
                 await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, outcome.Reason!, null,
                     statusEntries, cancellationToken),
-                null, null);
+                null, null, null, audit.CostDelta, audit.UnknownCostDelta);
 
         await PublishAuthorTestVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage,
             attempt, config, outcome, result, manifest, cancellationToken);
         AppendAuthorTestGateLedger(ledger, outcome);
-        return new Stage5Result(null, outcome, result?.Elapsed.TotalSeconds);
+        return new Stage5Result(null, outcome, result?.Elapsed.TotalSeconds,
+            ResolveAuthorTestReask(outcome, audit, testFiles, reaskUsed),
+            audit.CostDelta, audit.UnknownCostDelta);
     }
 
     /// <summary>
@@ -203,17 +217,17 @@ public sealed partial class RelayDriver
             RelayTaskInput input,
             StringBuilder ledger,
             IReadOnlyList<string> manifest,
-            AuthorTestGateOutcome gate,
+            AuthorTestReask reask,
             CancellationToken cancellationToken)
     {
-        var files = AuthorTestGateOutcome.InlineOrSuspect(gate.Verdicts);
-        await PublishAuthorTestReaskAsync(rootPath, runId, taskId, stage, files, cancellationToken);
-        AppendAuthorTestReaskLedger(ledger);
+        await PublishAuthorTestReaskAsync(
+            rootPath, runId, taskId, stage, reask, cancellationToken);
+        AppendAuthorTestReaskLedger(ledger, reask.Reason);
 
         var reasked = input with
         {
             Markdown = input.Markdown + Environment.NewLine + Environment.NewLine
-                + AuthorTestReaskMessage(files)
+                + AuthorTestReaskMessage(reask.Files)
         };
         var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
             reasked, ledger, manifest);

@@ -91,7 +91,7 @@ classified — plus an `author_test_unproven` warning for the reason above.
 
 Whether a test can be told from an implementation by its path is a property of the
 language. Bootstrap detects it and writes `authorTests` into `.relay/config.json`
-(the keys are documented in [docs/OPERATIONS.md](docs/OPERATIONS.md)). Two knobs
+(the keys are documented in [docs/OPERATIONS.md](docs/OPERATIONS.md)). Three knobs
 fix a repository it reads wrongly:
 
 - **`testPaths`** (top level) — extra globs that count as test paths, on top of the
@@ -105,6 +105,10 @@ fix a repository it reads wrongly:
   Bootstrap fills it from the detected languages (`[".rs"]` for Rust, `[".zig"]`
   for Zig, and so on) and empties it for a repository whose languages all keep
   tests in files of their own.
+- **`authorTests.diffAudit`** — whether a cheap model call also reads the stage's
+  diff for hunks that change behavior instead of asserting it. Set it to `"off"`
+  in a repository where that call keeps asking for a re-ask it should not, or to
+  `"always"` to audit every Author-tests diff, however the files are classified.
 
 To opt a language in whose inline mechanism you actually use, add its extension by
 hand: `".ml"` for OCaml's `ppx_inline_test`, `".erl"` for EUnit behind

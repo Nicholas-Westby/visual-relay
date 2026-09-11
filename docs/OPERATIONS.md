@@ -102,6 +102,12 @@ writes what it found into `.relay/config.json`:
 - `diffAudit` — `auto` (default) audits the Author-tests diff only when an
   inline-capable or unrecognized file was edited, `always` audits every one, `off`
   disables the audit. Yours to set: bootstrap seeds it once and never overwrites it.
+  The audit is one cheap-tier call that reads the stage's diff (plus any test file
+  git does not track yet, up to 60,000 characters) and reports the hunks that change
+  behavior rather than assert it. A reported hunk buys the stage the same single
+  re-ask a green gate buys it, and nothing more: the audit never flags a task and
+  never records a check, so a failed call is logged and the run carries on. What it
+  answered lands in `run.log` as `author_test_audit`.
 - `testPaths` — repo-specific globs (`"spec/**"`, `"examples/*_example.go"`) that count
   as test paths on top of the built-in filename and directory heuristics. Also yours:
   bootstrap only creates the key when it is missing.

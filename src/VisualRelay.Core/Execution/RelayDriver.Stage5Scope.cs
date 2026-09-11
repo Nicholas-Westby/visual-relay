@@ -58,10 +58,9 @@ public sealed partial class RelayDriver
         ledger.AppendLine();
     }
 
-    private static void AppendAuthorTestReaskLedger(StringBuilder ledger)
+    private static void AppendAuthorTestReaskLedger(StringBuilder ledger, string reason)
     {
-        ledger.AppendLine(
-            $"> **Re-ask (stage 5)**: {AuthorTestGateOutcome.GreenBeforeImplementation}.");
+        ledger.AppendLine($"> **Re-ask (stage 5)**: {reason}.");
         ledger.AppendLine();
     }
 
@@ -81,12 +80,12 @@ public sealed partial class RelayDriver
 
     private Task PublishAuthorTestReaskAsync(
         string rootPath, string runId, string taskId, RelayStageDefinition stage,
-        IReadOnlyList<string> files, CancellationToken cancellationToken) =>
+        AuthorTestReask reask, CancellationToken cancellationToken) =>
         PublishStage5EventAsync("info", "author_test_reask", rootPath, runId, taskId, stage,
             new Dictionary<string, string>
             {
-                ["reason"] = AuthorTestGateOutcome.GreenBeforeImplementation,
-                ["files"] = string.Join(',', files)
+                ["reason"] = reask.Reason,
+                ["files"] = string.Join(',', reask.Files)
             }, cancellationToken);
 
     private Task PublishAuthorTestUnprovenAsync(
