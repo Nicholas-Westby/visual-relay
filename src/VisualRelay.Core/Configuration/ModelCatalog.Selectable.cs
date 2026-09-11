@@ -10,11 +10,10 @@ public static partial class ModelCatalog
     public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> SelectableModelsByTier =
         new Dictionary<string, IReadOnlyList<string>>
         {
-            // hf-qwen3-coder-next is deliberately absent: the ≤6 cap has no
-            // room for it once both GLM 5.3 Flash routes head the list, it is
-            // the weakest option a frontier tier could pick, and the
-            // auto-resolved frontier chain still reaches it (and the fallback
-            // tier) anyway.
+            // hf-qwen3-coder-next is deliberately absent even though the cap
+            // has room: it is the weakest option a frontier tier could pick,
+            // and the auto-resolved frontier chain still reaches it (and the
+            // fallback tier) anyway.
             ["frontier"] = new List<string>
             {
                 "glm-5.3-flash", "hf-glm-5.3-flash", "kimi-k2",
