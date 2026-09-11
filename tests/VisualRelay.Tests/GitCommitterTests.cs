@@ -117,6 +117,39 @@ public sealed class GitCommitterTests
     }
 
     [Fact]
+    public async Task CommitAsync_StagesTheManifestWithoutTheRelayExcludePathspec()
+    {
+        // Regression: real git aborts `add -A -- <files> :(exclude).relay` with exit 1
+        // whenever the named files span more than one top-level directory AND .relay
+        // is ignored — the -A walk starts at the root, meets the ignored directory
+        // through the exclude term and reports it. The explicit manifest never needs
+        // the term (relay entries are dropped before staging); the tracked-changes
+        // `add -u -- .` still does, because it walks the whole tree.
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "route.go", "package mux");
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        sim.Commit(repo.Root, "chore: seed");
+        Write(repo, "route.go", "package mux // fixed");
+        Write(repo, "src/app.cs", "updated");
+        var recorder = new RecordingGitInvoker(sim);
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123", ["feat: add widget"], ["route.go", "src/app.cs"], [],
+            commitToken: null, preRunUntracked: null, tasksDir: null,
+            recorder, CancellationToken.None, timeProvider: TimeProvider.System);
+
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
+        Assert.False(recorder.RecordedCall(["add", "-A", ":(exclude).relay"]),
+            "the explicit manifest add must not carry the relay exclude pathspec");
+        Assert.True(recorder.RecordedCall(["add", "-u", ":(exclude).relay"]),
+            "the tracked-changes add must keep the relay exclude pathspec");
+        var changed = sim.FilesChangedInCommit(repo.Root, result.CommitSha!);
+        Assert.Contains("route.go", changed);
+        Assert.Contains("src/app.cs", changed);
+    }
+
+    [Fact]
     public async Task CommitAsync_WhenTheTasksDirIsGitignored_StillStagesTheRetiredTaskFile()
     {
         // A repo may keep its task files out of git. The retirement move must land

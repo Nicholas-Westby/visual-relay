@@ -227,7 +227,10 @@ public sealed partial class SplitGuardVerificationTests
         // 2026-09-07: 141 -> 142. Review fix on the same work: a repo that keeps
         // its task files out of git must still get the retired task file into the
         // commit, which is one more fact in the GitCommitterTests family.
-        const int baseline = 142;
+        //
+        // 2026-09-10: 142 -> 143. The commit-stage regression fix added one fact to
+        // GitCommitterTests: only the tracked-changes add keeps the relay exclude.
+        const int baseline = 143;
 
         string[] prefixes =
         [

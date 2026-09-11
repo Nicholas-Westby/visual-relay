@@ -13,7 +13,7 @@ namespace VisualRelay.Tests;
 /// the real seam without slowing the default run. Every fact is hermetic (no host git
 /// config, no credential prompt) and skipped unless the opt-in env var is set.
 /// </summary>
-public sealed class RealGitIntegrationTests
+public sealed partial class RealGitIntegrationTests
 {
     internal static bool Ready()
     {

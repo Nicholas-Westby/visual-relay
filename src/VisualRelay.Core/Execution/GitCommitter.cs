@@ -3,10 +3,14 @@ namespace VisualRelay.Core.Execution;
 internal static partial class GitCommitter
 {
     /// <summary>
-    /// Pathspec appended to every staging call so nothing under the target's
+    /// Pathspec appended to the tree-wide staging call so nothing under the target's
     /// <c>.relay/</c> bookkeeping directory enters a task commit — neither the run's own
     /// artifacts nor a tracked <c>config.json</c> the run edited. The files stay on disk;
     /// git just never sees them. Resolved against git's cwd, always the repo root here.
+    /// <para>Never appended to the explicit manifest add: with <c>.relay/</c> ignored and
+    /// the named files spanning more than one top-level directory, git walks from the
+    /// root, meets the ignored directory through this term and exits 1. That add needs no
+    /// exclude anyway — every relay entry is dropped from the list before staging.</para>
     /// </summary>
     private const string ExcludeRelayPathspec = ":(exclude).relay";
 
@@ -100,7 +104,7 @@ internal static partial class GitCommitter
 
         if (manifestFilesToStage.Count > 0)
         {
-            var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage, ExcludeRelayPathspec], cancellationToken, timeProvider: tp);
+            var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken, timeProvider: tp);
             if (add.ExitCode != 0)
             {
                 return await FailAsync($"git add failed (git exit {add.ExitCode}): {add.Output.Trim()}");
@@ -268,32 +272,5 @@ internal static partial class GitCommitter
         }
 
         return lastResult;
-    }
-
-    private static async Task<IReadOnlyList<string>> ResolveManifestFilesToStageAsync(
-        IGitInvoker gitInvoker,
-        string rootPath,
-        IReadOnlyList<string> manifest,
-        CancellationToken cancellationToken,
-        TimeProvider timeProvider)
-    {
-        var files = new List<string>();
-        foreach (var relative in manifest.Distinct(StringComparer.Ordinal))
-        {
-            var fullPath = Path.Combine(rootPath, relative);
-            if (File.Exists(fullPath) || Directory.Exists(fullPath))
-            {
-                files.Add(relative);
-                continue;
-            }
-
-            var tracked = await GitAsync(gitInvoker, rootPath, ["ls-files", "--", relative], cancellationToken, timeProvider: timeProvider);
-            if (!string.IsNullOrWhiteSpace(tracked.Output))
-            {
-                files.Add(relative);
-            }
-        }
-
-        return files;
     }
 }

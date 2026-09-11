@@ -4,10 +4,11 @@ using static VisualRelay.Tests.GitCommitterGitSimSetup;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Nothing under <c>.relay/</c> may reach a sealed commit. The two working-tree
-/// staging calls carry a <c>:(exclude).relay</c> pathspec, but the squash's
-/// content-preservation pass restores paths straight out of the rewound commits'
-/// tree — so a bookkeeping file the agent self-committed would ride in past both.
+/// Nothing under <c>.relay/</c> may reach a sealed commit. The tracked-changes
+/// staging call carries a <c>:(exclude).relay</c> pathspec and the manifest add drops
+/// relay entries, but the squash's content-preservation pass restores paths straight
+/// out of the rewound commits' tree — so a bookkeeping file the agent self-committed
+/// would ride in past both.
 /// </summary>
 public sealed class GitCommitterRunBaseSquashRelayTests
 {

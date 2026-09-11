@@ -36,6 +36,7 @@ public static class TestRealGitGuard
     {
         // Opt-in parity suite — the ONLY files where real git is legitimate.
         "RealGitIntegrationTests.cs",
+        "RealGitIntegrationTests.Manifest.cs",
         "RealGitIntegrationDriverTests.cs",
         "ParityHarness.cs",
         // Guard-as-test files that exercise synthetic inline source strings.

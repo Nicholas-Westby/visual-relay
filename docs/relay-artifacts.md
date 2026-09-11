@@ -8,7 +8,8 @@ find in a target's `.relay/<task>/` folder.
 whether Visual Relay stages the file into the task's commit. Nothing under
 `.relay/` is: it is Visual Relay's own working state, the run keeps writing it to
 disk, and no staging call the commit stage makes can reach a path under `.relay/`
-— the two working-tree `git add` calls carry a `:(exclude).relay` pathspec, the
+— the tracked-changes `git add -u` carries a `:(exclude).relay` pathspec and the
+explicit manifest add drops any `.relay/` entry before staging, the
 auto-include of run-authored files and the squash's content-preservation pass both
 skip the internal-artifact prefixes, and the retirement force-add stages only the
 task files it just moved under the tasks directory. So a task's diff shows only
