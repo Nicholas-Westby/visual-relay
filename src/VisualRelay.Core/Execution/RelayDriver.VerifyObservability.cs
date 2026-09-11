@@ -29,7 +29,19 @@ public sealed partial class RelayDriver
         // testResult.Output — the right content for a green gate, or any caller whose only
         // failure source is the test command itself.
         string? combinedFailureOutput = null,
-        SetupCheckResults? setupChecks = null)
+        SetupCheckResults? setupChecks = null,
+        // The command this gate actually ran, when it is not the project's whole test
+        // command: the Author-tests gate runs the targeted per-file command, and an
+        // event naming the full suite would misreport what produced the exit code.
+        string? commandOverride = null,
+        // Extra Data entries for gates that carry more than a command and an exit code
+        // (the Author-tests gate adds what it stripped and how it classified each
+        // declared test file). Applied last, so a caller can also correct a base key.
+        IReadOnlyDictionary<string, string>? extraData = null,
+        // False when no command ran at all — an outcome can be recorded without one
+        // (no test files declared, a placeholder command) and a fabricated exit code
+        // would read as a real result.
+        bool includeExitCode = true)
     {
         var check = overrideCheck ?? (testResult.ExitCode == 0 ? "green" : "red");
         var reason = testResult.ExitCode != 0
@@ -50,16 +62,22 @@ public sealed partial class RelayDriver
 
         var data = new Dictionary<string, string>
         {
-            ["command"] = config.TestCommand,
-            ["exitCode"] = testResult.ExitCode.ToString(),
+            ["command"] = commandOverride ?? config.TestCommand,
             ["check"] = check,
             ["reason"] = reason,
             ["treeHash"] = treeHash,
             ["outputFile"] = outputFile ?? string.Empty
         };
+        if (includeExitCode)
+            data["exitCode"] = testResult.ExitCode.ToString();
         if (setupChecks is not null)
         {
             foreach (var (k, v) in setupChecks.ToEventData())
+                data[k] = v;
+        }
+        if (extraData is not null)
+        {
+            foreach (var (k, v) in extraData)
                 data[k] = v;
         }
 

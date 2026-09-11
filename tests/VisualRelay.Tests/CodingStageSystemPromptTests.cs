@@ -126,6 +126,26 @@ public sealed class CodingStageSystemPromptTests
             stage.SystemPrompt, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Author-tests must say where a test belongs without naming a language: a
+    /// separate file where the framework allows it, tests only where the
+    /// convention keeps them beside the implementation.
+    /// </summary>
+    [Fact]
+    public void AuthorTests_SystemPrompt_StatesWhereTestsBelong()
+    {
+        var stage = RelayStages.All.Single(s => s.Name == "Author-tests");
+        Assert.Contains(
+            "Put new tests in a separate file from the code under test whenever the test "
+            + "framework allows it; when the convention keeps unit tests inside the "
+            + "implementation file, add only tests there and no implementation.",
+            stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains(
+            "Do not add documentation tests or any other test inside an implementation file "
+            + "unless that is where the language keeps its unit tests.",
+            stage.SystemPrompt, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Diagnose_SystemPrompt_ProhibitsEditingAndFalseClaims()
     {

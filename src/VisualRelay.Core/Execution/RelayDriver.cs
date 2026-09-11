@@ -110,7 +110,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 await WriteStatusAsync(taskDirectory, statusEntries, stageToken);
                 var stopwatch = Stopwatch.StartNew();
                 string body;
-                string? check = null;
+                string? check = null; string? checkReason = null;
                 RelayCostEstimate? cost = null;
                 double? testDurationSeconds = null;
 
@@ -187,16 +187,15 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 5)
                     {
-                        var stage5Result = await HandleStage5Async(
-                            rootPath, runId, taskId, taskDirectory, config, manifest, ledger,
-                            statusEntries, json, cancellationToken);
-                        if (stage5Result.Outcome is { } o)
+                        var s5 = await RunStage5WithReaskAsync(rootPath, runId, taskId, taskDirectory,
+                            config, stage, input, manifest, ledger, statusEntries, json, body,
+                            implementationFrontLoaded, cancellationToken);
+                        if (s5.Outcome is { } o)
                             return o;
-                        check = stage5Result.Check;
-                        testDurationSeconds = stage5Result.TestDurationSeconds;
-                        implementationFrontLoaded = await RecheckEarlyImplementationAsync(
-                            rootPath, config, manifest, implementationFrontLoaded,
-                            cancellationToken);
+                        body = s5.Body; check = s5.Check; checkReason = s5.Reason;
+                        testDurationSeconds = s5.TestDurationSeconds;
+                        sessionCostUsd += s5.CostDelta; unknownCostStageCount += s5.UnknownCostDelta;
+                        implementationFrontLoaded = s5.ImplementationFrontLoaded;
                     }
 
                     if (stage.Number == 10)
@@ -273,7 +272,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 if (stage.Number != 12 && (stage.Number != 10 || !fixVerifyHandled) && (stage.Number != 5 || !"Skipped".Equals(statusEntries[4].Status, StringComparison.OrdinalIgnoreCase)))
                 {
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
-                        stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
+                        stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, checkReason);
                 }
                 else if (stage.Number == 12)
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,

@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -8,19 +7,94 @@ namespace VisualRelay.Core.Execution;
 public sealed partial class RelayDriver
 {
     /// <summary>
-    /// Result returned by <see cref="HandleStage5Async"/>.
+    /// Result of one stage-5 pass: the filter, the manifest merge, the scope
+    /// check and one gate run.
     /// </summary>
-    /// <param name="Outcome">Non-null when the stage flags (stop the pipeline).</param>
-    /// <param name="Check">The stage check result ("red" or "green"), or null if flagged.</param>
-    /// <param name="TestDurationSeconds">Test duration, or null.</param>
-    internal readonly record struct Stage5Result(
-        RelayTaskOutcome? Outcome, string? Check, double? TestDurationSeconds);
+    /// <param name="Outcome">Non-null when the pass flags (stop the pipeline).</param>
+    /// <param name="Gate">What the gate established, or null when flagged.</param>
+    /// <param name="TestDurationSeconds">How long the gate command ran, or null when nothing ran.</param>
+    private readonly record struct Stage5Result(
+        RelayTaskOutcome? Outcome, AuthorTestGateOutcome? Gate, double? TestDurationSeconds);
+
+    /// <summary>What stage 5 leaves behind for the stage loop.</summary>
+    /// <param name="Outcome">Non-null when the stage flags.</param>
+    /// <param name="Body">The stage body to record, replaced by the re-ask's answer when there was one.</param>
+    /// <param name="Check">"red" or "unproven".</param>
+    /// <param name="Reason">Why the check reads as it does, or null.</param>
+    /// <param name="TestDurationSeconds">How long the last gate command ran.</param>
+    /// <param name="CostDelta">USD the re-ask added.</param>
+    /// <param name="UnknownCostDelta">Unpriced stage runs the re-ask added.</param>
+    /// <param name="ImplementationFrontLoaded">True when the fix is already in the tree.</param>
+    private sealed record Stage5StageResult(
+        RelayTaskOutcome? Outcome,
+        string Body,
+        string? Check,
+        string? Reason,
+        double? TestDurationSeconds,
+        double CostDelta,
+        int UnknownCostDelta,
+        bool ImplementationFrontLoaded);
 
     /// <summary>
-    /// Handle stage 5 (Author-tests): discard non-test edits, merge testFiles
-    /// into the manifest, and run the red-gate to confirm tests fail without
-    /// implementation. Returns a result with the outcome (non-null = flag),
-    /// check string, and test duration.
+    /// Runs stage 5's post-processing and, at most once per run, re-asks the
+    /// stage when its tests passed with the implementation still in place. The
+    /// re-ask is an ordinary second stage attempt (same invocation builder, same
+    /// attempt numbering) carrying one extra instruction, and its result is put
+    /// through the same filter, merge, scope check and gate.
+    /// </summary>
+    private async Task<Stage5StageResult> RunStage5WithReaskAsync(
+        string rootPath,
+        string runId,
+        string taskId,
+        string taskDirectory,
+        RelayConfig config,
+        RelayStageDefinition stage,
+        RelayTaskInput input,
+        List<string> manifest,
+        StringBuilder ledger,
+        List<StageStatusEntry> statusEntries,
+        JsonElement json,
+        string body,
+        bool implementationFrontLoaded,
+        CancellationToken cancellationToken)
+    {
+        var pass = await HandleStage5Async(rootPath, runId, taskId, taskDirectory, config, stage,
+            manifest, ledger, statusEntries, json, attempt: 1, reaskUsed: false, cancellationToken);
+        double costDelta = 0;
+        var unknownCostDelta = 0;
+
+        if (pass is { Outcome: null, Gate.ReaskRequested: true })
+        {
+            var reask = await ReaskAuthorTestsAsync(rootPath, runId, taskId, taskDirectory, config,
+                stage, input, ledger, manifest, pass.Gate!, cancellationToken);
+            costDelta = reask.CostDelta;
+            unknownCostDelta = reask.UnknownCostDelta;
+            // An unusable answer leaves attempt 1's outcome standing: it is
+            // already the honest "unproven — green before implementation".
+            if (reask.Contract is { } second)
+            {
+                body = reask.Body;
+                pass = await HandleStage5Async(rootPath, runId, taskId, taskDirectory, config, stage,
+                    manifest, ledger, statusEntries, second, attempt: 2, reaskUsed: true, cancellationToken);
+            }
+        }
+
+        if (pass.Outcome is not null)
+            return new Stage5StageResult(pass.Outcome, body, null, null, null,
+                costDelta, unknownCostDelta, implementationFrontLoaded);
+
+        if (pass.Gate is { Check: AuthorTestCheck.Unproven, Reason: { } reason })
+            await PublishAuthorTestUnprovenAsync(rootPath, runId, taskId, stage, reason, cancellationToken);
+
+        return new Stage5StageResult(null, body, pass.Gate?.CheckName, pass.Gate?.Reason,
+            pass.TestDurationSeconds, costDelta, unknownCostDelta,
+            await RecheckEarlyImplementationAsync(
+                rootPath, config, manifest, implementationFrontLoaded, cancellationToken));
+    }
+
+    /// <summary>
+    /// Handle one stage-5 pass: discard non-test edits, merge testFiles into the
+    /// manifest, classify them, and run the author-test gate over the result.
     /// </summary>
     private async Task<Stage5Result> HandleStage5Async(
         string rootPath,
@@ -28,10 +102,13 @@ public sealed partial class RelayDriver
         string taskId,
         string taskDirectory,
         RelayConfig config,
+        RelayStageDefinition stage,
         List<string> manifest,
         StringBuilder ledger,
         List<StageStatusEntry> statusEntries,
         JsonElement json,
+        int attempt,
+        bool reaskUsed,
         CancellationToken cancellationToken)
     {
         var testFiles = ReadStringArray(json, "testFiles");
@@ -92,62 +169,62 @@ public sealed partial class RelayDriver
             ledger.AppendLine();
         }
 
-        var hasImpl = manifest.Any(f => !testFiles.Contains(f, StringComparer.Ordinal) && IsImpl(f));
+        // ── Step 3: Scope check, then the gate ───────────────────────
+        var verdicts = await CheckAuthorTestScopeAsync(
+            rootPath, runId, taskId, stage, testFiles, config, ledger, cancellationToken);
+        var (outcome, result) = await RunAuthorTestGateAsync(rootPath, runId, taskId, stage,
+            config, manifest, testFiles, verdicts, reaskUsed, cancellationToken);
 
-        if (hasImpl)
+        if (outcome.Check is null)
+            return new Stage5Result(
+                await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, outcome.Reason!, null,
+                    statusEntries, cancellationToken),
+                null, null);
+
+        await PublishAuthorTestVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage,
+            attempt, config, outcome, result, manifest, cancellationToken);
+        AppendAuthorTestGateLedger(ledger, outcome);
+        return new Stage5Result(null, outcome, result?.Elapsed.TotalSeconds);
+    }
+
+    /// <summary>
+    /// Runs stage 5 once more with the re-ask appended to its input, using the
+    /// same invocation builder every stage retry uses (so the attempt index, the
+    /// trace directory and the report file follow the normal numbering).
+    /// </summary>
+    private async Task<(string Body, JsonElement? Contract, double CostDelta, int UnknownCostDelta)>
+        ReaskAuthorTestsAsync(
+            string rootPath,
+            string runId,
+            string taskId,
+            string taskDirectory,
+            RelayConfig config,
+            RelayStageDefinition stage,
+            RelayTaskInput input,
+            StringBuilder ledger,
+            IReadOnlyList<string> manifest,
+            AuthorTestGateOutcome gate,
+            CancellationToken cancellationToken)
+    {
+        var files = AuthorTestGateOutcome.InlineOrSuspect(gate.Verdicts);
+        await PublishAuthorTestReaskAsync(rootPath, runId, taskId, stage, files, cancellationToken);
+        AppendAuthorTestReaskLedger(ledger);
+
+        var reasked = input with
         {
-            var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
-            var gateResult = await AuthorTestGate.RunAsync(rootPath, taskId, runId, manifest, testFiles, command, _dependencies.TestRunner, _dependencies.GitInvoker, cancellationToken);
-            if (gateResult.Error is not null)
-                return new Stage5Result(await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, statusEntries, cancellationToken), null, null);
+            Markdown = input.Markdown + Environment.NewLine + Environment.NewLine
+                + AuthorTestReaskMessage(files)
+        };
+        var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
+            reasked, ledger, manifest);
+        var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
+        double costDelta = 0;
+        var unknownCostDelta = 0;
+        if (TryEstimateCost(invocation.ReportFile) is { } cost) costDelta = cost.CostUsd; else unknownCostDelta = 1;
 
-            if (gateResult.RestoreResult == RedGateRestoreResult.Conflict)
-                return new Stage5Result(await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "red gate stash restore conflict", null, statusEntries, cancellationToken), null, null);
-
-            var testResult = gateResult.TestResult;
-            var duration = testResult.Elapsed.TotalSeconds;
-            if (testResult.TimedOut)
-                return new Stage5Result(await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
-                    ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken), null, null);
-
-            // ── Gate-unusability detection ──────────────────────────
-            // Exit code 127 = command not found (runner can't start).
-            // "no tests found/collected" = zero tests ran — not a real red.
-            // In either case the red gate is infrastructure-broken, not
-            // correctly-red. Emit a warn event and skip the pass/fail
-            // assertion rather than passing vacuously.
-            if (IsGateUnusable(testResult))
-            {
-                var tail = testResult.Output.Length > 200
-                    ? testResult.Output[^200..]
-                    : testResult.Output;
-                await _dependencies.EventSink.PublishAsync(new RelayEvent(
-                    DateTimeOffset.UtcNow, "warn", "author_test_gate_unusable", runId,
-                    rootPath, taskId, Data: new Dictionary<string, string>
-                    {
-                        ["command"] = command,
-                        ["exitCode"] = testResult.ExitCode.ToString(),
-                        ["outputTail"] = tail
-                    }), cancellationToken);
-                return new Stage5Result(null, null, null);
-            }
-
-            var check = testResult.ExitCode == 0 ? "green" : "red";
-            if (check != "red")
-            {
-                if (gateResult.StashedImplementation)
-                    return new Stage5Result(await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
-                        "author-tests passed after implementation files were stripped", null, statusEntries, cancellationToken), null, null);
-
-                check = "green"; // already-resolved: no impl delta
-                ledger.AppendLine("> **Already-resolved**: no implementation delta to strip; accepted green regression coverage.");
-                ledger.AppendLine();
-            }
-
-            return new Stage5Result(null, check, duration);
-        }
-
-        return new Stage5Result(null, null, null);
+        return result.IsValid && TryParseContractJson(result.Json, out var contract, out _)
+            ? (result.Json!, contract, costDelta, unknownCostDelta)
+            : (string.Empty, null, costDelta, unknownCostDelta);
     }
 
     /// <summary>
@@ -167,42 +244,5 @@ public sealed partial class RelayDriver
             return currentValue;
         return await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
             rootPath, manifest, IsImpl, _dependencies.GitInvoker, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
-    }
-
-    /// <summary>
-    /// Zero-tests pattern: "0 tests" / "0 tests collected" / "ran 0 tests"
-    /// but NOT "10 tests" / "230 tests" / "Ran 100 tests".  The regex
-    /// requires the zero to be a standalone number (not preceded by another
-    /// digit).
-    /// </summary>
-    private static readonly Regex ZeroTestsPattern =
-        new(@"(?<!\d)0\s+tests",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-    /// <summary>
-    /// Returns true when the test runner could not execute meaningfully (command
-    /// not found, or zero tests collected), making the red-gate assertion
-    /// untrustworthy. Avoids silently passing a gate whose infrastructure is
-    /// broken — independent of any specific toolchain.
-    /// </summary>
-    private static bool IsGateUnusable(TestRunResult result)
-    {
-        // Exit code 127 = command not found (POSIX convention; also followed
-        // by many shells and process runners on non-POSIX platforms).
-        if (result.ExitCode == 127)
-            return true;
-
-        // Zero-tests-collected patterns produced by common runners when the
-        // command can start but finds no tests to execute. The heuristic is
-        // intentionally loose (case-insensitive) — a false positive here
-        // skips the gate conservatively rather than passing it vacuously.
-        var output = result.Output;
-        if (string.IsNullOrWhiteSpace(output))
-            return false;
-
-        return output.Contains("no tests found", StringComparison.OrdinalIgnoreCase)
-            || output.Contains("no tests collected", StringComparison.OrdinalIgnoreCase)
-            || ZeroTestsPattern.IsMatch(output)
-            || output.Contains("zero tests", StringComparison.OrdinalIgnoreCase);
     }
 }

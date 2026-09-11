@@ -122,6 +122,9 @@ public sealed partial class RelayDriver
         int unknownCostStageCount,
         CancellationToken cancellationToken,
         double? testDurationSeconds = null,
+        // Why the check reads as it does, when the check alone does not say (the
+        // Author-tests gate's "unproven"). Recorded on the status entry only.
+        string? checkReason = null,
         bool skipStatusAndPublish = false)
     {
         AppendLedgerSection(ledger, stage, body);
@@ -134,7 +137,7 @@ public sealed partial class RelayDriver
         var alreadySkipped = idx >= 0 && idx < statusEntries.Count
             && "Skipped".Equals(statusEntries[idx].Status, StringComparison.OrdinalIgnoreCase);
         if (!alreadySkipped)
-            MarkStatusDone(statusEntries, stage, elapsed, cost, check, testDurationSeconds);
+            MarkStatusDone(statusEntries, stage, elapsed, cost, check, testDurationSeconds, checkReason);
         if (!skipStatusAndPublish)
         {
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);

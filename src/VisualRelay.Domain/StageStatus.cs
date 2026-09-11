@@ -19,7 +19,11 @@ public sealed record StageStatusEntry(
     string? Model = null,
     string? Error = null,
     string? TaskInputHash = null,
-    double? TestDurationSeconds = null);
+    double? TestDurationSeconds = null,
+    // Why a check reads the way it does, when the check alone does not say: the
+    // Author-tests gate records "unproven" here with the reason it could prove
+    // nothing. Null whenever the check speaks for itself.
+    string? Reason = null);
 
 /// <summary>
 /// Serializer / deserializer for the per-stage status record.

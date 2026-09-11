@@ -233,13 +233,14 @@ public sealed partial class RelayDriver
         }
     }
 
-    private static void MarkStatusDone(List<StageStatusEntry> entries, RelayStageDefinition stage, TimeSpan elapsed, RelayCostEstimate? cost, string? check, double? testDurationSeconds = null)
+    private static void MarkStatusDone(List<StageStatusEntry> entries, RelayStageDefinition stage, TimeSpan elapsed, RelayCostEstimate? cost, string? check, double? testDurationSeconds = null, string? checkReason = null)
     {
         var idx = stage.Number - 1;
         if (idx < 0 || idx >= entries.Count) return;
         entries[idx] = entries[idx] with
         {
             Status = "Done",
+            Reason = checkReason,
             DurationSeconds = cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds,
             CostUsd = stage.Kind == "driver" ? 0 : cost?.CostUsd,
             Turns = cost?.Turns > 0 ? cost.Turns : null,

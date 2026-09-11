@@ -1,7 +1,57 @@
+using System.Text.Json;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
+
+/// <summary>
+/// Drives a whole run whose Plan manifest and Author-tests list the test fixes,
+/// writing the files <paramref name="stage5Writes"/> names while stage 5 runs so
+/// the author-test gate has a real working tree to judge. Every stage-5 task
+/// input is recorded, so a re-ask (a second stage-5 call carrying an extra
+/// instruction) is visible to the test.
+/// </summary>
+internal sealed class AuthorTestStageRunner(
+    IReadOnlyList<string> manifest,
+    IReadOnlyList<string> testFiles,
+    IReadOnlyDictionary<string, string>? stage5Writes = null) : ISubagentRunner
+{
+    private readonly List<string> _stage5Inputs = [];
+
+    /// <summary>The task input of each stage-5 call, in order.</summary>
+    public IReadOnlyList<string> Stage5Inputs => _stage5Inputs;
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number == 5)
+        {
+            _stage5Inputs.Add(invocation.TaskInput);
+            foreach (var (relative, content) in stage5Writes ?? new Dictionary<string, string>())
+            {
+                var full = Path.Combine(invocation.TargetRoot, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+                File.WriteAllText(full, content);
+            }
+        }
+
+        var json = invocation.Stage.Number switch
+        {
+            0 => """{"visualReview":"skip","reason":"no visual changes"}""",
+            1 => """{"summary":"framed","options":["small"]}""",
+            2 => """{"findings":"found","constraints":[]}""",
+            3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
+            4 => $$"""{"plan":"edit files","manifest":{{JsonSerializer.Serialize(manifest)}}}""",
+            5 => $$"""{"testFiles":{{JsonSerializer.Serialize(testFiles)}},"rationale":"red first"}""",
+            6 => """{"summary":"implemented"}""",
+            7 => """{"verdict":"pass","issues":[]}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessages":["feat: add the behavior"]}""",
+            _ => """{"summary":"ok"}"""
+        };
+        return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+}
 
 internal sealed class PrematureImplementationRunner : ISubagentRunner
 {

@@ -5,18 +5,18 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Red-gate gate-unusability detection tests: exit code 127 (command not found),
-/// "no tests found/collected" output, and zero-tests patterns cause the red gate
-/// to emit an <c>author_test_gate_unusable</c> warn event instead of passing
-/// vacuously.
+/// "no tests found/collected" output, and zero-tests patterns make the red gate
+/// record an unproven check with the <c>author_test_gate_unusable</c> warn event
+/// instead of passing vacuously.
 /// </summary>
 public sealed class RelayDriverStage5GateUnusableTests
 {
     [Fact]
-    public async Task Stage5_RedGate_ExitCode127_EmitsUnusableEventAndSkipsGate()
+    public async Task Stage5_RedGate_ExitCode127_RecordsUnprovenAndWarns()
     {
         // When the test command produces exit code 127 (command not found),
-        // the red gate must emit author_test_gate_unusable and skip the
-        // pass/fail assertion rather than treating it as a satisfied red gate.
+        // the red gate must emit author_test_gate_unusable and record an
+        // unproven check rather than treating it as a satisfied red gate.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("bad-cmd", "# Bad command\n");
@@ -37,19 +37,20 @@ public sealed class RelayDriverStage5GateUnusableTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "bad-cmd");
 
-        // The task must still commit (gate skipped, not flagged).
+        // The task must still commit (gate unproven, not flagged).
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         // The unusable event must be emitted.
         Assert.Contains(sink.Events, e =>
             e is { EventName: "author_test_gate_unusable", Level: "warn" });
+        AssertUnprovenGate(repo, "bad-cmd");
     }
 
     [Fact]
-    public async Task Stage5_RedGate_NoTestsCollectedOutput_EmitsUnusableEventAndSkipsGate()
+    public async Task Stage5_RedGate_NoTestsCollected_RecordsUnprovenAndWarns()
     {
         // When the test runner reports "no tests collected" (zero tests found),
-        // the red gate must emit author_test_gate_unusable and skip the
-        // pass/fail assertion.
+        // the red gate must emit author_test_gate_unusable and record an
+        // unproven check.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("no-tests-found", "# No tests found\n");
@@ -73,6 +74,7 @@ public sealed class RelayDriverStage5GateUnusableTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.Contains(sink.Events, e =>
             e is { EventName: "author_test_gate_unusable", Level: "warn" });
+        AssertUnprovenGate(repo, "no-tests-found");
     }
 
     [Fact]
@@ -108,5 +110,13 @@ public sealed class RelayDriverStage5GateUnusableTests
         // No unusable event — the round-number count was not misclassified.
         Assert.DoesNotContain(sink.Events, e =>
             e is { EventName: "author_test_gate_unusable", Level: "warn" });
+        Assert.Equal("red", RelayDriverStage5GateTests.Stage5Status(repo, "round-tests").Check);
+    }
+
+    private static void AssertUnprovenGate(TestRepository repo, string taskId)
+    {
+        var stage5 = RelayDriverStage5GateTests.Stage5Status(repo, taskId);
+        Assert.Equal("unproven", stage5.Check);
+        Assert.Equal("gate command unusable", stage5.Reason);
     }
 }

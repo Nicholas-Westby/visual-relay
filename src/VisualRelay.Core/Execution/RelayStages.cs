@@ -71,6 +71,14 @@ public static class RelayStages
             "check, lint, format, build, or screenshot gate — " +
             "the harness runs the full gate at its Verify/Commit stages. " +
             SelfVerifyStopRule + " " +
+            // Where a test belongs is a property of the language, so both rules are
+            // stated generically: the harness knows which extensions keep their unit
+            // tests beside the implementation, and gates each file accordingly.
+            "Put new tests in a separate file from the code under test whenever the test " +
+            "framework allows it; when the convention keeps unit tests inside the " +
+            "implementation file, add only tests there and no implementation. " +
+            "Do not add documentation tests or any other test inside an implementation file " +
+            "unless that is where the language keeps its unit tests. " +
             FollowRecordedConventionsRule,
         "Implement" =>
             "Implement the change within the manifest files. " +
