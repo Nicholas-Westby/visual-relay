@@ -74,6 +74,15 @@ public sealed partial class RunAllModesTests
     }
 
     [Fact]
+    public void RetiredWindowsProvisioningVerb_IsNotKnown()
+    {
+        // The Windows sandbox is nono inside WSL2; there is no runtime to provision
+        // from here and no second sandbox to keep a verb for.
+        Assert.False(CommandRouter.IsKnown("provision-mxc"));
+        Assert.DoesNotContain("provision-mxc", CommandRouter.UsageLine, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void KnownCommands_AreAllRecognized()
     {
         // Every subcommand in the KnownCommands list must be recognized.

@@ -56,7 +56,7 @@ public sealed class CommandToolGuardTests
     [Fact]
     public async Task RunShellCommand_StripsABypassHiddenMidChain()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (Windows uses cmd.exe)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (on Windows it runs through wsl.exe; see the WSL launch tests)");
         var launcher = new RecordingCommandLauncher();
         IAgentTool tool = new RunShellCommandTool(Executor(launcher));
 
@@ -72,7 +72,7 @@ public sealed class CommandToolGuardTests
     [Fact]
     public async Task RunShellCommand_InspectsCommandsTheOldPythonToolBypassed()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (Windows uses cmd.exe)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (on Windows it runs through wsl.exe; see the WSL launch tests)");
         var launcher = new RecordingCommandLauncher();
         IAgentTool tool = new RunShellCommandTool(Executor(launcher));
 

@@ -19,7 +19,7 @@ public sealed class CommandToolSandboxTests
     [Fact]
     public async Task RunCommand_WrapsTheProgramInTheNonoSandbox()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var launcher = new RecordingCommandLauncher();
         IAgentTool tool = new RunCommandTool(Executor(launcher));
 
@@ -37,7 +37,7 @@ public sealed class CommandToolSandboxTests
     [Fact]
     public async Task RunCommand_DropsNonoRollbackOnTheAgentPath()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var launcher = new RecordingCommandLauncher();
         IAgentTool tool = new RunCommandTool(Executor(launcher));
 
@@ -51,7 +51,7 @@ public sealed class CommandToolSandboxTests
     [Fact]
     public async Task CommandTools_NeverBlockTheNetwork()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var launcher = new RecordingCommandLauncher();
         IAgentTool argvTool = new RunCommandTool(Executor(launcher));
         IAgentTool shellTool = new RunShellCommandTool(Executor(launcher));
@@ -67,7 +67,7 @@ public sealed class CommandToolSandboxTests
     [Fact]
     public async Task RunShellCommand_UsesANonLoginShellWithSeparateArgvEntries()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (Windows uses cmd.exe)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (on Windows it runs through wsl.exe; see the WSL launch tests)");
         var launcher = new RecordingCommandLauncher();
         IAgentTool tool = new RunShellCommandTool(Executor(launcher));
 
@@ -94,7 +94,7 @@ public sealed class CommandToolSandboxTests
     [Fact]
     public async Task Snapshot_RunsItsGitReportThroughTheSameSandbox()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (Windows uses cmd.exe)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix /bin/sh launch (on Windows it runs through wsl.exe; see the WSL launch tests)");
         var launcher = new RecordingCommandLauncher(output: "## main\n M src/x.cs");
         IAgentTool tool = new SnapshotTool(Executor(launcher));
 

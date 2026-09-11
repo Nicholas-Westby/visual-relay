@@ -69,7 +69,7 @@ public sealed class SandboxDiagnosticsToggleTests
     [Fact]
     public void SandboxedTestRunner_QuietByDefault_IncludesSilent()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var sut = new SandboxedTestRunner(new ShellTestRunner(), TestConfig());
 
         var (_, args) = sut.ResolveLaunch("bun test");
@@ -80,7 +80,7 @@ public sealed class SandboxDiagnosticsToggleTests
     [Fact]
     public void SandboxedTestRunner_Verbose_OmitsSilent()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var sut = new SandboxedTestRunner(new ShellTestRunner(), TestConfig(), verboseDiagnostics: true);
 
         var (_, args) = sut.ResolveLaunch("bun test");

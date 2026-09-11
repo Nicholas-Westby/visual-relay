@@ -83,8 +83,8 @@ public sealed partial class SandboxedTestRunner(
     /// </summary>
     internal SandboxedLaunch ResolveSandboxedLaunch(string command, string? rootPath = null)
     {
-        var host = Host;
-        if (host is { IsWindows: true, Wsl: null })
+        var sandboxHost = Host;
+        if (sandboxHost is { IsWindows: true, Wsl: null })
             throw new InvalidOperationException(WslSandboxLauncher.BlockedMessage);
 
         // Sandbox always on: wrap in nono. verboseDiagnostics is output-only (--silent
@@ -93,7 +93,7 @@ public sealed partial class SandboxedTestRunner(
         // captured and surfaced in verify artifacts — the verification path ONLY.
         var prefix = SandboxedStage.BuildNonoPrefix(
             config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath,
-            requestDiagnostics: true, host: host);
+            requestDiagnostics: true, host: sandboxHost);
 
         string program;
         IReadOnlyList<string> arguments;
@@ -119,7 +119,7 @@ public sealed partial class SandboxedTestRunner(
             (program, arguments) = DirectExecTestRunner.ResolveLaunch(command);
         }
 
-        if (host.Wsl is { } context)
+        if (sandboxHost.Wsl is { } context)
         {
             // Inside the distro the same /bin/sh -c runs (never a cmd.exe batch), and the
             // target environment travels in the argv: a wsl.exe child's Windows environment

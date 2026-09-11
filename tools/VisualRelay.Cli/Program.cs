@@ -38,7 +38,6 @@ return cmd switch
     "audit" => PassthroughCommand.Audit(paths, rest),
     "install-hooks" => await InstallHooksCommand.RunAsync(paths, new GitInvoker()),
     "bump-version" => BumpVersionCommand.Run(paths),
-    "provision-mxc" => ProvisionMxcCommand.Run(),
     _ => Unknown(),
 };
 

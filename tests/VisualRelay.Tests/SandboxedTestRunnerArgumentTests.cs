@@ -11,7 +11,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void ShellMode_SandboxEnabled_TransformsIntoNonoWrappedShell()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         // "bun test" → nono run --profile <abs> --allow-cwd --silent -- /bin/sh -c "bun test"
         // --silent is the quiet DEFAULT (output-only; suppresses nono's banner/footer). The
         // non-login shell (-c, not -lc): the sandboxed verify inherits the harness's toolchain
@@ -38,7 +38,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void DirectExecMode_SandboxEnabled_WrapsScriptDirectly()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         // Script → nono run --profile <abs> --allow-cwd --silent -- <script> <args>
         var config = TestConfig();
         var sut = new SandboxedTestRunner(new DirectExecTestRunner(), config);
@@ -125,7 +125,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void SandboxedTestRunner_ResolveLaunch_AppendsExtraAllowPaths()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var extra = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with
@@ -230,7 +230,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void VerifyPrefix_ContainsDiagnosticsJson()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var config = TestConfig();
         // SandboxedTestRunner always passes requestDiagnostics: true — the
         // verification path is the ONLY path that requests --diagnostics-json.
@@ -243,7 +243,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void AgentPrefix_DoesNotContainDiagnosticsJson()
     {
-        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono launch (on Windows nono runs through wsl.exe; see the WSL launch tests)");
         var config = TestConfig();
         // Agent path: rollback: true, no requestDiagnostics.
         var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true);

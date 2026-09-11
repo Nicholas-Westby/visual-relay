@@ -18,7 +18,7 @@ public sealed class WslSandboxLauncherTests
     [Theory]
     [InlineData(@"\\wsl.localhost\Ubuntu\home\alice\repo", "/home/alice/repo")]
     [InlineData(@"\\wsl$\Ubuntu\home\alice\my repo\", "/home/alice/my repo")]
-    [InlineData(@"//wsl.localhost/ubuntu/home/alice/répo", "/home/alice/répo")]
+    [InlineData("//wsl.localhost/ubuntu/home/alice/répo", "/home/alice/répo")]
     public void ResolveWorkspace_UncRootInTheContextsDistro_IsItsLinuxPath(string root, string expected)
     {
         var (linuxWorkspace, error) = WslSandboxLauncher.ResolveWorkspace(Context, root);

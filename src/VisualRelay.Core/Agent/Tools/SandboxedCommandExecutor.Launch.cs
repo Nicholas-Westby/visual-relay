@@ -43,21 +43,30 @@ public sealed partial class SandboxedCommandExecutor
     private (SandboxedLaunch? Launch, string? Error) BuildLaunch(
         string targetRoot, AgentCommandGuard.Verdict verdict)
     {
-        var host = Host;
-        if (host is { IsWindows: true, Wsl: null })
+        var sandboxHost = Host;
+        if (sandboxHost is { IsWindows: true, Wsl: null })
             return (null, WslSandboxLauncher.BlockedMessage);
 
-        var (program, programArguments) = verdict.Shell is { } shell
-            ? (ShellBinary, new List<string> { ShellFlag, shell })
-            : (verdict.Argv![0], verdict.Argv.Skip(1).ToList());
+        string program;
+        List<string> programArguments;
+        if (verdict.Shell is { } shell)
+        {
+            program = ShellBinary;
+            programArguments = [ShellFlag, shell];
+        }
+        else
+        {
+            program = verdict.Argv![0];
+            programArguments = verdict.Argv.Skip(1).ToList();
+        }
 
         // rollback: false — the agent path drops nono's rollback (see the type doc).
         // requestDiagnostics stays off: that JSON is a verify-artifact concern, and
         // its banner would be noise in the model's tool result.
         var prefix = SandboxedStage.BuildNonoPrefix(
-            config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: targetRoot, host: host);
+            config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: targetRoot, host: sandboxHost);
 
-        if (host.Wsl is { } context)
+        if (sandboxHost.Wsl is { } context)
         {
             var (wsl, error) = WslSandboxLauncher.Build(
                 context, targetRoot, [context.NonoPath, .. prefix], program, programArguments,
