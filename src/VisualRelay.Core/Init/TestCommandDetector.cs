@@ -67,7 +67,7 @@ public static class TestCommandDetector
             || File.Exists(Path.Combine(rootPath, "setup.py"))
             || File.Exists(Path.Combine(rootPath, "pytest.ini")))
         {
-            candidates.Add("pytest");
+            AddPythonCandidates(rootPath, candidates);
         }
 
         // 5. Rust
@@ -134,11 +134,77 @@ public static class TestCommandDetector
         if (Directory.Exists(Path.Combine(rootPath, "tests"))
             || Directory.Exists(Path.Combine(rootPath, "test")))
         {
-            candidates.Add("pytest");
+            AddPythonCandidates(rootPath, candidates);
         }
 
-        return candidates;
+        return [.. candidates.Distinct(StringComparer.Ordinal)];
     }
+
+    // An interpreter the repository ships inside itself comes first: a virtualenv
+    // is how most Python projects pin their runner, and `pytest` is then absent
+    // from PATH entirely — which is how a 90-file project with a working
+    // .venv/bin/pytest was bootstrapped with the placeholder test command.
+    // `-q` because the full pytest header is noise in a stage prompt.
+    private static void AddPythonCandidates(string rootPath, List<string> candidates)
+    {
+        foreach (var venv in new[] { ".venv", "venv" })
+        {
+            if (File.Exists(Path.Combine(rootPath, venv, "bin", "pytest")))
+                candidates.Add($"{venv}/bin/pytest -q");
+            if (File.Exists(Path.Combine(rootPath, venv, "bin", "python")))
+                candidates.Add($"{venv}/bin/python -m pytest -q");
+        }
+
+        candidates.Add("pytest");
+    }
+
+    /// <summary>
+    /// The per-file form of a detected whole-suite command, or <c>null</c> when the
+    /// toolchain has none.
+    /// <para>
+    /// Only a runner that takes test FILE PATHS as trailing arguments gets one.
+    /// Seeding <c>testFileCmd</c> with a copy of the whole-suite command — which is
+    /// what bootstrap used to do — makes the stage-5 gate report a targeted run
+    /// that is in fact the entire suite; a null leaves the driver's own fallback to
+    /// <c>testCmd</c> in charge, and the run log says so.
+    /// </para>
+    /// </summary>
+    /// <param name="testCommand">The detected whole-suite command.</param>
+    /// <returns>The command with a <c>{files}</c> token, or null.</returns>
+    public static string? PerFileForm(string testCommand)
+    {
+        var command = testCommand.Trim();
+        if (command.Length == 0)
+            return null;
+        if (command.Contains("{files}", StringComparison.Ordinal))
+            return command;
+        // A chain, a pipe or a redirect has no trailing argument list to extend.
+        if (command.Contains("&&", StringComparison.Ordinal)
+            || command.Contains('|') || command.Contains('>') || command.Contains(';'))
+            return null;
+
+        var tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return TakesTestFilePaths(tokens) ? command + " {files}" : null;
+    }
+
+    private static bool TakesTestFilePaths(string[] tokens)
+    {
+        var runner = tokens[0];
+        // bun test a.ts b.ts
+        if (runner is "bun" && tokens is [_, "test", ..])
+            return true;
+        // pytest tests/a.py, .venv/bin/pytest tests/a.py
+        if (IsNamed(runner, "pytest"))
+            return true;
+        // python -m pytest tests/a.py, .venv/bin/python -m pytest tests/a.py
+        return (IsNamed(runner, "python") || IsNamed(runner, "python3"))
+            && tokens.Contains("-m", StringComparer.Ordinal)
+            && tokens.Contains("pytest", StringComparer.Ordinal);
+    }
+
+    /// <summary>Whether a token is the named tool, bare or at the end of a path.</summary>
+    private static bool IsNamed(string token, string tool) =>
+        token == tool || token.EndsWith("/" + tool, StringComparison.Ordinal);
 
     // Prefer the checked-in build-tool wrapper over the bare tool: `./mvnw` and
     // `./gradlew` pin the exact build-tool version the project was authored against

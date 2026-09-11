@@ -40,7 +40,7 @@ in `red`, `unproven` with a reason, or a flag, and says so in `run.log`.
 
 | Event | Level | Data | When |
 | --- | --- | --- | --- |
-| `verify_result` | info | `command` (the TARGETED command, not the full suite), `exitCode` (absent when nothing ran), `check`, `reason`, `strippedFiles` (comma-joined, may be empty), `scope`, `treeHash`, `outputFile` | Once per gate run, the same record stages 9-11 emit. `Attempt` is the stage attempt, so a re-ask leaves two. |
+| `verify_result` | info | `command` (the TARGETED command, or the whole suite when the project has no `{files}` form), `exitCode` (absent when nothing ran), `check`, `reason`, `strippedFiles` (comma-joined, may be empty), `scope`, `treeHash`, `outputFile` | Once per gate run, the same record stages 9-11 emit. `Attempt` is the stage attempt, so a re-ask leaves two. |
 | `author_test_scope_suspect` | warn | `files`, `scope` | A declared test file is neither a recognized test path nor an inline-capable extension. The entry is kept; this says it was believed, not verified. |
 | `author_test_gate_unusable` | warn | `command`, `reason`, `exitCode` and `outputTail` when a command ran | Exit 127, "no tests found/collected", or the bootstrap placeholder. |
 | `author_test_audit` | info | `mode`, `hunks` (count), `files`, `reasons` (clipped to 240 characters), or `error` when the call failed | One cheap-tier read of the stage's own diff, when `authorTests.diffAudit` asks for it. |

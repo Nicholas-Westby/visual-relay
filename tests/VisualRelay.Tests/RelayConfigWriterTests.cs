@@ -112,7 +112,8 @@ public sealed partial class RelayConfigWriterTests
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.Equal("pytest", result.Config.TestCommand);
         Assert.DoesNotContain("bun", result.Config.TestFileCommand);
-        Assert.Equal("pytest", result.Config.TestFileCommand);
+        // This runner takes file paths, so the upgrade seeds the real targeted form.
+        Assert.Equal("pytest {files}", result.Config.TestFileCommand);
     }
 
     // ── Swift guard detection ───────────────────────────────────────────

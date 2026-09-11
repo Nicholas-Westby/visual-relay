@@ -210,8 +210,9 @@ public sealed partial class TestCommandDetectorTests
             "go test ./...",
             "swift test",
             "mvn test",
-            "gradle test",
-            "pytest"   // tests/ dir weak signal, last
+            "gradle test"
+            // The weak tests/ signal repeats "pytest", which the list de-duplicates:
+            // validating the same command twice only doubles the bootstrap's wait.
         ], candidates);
     }
 

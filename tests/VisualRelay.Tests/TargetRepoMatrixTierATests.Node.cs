@@ -42,8 +42,8 @@ public sealed partial class TargetRepoMatrixTierATests
             Assert.Equal(ChainedScript, result.TestCommand);
             Assert.Contains("\"testCmd\": \"vitest run \\u0026\\u0026 tsc --noEmit\"",
                 config, StringComparison.Ordinal);
-            Assert.Contains("\"testFileCmd\": \"vitest run \\u0026\\u0026 tsc --noEmit\"",
-                config, StringComparison.Ordinal);
+            // A chained script has no trailing argument list, so no per-file form is seeded.
+            Assert.Contains("\"testFileCmd\": null", config, StringComparison.Ordinal);
             // No format script and no prettier config → no formatter is inferred, so the
             // repo is never reformatted by a tool it did not ask for.
             Assert.DoesNotContain("\"formatCmd\"", config, StringComparison.Ordinal);

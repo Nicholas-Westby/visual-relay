@@ -79,7 +79,9 @@ public sealed partial class TargetRepoMatrixTierATests
             Assert.False(result.UsedPlaceholderTestCommand);
             Assert.Equal("dotnet test", result.TestCommand);
             Assert.Contains("\"testCmd\": \"dotnet test\"", config, StringComparison.Ordinal);
-            Assert.Contains("\"testFileCmd\": \"dotnet test\"", config, StringComparison.Ordinal);
+            // No file-argument form exists for this runner, so nothing is seeded and
+            // the loader falls back to testCmd rather than naming a fake targeted run.
+            Assert.Contains("\"testFileCmd\": null", config, StringComparison.Ordinal);
             Assert.Contains("\"guardCmd\": \"dotnet format App.slnx --verify-no-changes\"",
                 config, StringComparison.Ordinal);
             Assert.Contains("\"formatCmd\": \"dotnet format App.slnx\"", config, StringComparison.Ordinal);
@@ -93,14 +95,14 @@ public sealed partial class TargetRepoMatrixTierATests
     // ── Row: Python (the generated sample repo shape, as control) ───────
 
     /// <summary>
-    /// A pyproject plus a <c>tests/</c> directory produces <c>pytest</c>
-    /// TWICE — once from the strong manifest rule and once from the weak
-    /// directory rule. The duplicate is harmless for the first candidate but
-    /// makes <see cref="ProjectBootstrapper"/> smoke-run an identical failing
-    /// command a second time before falling back to the placeholder.
+    /// A pyproject plus a <c>tests/</c> directory fires both the strong manifest
+    /// rule and the weak directory rule, which used to offer <c>pytest</c> TWICE
+    /// and make <see cref="ProjectBootstrapper"/> smoke-run an identical failing
+    /// command a second time before falling back to the placeholder. The candidate
+    /// list is de-duplicated, so it is offered once.
     /// </summary>
     [Fact]
-    public async Task Row_Python_StrongAndWeakRulesBothFire_ProducingADuplicateCandidate()
+    public async Task Row_Python_StrongAndWeakRulesBothFire_ProducingOneCandidate()
     {
         var root = NewRepo("python");
         try
@@ -108,7 +110,7 @@ public sealed partial class TargetRepoMatrixTierATests
             Write(root, "pyproject.toml", "[project]\nname = \"sample\"\n");
             Write(root, "tests/test_sample.py", "def test_ok():\n    assert True\n");
 
-            Assert.Equal(["pytest", "pytest"], TestCommandDetector.DetectCandidates(root));
+            Assert.Equal(["pytest"], TestCommandDetector.DetectCandidates(root));
 
             var (result, config) = await BootstrapAsync(root);
 

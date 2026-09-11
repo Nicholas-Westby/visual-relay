@@ -24,18 +24,19 @@ public static partial class RelayConfigWriter
             ["logSources"] = new JsonArray()
         };
 
-        // Pin testFileCmd to the resolved testCmd instead of letting it inherit
-        // the global "bun test {files}" default. The default leaks a Bun-shaped
-        // targeted command into the stage agent's prompt, which makes greenfield
-        // agents on Go/Python repos assume the project uses Bun and write .test.ts
-        // junk. Using testCmd verbatim is correct (run the full suite for a changed
-        // file, just less targeted) and never mentions bun; with no {files} token
-        // the targeted-command builder cleanly falls back to testCmd. Only set it
-        // when a real/placeholder command exists — a null testCmd is the deliberate
-        // "Incomplete" exhaustion signal and must not gain a testFileCmd.
+        // Seed testFileCmd only when the toolchain really has a per-file form,
+        // never by copying testCmd: a copy carries no {files} token, so the gate
+        // ran the WHOLE suite while the artifacts named it a targeted command. An
+        // explicit null leaves the loader's fallback to testCmd in charge and lets
+        // the run log's own warning describe what actually happens. It also never
+        // inherits the global "bun test {files}" default, which used to make
+        // greenfield agents on Go/Python repos assume the project uses Bun. Only
+        // set it when a real/placeholder command exists — a null testCmd is the
+        // deliberate "Incomplete" exhaustion signal and must not gain one.
         if (testCommand is not null)
         {
-            json["testFileCmd"] = JsonValue.Create(testCommand);
+            var perFile = TestCommandDetector.PerFileForm(testCommand);
+            json["testFileCmd"] = perFile is not null ? JsonValue.Create(perFile) : null;
         }
 
         // Auto-detect guard command when guard scripts exist.
@@ -72,11 +73,11 @@ public static partial class RelayConfigWriter
 
         json["testCmd"] = testCommand;
 
-        // Re-derive testFileCmd from the now-real testCmd. The initial bootstrap
-        // wrote testFileCmd = placeholder (see Write); on upgrade it must track the
-        // real command so the upgraded config carries no placeholder/bun-shaped
-        // targeted command. Mirrors Write: testCmd verbatim, never "bun".
-        json["testFileCmd"] = testCommand;
+        // Re-derive testFileCmd from the now-real testCmd, so the upgraded config
+        // carries no placeholder targeted command. Mirrors Write: the toolchain's
+        // real per-file form, or null when it has none.
+        var perFile = TestCommandDetector.PerFileForm(testCommand);
+        json["testFileCmd"] = perFile is not null ? JsonValue.Create(perFile) : null;
 
         // Now that a real toolchain exists, fill in the format/guard commands —
         // but never overwrite values the operator already set.

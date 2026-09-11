@@ -32,7 +32,7 @@ public sealed partial class TargetRepoMatrixTierATests
             var (result, config) = await BootstrapAsync(root);
 
             Assert.Equal("cargo test", result.TestCommand);
-            Assert.Contains("\"testFileCmd\": \"cargo test\"", config, StringComparison.Ordinal);
+            Assert.Contains("\"testFileCmd\": null", config, StringComparison.Ordinal);
             Assert.Contains("\"formatCmd\": \"cargo fmt\"", config, StringComparison.Ordinal);
 
             var loaded = RelayConfigLoader.Defaults("cargo test");
