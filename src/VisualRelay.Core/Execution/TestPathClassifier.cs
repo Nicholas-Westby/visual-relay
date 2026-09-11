@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
@@ -13,10 +15,27 @@ public static class TestPathClassifier
 
     private static readonly HashSet<string> ExactDirNames = new(StringComparer.OrdinalIgnoreCase)
     { "test", "tests", "spec", "specs", "t", "__tests__", "unittests",
-      "testdata", "test_suite", "testfixtures", "htesting" };
+      "testdata", "test_suite", "testfixtures", "htesting",
+      "e2e", "integration", "acceptance", "cypress", "playwright",
+      "fixtures", "__fixtures__", "__mocks__", "__snapshots__",
+      "molecule", "testbench", "step_definitions" };
 
     private static readonly HashSet<string> PascalTestExtensions = new(StringComparer.OrdinalIgnoreCase)
     { ".java", ".kt", ".cs", ".php", ".swift" };
+
+    /// <summary>Extensions that classify a file as a test regardless of its name.</summary>
+    private static readonly HashSet<string> AlwaysTestExtensions = new(StringComparer.OrdinalIgnoreCase)
+    { ".t", ".bats", ".feature", ".robot", ".plt", ".pf" };
+
+    /// <summary>
+    /// camelCase test source-set directories (Gradle/Android: <c>androidTest</c>,
+    /// <c>commonTest</c>, <c>jvmTest</c>, <c>integrationTest</c>…). Ordinal
+    /// (case-sensitive) by design: the capital <c>T</c> is the only thing telling
+    /// "commonTest" apart from an unrelated word that merely ends in the letters
+    /// "test", like "contest" or "latest".
+    /// </summary>
+    private static readonly Regex CamelCaseTestDirectory =
+        new("^[a-z][A-Za-z0-9]*Tests?$", RegexOptions.Compiled);
 
     /// <summary>
     /// Returns true when <paramref name="path"/> is test-related, either
@@ -77,18 +96,34 @@ public static class TestPathClassifier
         if (segment.EndsWith("-test", StringComparison.OrdinalIgnoreCase) ||
             segment.EndsWith("-tests", StringComparison.OrdinalIgnoreCase) ||
             segment.EndsWith("_test", StringComparison.OrdinalIgnoreCase) ||
-            segment.EndsWith("_tests", StringComparison.OrdinalIgnoreCase))
+            segment.EndsWith("_tests", StringComparison.OrdinalIgnoreCase) ||
+            segment.EndsWith(".tests", StringComparison.OrdinalIgnoreCase) ||
+            segment.EndsWith(".test", StringComparison.OrdinalIgnoreCase) ||
+            segment.EndsWith(".unittests", StringComparison.OrdinalIgnoreCase) ||
+            segment.EndsWith(".integrationtests", StringComparison.OrdinalIgnoreCase) ||
+            segment.EndsWith(".specs", StringComparison.OrdinalIgnoreCase))
             return true;
 
-        return false;
+        // camelCase source-set convention (Gradle/Android), Ordinal: see
+        // CamelCaseTestDirectory's doc comment for why case sensitivity matters.
+        return CamelCaseTestDirectory.IsMatch(segment);
     }
 
     private static bool IsTestFileName(string fileName)
     {
+        // Extensions that are always a test, regardless of the rest of the name.
+        var ext = Path.GetExtension(fileName);
+        if (AlwaysTestExtensions.Contains(ext))
+            return true;
+
         // Infix rules (on full filename including extension)
         if (fileName.Contains(".tests.", StringComparison.OrdinalIgnoreCase) ||
             fileName.Contains(".spec.", StringComparison.OrdinalIgnoreCase) ||
-            fileName.Contains(".test.", StringComparison.OrdinalIgnoreCase))
+            fileName.Contains(".test.", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Contains(".t.", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Contains(".tftest.", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Contains(".tofutest.", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Contains(".testclasses.", StringComparison.OrdinalIgnoreCase))
             return true;
 
         var stem = Path.GetFileNameWithoutExtension(fileName);
@@ -96,15 +131,22 @@ public static class TestPathClassifier
         // Suffix rules (on name without extension)
         if (stem.EndsWith("_test", StringComparison.OrdinalIgnoreCase) ||
             stem.EndsWith("-test", StringComparison.OrdinalIgnoreCase) ||
-            stem.EndsWith("_spec", StringComparison.OrdinalIgnoreCase))
+            stem.EndsWith("_tests", StringComparison.OrdinalIgnoreCase) ||
+            stem.EndsWith("-tests", StringComparison.OrdinalIgnoreCase) ||
+            stem.EndsWith("_spec", StringComparison.OrdinalIgnoreCase) ||
+            stem.EndsWith("-spec", StringComparison.OrdinalIgnoreCase) ||
+            stem.EndsWith("_specs", StringComparison.OrdinalIgnoreCase) ||
+            stem.EndsWith("-specs", StringComparison.OrdinalIgnoreCase) ||
+            stem.EndsWith("_suite", StringComparison.OrdinalIgnoreCase))
             return true;
 
-        // Prefix: test_ (on name without extension)
-        if (stem.StartsWith("test_", StringComparison.OrdinalIgnoreCase))
+        // Prefix rules (on name without extension)
+        if (stem.StartsWith("test_", StringComparison.OrdinalIgnoreCase) ||
+            stem.StartsWith("test-", StringComparison.OrdinalIgnoreCase) ||
+            stem.StartsWith("tst_", StringComparison.OrdinalIgnoreCase))
             return true;
 
         // PascalCase …Test / …Tests / …Spec — only for known xUnit/JUnit/PHPUnit/XCTest extensions
-        var ext = Path.GetExtension(fileName);
         if (PascalTestExtensions.Contains(ext) &&
             (stem.EndsWith("Test", StringComparison.OrdinalIgnoreCase) ||
              stem.EndsWith("Tests", StringComparison.OrdinalIgnoreCase) ||
