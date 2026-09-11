@@ -1,5 +1,6 @@
 using System.Text;
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Core.Execution;
 
@@ -18,14 +19,19 @@ namespace VisualRelay.Core.Execution;
 /// the agent until the test cap fired. VR owns this private file; per-repo or
 /// extra access is the separate <c>sandboxExtraAllowPaths</c> seam, so there is
 /// nothing of the user's to preserve here and overwrite-always is correct.</para>
+///
+/// <para>On Windows nono runs inside the WSL distro, so the profile is placed
+/// there (<see cref="WslProfilePlacement"/>): written from this side through the
+/// distro's UNC share, loaded by nono through its Linux path.</para>
 /// </summary>
 public static class NonoProfileEnsurer
 {
     /// <summary>Manifest name pinned via <c>LogicalName</c> in the csproj.</summary>
     private const string ResourceName = "VisualRelay.Core.vr-guard.json";
 
-    private const string DirName = "visual-relay";
-    private const string FileName = "vr-guard.json";
+    /// <summary>The profile's directory under the config root, on every platform.</summary>
+    internal const string DirName = "visual-relay";
+    internal const string FileName = "vr-guard.json";
 
     private static string? _cachedContent;
 
@@ -36,14 +42,19 @@ public static class NonoProfileEnsurer
     public static string EmbeddedContent => _cachedContent ??= ReadEmbedded();
 
     /// <summary>
-    /// Resolves the absolute path of VR's owned profile —
-    /// <c>$XDG_CONFIG_HOME/visual-relay/vr-guard.json</c> (default
-    /// <c>$HOME/.config/visual-relay/vr-guard.json</c>) — beside VR's <c>.env</c>,
-    /// reusing <see cref="XdgConfig"/>'s XDG/HOME resolution and its injectable
-    /// accessor. Throws when neither <c>XDG_CONFIG_HOME</c> nor <c>HOME</c> is set.
+    /// Resolves the absolute path nono loads the profile from. On macOS and Linux
+    /// that is VR's owned <c>$XDG_CONFIG_HOME/visual-relay/vr-guard.json</c>
+    /// (default <c>$HOME/.config/visual-relay/vr-guard.json</c>), beside VR's
+    /// <c>.env</c>, reusing <see cref="XdgConfig"/>'s XDG/HOME resolution and its
+    /// injectable accessor; throws when neither <c>XDG_CONFIG_HOME</c> nor
+    /// <c>HOME</c> is set. On Windows with a resolved WSL context it is the Linux
+    /// path of the copy placed inside the distro.
     /// </summary>
     public static string ResolveProfilePath(IEnvironmentAccessor? accessor = null)
     {
+        if (OperatingSystem.IsWindows() && WslContextResolver.TryGetCurrent() is { } context)
+            return WslProfilePlacement.For(context.Distro, context.DistroHome).LinuxPath;
+
         var configDir = XdgConfig.ResolveConfigDir(accessor);
         return Path.Combine(configDir, DirName, FileName);
     }
@@ -56,11 +67,21 @@ public static class NonoProfileEnsurer
     /// resolved absolute path on success. Throws an actionable
     /// <see cref="InvalidOperationException"/> when the path cannot be resolved or
     /// the write fails — the run must NOT proceed to a sandboxed stage with a
-    /// missing or stale profile.
+    /// missing or stale profile. On Windows the profile goes inside the WSL
+    /// distro instead (<see cref="EnsureInDistroAsync"/>) and the Linux path is returned.
     /// </summary>
     public static async Task<string> EnsureAsync(
         IEnvironmentAccessor? accessor = null, CancellationToken cancellationToken = default)
     {
+        if (OperatingSystem.IsWindows())
+        {
+            var context = WslContextResolver.TryGetCurrent() ?? throw new InvalidOperationException(
+                "The vr-guard sandbox profile is placed inside the WSL distro, but no usable WSL2 distro was "
+                + "resolved. Run `visual-relay launch`: its gate names what is missing (WSL, a WSL2 distro, nono "
+                + "inside it, Landlock).");
+            return await EnsureInDistroAsync(context, WriteThroughShareAsync, cancellationToken);
+        }
+
         string path;
         try
         {
@@ -79,9 +100,8 @@ public static class NonoProfileEnsurer
             var dir = Path.GetDirectoryName(path)!;
             var dirExisted = Directory.Exists(dir);
             if (!dirExisted)
-                Directory.CreateDirectory(dir);
-            if (!OperatingSystem.IsWindows() && !dirExisted)
             {
+                Directory.CreateDirectory(dir);
                 File.SetUnixFileMode(dir,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
@@ -107,6 +127,44 @@ public static class NonoProfileEnsurer
                 + "VR will not run a sandboxed stage with a missing or stale profile. "
                 + $"Check filesystem permissions on that path. ({ex.Message})", ex);
         }
+    }
+
+    /// <summary>
+    /// The Windows arm: writes the embedded profile through the distro's UNC share
+    /// (<see cref="WslProfilePlacement"/>) and returns the Linux path nono loads.
+    /// Overwrite-always, unconditionally: a share round trip just to compare bytes
+    /// is not worth the mtime it would save. The write is injected so the arm is
+    /// exercised without a share; the real writer is <see cref="WriteThroughShareAsync"/>.
+    /// </summary>
+    internal static async Task<string> EnsureInDistroAsync(
+        WslContext context, Func<string, string, CancellationToken, Task> write, CancellationToken cancellationToken)
+    {
+        var (writePath, linuxPath) = WslProfilePlacement.For(context.Distro, context.DistroHome);
+        try
+        {
+            await write(writePath, EmbeddedContent, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to write the vr-guard sandbox profile to '{writePath}' inside the WSL distro "
+                + $"'{context.Distro}'. VR will not run a sandboxed stage with a missing or stale profile. The "
+                + @"distro's files are reached through its \\wsl.localhost share, which exists only while "
+                + "[automount] enabled=true (the default) in the distro's /etc/wsl.conf; after changing it run "
+                + $"`wsl --shutdown` and start the distro again. ({ex.Message})", ex);
+        }
+
+        return linuxPath;
+    }
+
+    private static async Task WriteThroughShareAsync(string path, string content, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, content, cancellationToken);
     }
 
     private static string ReadEmbedded()
