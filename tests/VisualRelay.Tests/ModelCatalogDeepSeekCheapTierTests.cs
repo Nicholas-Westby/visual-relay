@@ -5,12 +5,13 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// The cheap tier runs DeepSeek V4.1 Flash, and the V4 Flash Vision Exp that
-/// used to lead it sits directly behind as the first fallback. All three V4
-/// names are served by V4.1 Flash upstream, so they share its rates and its peak
-/// schedule, and a hop between them costs nothing but the round trip. They are
-/// kept because a routed-away name can be withdrawn without notice. Images DO
-/// reach the model on the direct path, but the vision tier is still the one
-/// sized and priced for image work.
+/// used to lead it sits directly behind as the first fallback. The two V4 Flash
+/// names are served by V4.1 Flash upstream since 2026-09-10 and V4 Pro follows
+/// on 2026-09-14, so all three are priced at its rates on its peak schedule and
+/// a hop between them costs only the attempts it spends. They are kept because a
+/// routed-away name can be withdrawn without notice. Images DO reach the model
+/// on the direct path, but the vision tier is still the one sized and priced for
+/// image work.
 /// </summary>
 public sealed class ModelCatalogDeepSeekCheapTierTests
 {

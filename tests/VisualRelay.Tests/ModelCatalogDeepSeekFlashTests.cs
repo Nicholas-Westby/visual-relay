@@ -6,10 +6,11 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// DeepSeek V4.1 Flash leads the cheap and balanced tiers. It is a million-token
-/// model at a quarter of the old Flash input rate, and DeepSeek now serves the
-/// three V4 names from it, so every DeepSeek hop behind the head reaches the
-/// same weights. Those hops are kept because a retired name can be withdrawn at
-/// any time, and one failed round trip is cheaper than losing the tier.
+/// model at a quarter of the old Flash input rate. DeepSeek serves the two V4
+/// Flash names from it since 2026-09-10, and V4 Pro joins them on 2026-09-14, so
+/// the hops behind the head are converging on the same weights. Those hops are
+/// kept because a retired name can be withdrawn at any time, and two failed
+/// attempts are cheaper than losing the tier.
 /// </summary>
 public sealed class ModelCatalogDeepSeekFlashTests
 {

@@ -54,9 +54,14 @@ internal static class RelayPricing
             ["deepseek-v4-flash"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
             // deepseek-v4-pro → DeepSeek-V4-Pro-0813. DeepSeek serves it until
             // 2026-09-14 04:00 UTC and routes it to V4.1 Flash at the V4.1 price from
-            // then, which is what this row records. Until that date a hop that actually
-            // lands on V4-Pro is under-counted; it is the third DeepSeek fallback of a
-            // tier whose head is up, so it is reached rarely and only briefly.
+            // then, which is what this row records. Until that date a hop that really
+            // lands on V4-Pro is billed here at roughly a QUARTER of its true rate, and
+            // that hop is not remote: V4-Pro is the FIRST fallback on balanced, the tier
+            // six of the twelve stages run on, reached as soon as the head's two
+            // attempts fail. It is also the fourth frontier hop and the third cheap
+            // fallback. Under-counting for these few days is the deliberate lesser
+            // evil: recording rates that expire on 2026-09-14 would over-count every
+            // V4-Pro hop from then on, and those hops keep arriving.
             ["deepseek-v4-pro"] = new(0.15, 0.60, 0.003, 0.15) { Windows = DeepseekPeakWindows },
             // deepseek-v4-flash-vision-exp → DeepSeek-V4-Flash-Vision-Exp, likewise
             // retired 2026-09-10 and routed to V4.1 Flash, which is natively multimodal.

@@ -132,8 +132,9 @@ public sealed class RelayCostEstimatorMeasuredTests
 
         // Kimi is several times the price of Flash, so a fallback hop that used
         // to be invisible now moves the number. The comparison is against Kimi
-        // rather than a DeepSeek sibling because every DeepSeek name is now
-        // served by, and billed as, the same V4.1 Flash weights.
+        // rather than a DeepSeek sibling because every DeepSeek name is priced
+        // at the same V4.1 Flash rates: the two Flash ids are served by it since
+        // 2026-09-10 and V4 Pro is billed at its price from 2026-09-14.
         Assert.True(onKimi.CostUsd > onFlash.CostUsd,
             $"flash {onFlash.CostUsd} should be cheaper than kimi {onKimi.CostUsd}");
         Assert.Equal("cheap", onFlash.Model);
