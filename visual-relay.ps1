@@ -66,16 +66,14 @@ if (-not (Test-DotnetSdk10)) {
 
 
 # git - required; without it print the install one-liner and stop.
-$gitCmd = Get-Command git -ErrorAction SilentlyContinue
-if (-not $gitCmd) {
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     [Console]::Error.WriteLine('visual-relay: git was not found. Install it: winget install Git.Git')
     exit 1
 }
 
-# Put Git for Windows' bundled unix tools (ls, cat, grep, ...) on PATH so task
-# execution can resolve the agent's per-stage command whitelist.
-$gitUsrBin = Join-Path (Split-Path (Split-Path $gitCmd.Source) -Parent) 'usr\bin'
-if (Test-Path $gitUsrBin) { $env:PATH = "$gitUsrBin;$env:PATH" }
+# Nothing else is provisioned here: a task's commands run as nono inside a WSL2
+# distro, which this script cannot install. The C# gate probes for WSL, the distro,
+# nono and Landlock, and prints what is missing and how to fix it.
 
 $cli = Join-Path $ScriptDir 'tools\VisualRelay.Cli\VisualRelay.Cli.csproj'
 # Pass $rest (not @rest): for a native command PowerShell expands an array into

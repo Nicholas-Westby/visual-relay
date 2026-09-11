@@ -56,6 +56,14 @@ There used to be a `VR_AGENT` selector choosing between this and a third-party
 CLI subprocess behind a local model gateway. Both were removed on 2026-09-01, so
 the variable now selects nothing and is ignored.
 
+Every command a stage runs is sandboxed by `nono`. On Windows that means WSL2 is
+required, with nono installed inside the distro: the commands themselves run there,
+under the same `vr-guard` profile and the same Landlock enforcement Linux gets. Visual
+Relay on Windows therefore drives repositories whose toolchain lives in the distro —
+the workspace is opened through a `\\wsl.localhost\<distro>\...` path, and a
+Windows-only toolchain (MSBuild against .NET Framework, Visual Studio build tools,
+Unity, anything that needs an `.exe`) is not supported.
+
 ## Driving the running app (control API — PREFERRED over the CLI)
 
 When the desktop app is running it exposes a **loopback-only HTTP control API** so you

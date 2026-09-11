@@ -7,7 +7,7 @@ You create markdown files as specs, and Visual Relay implements them via the pip
 - Mistakes are avoided by enforcing a strict set of steps the LLM can't bypass (e.g., red/green TDD).
 - Costs are optimized by choosing an appropriate LLM model tier per stage (and by enforcing a budget).
 - It also gives you easy ways to observe each step via the activity panel.
-- All LLM interactions are sandboxed ([nono](https://nono.sh/) on macOS and [mxc](https://github.com/microsoft/mxc) on Windows) to avoid destructive file system changes.
+- All LLM interactions are sandboxed ([nono](https://nono.sh/) on macOS, Linux and Windows (inside WSL2)) to avoid destructive file system changes.
 
 ![Visual Relay main window](docs/images/visual-relay-main.png)
 
@@ -35,22 +35,54 @@ You can then run `./visual-relay` in that folder the next time you want to launc
 
 # Install (Windows)
 
-Clone the repo and run (nix doesn't run on Windows, so dependencies are installed globally):
+Visual Relay runs on Windows, but the sandbox every command runs in is Linux: `nono`
+enforcing the same profile through the WSL2 kernel, exactly as on macOS and Linux. So
+there are two halves to install — Visual Relay on Windows, and the sandbox inside a
+WSL2 distro.
 
-```powershell
-cd ~/repositories # or wherever you keep your repos
-git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
-cd visual-relay
-./visual-relay launch
-```
+1. Install WSL2 and a distro in an elevated PowerShell, then open it once so it
+   creates your Linux user:
+
+   ```powershell
+   wsl --install -d Ubuntu
+   wsl -d Ubuntu
+   ```
+
+2. Install nono 0.75.0 **inside the distro** (not on Windows), and make sure a login
+   shell finds it:
+
+   ```bash
+   curl -fsSL https://nono.sh/install.sh | sh
+   ```
+
+   The `.deb` from the [v0.75.0 release](https://github.com/nolabs-ai/nono/releases/tag/v0.75.0)
+   works too. Set `VR_WSL_DISTRO=<name>` if the distro you want is not the WSL default.
+
+3. Clone the repo and run (nix doesn't run on Windows, so dependencies are installed globally):
+
+   ```powershell
+   cd ~/repositories # or wherever you keep your repos
+   git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
+   cd visual-relay
+   ./visual-relay launch
+   ```
 
 `--depth 1` does a shallow clone (latest commit only) for a faster, smaller
 download; omit it to fetch the full history.
 
 You can then run `visual-relay` in that folder the next time you want to launch it.
 
-Note: the Windows sandbox (MXC) is not yet as robust as macOS's `nono` due to current MXC
-limitations; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+**Keep the repositories you work on inside the distro** and open them as
+`\\wsl.localhost\<distro>\home\<user>\...`. A `C:\` path is refused: the Windows drives
+WSL mounts under `/mnt` are roughly an order of magnitude slower for the many small
+files a build touches, and their permission model is not the one Landlock was designed
+against.
+
+**Your project's build and test commands run inside WSL**, so the toolchain they need
+has to be installed in the distro. A Windows-only toolchain — MSBuild against .NET
+Framework, Visual Studio build tools, Unity on Windows, anything that needs an `.exe` —
+is not supported. If anything is missing, the launch gate names it and how to fix it;
+see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 <!-- END install section -->
 

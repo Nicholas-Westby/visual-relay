@@ -36,10 +36,10 @@ Key resolution happens per stage: each tier's chain is filtered to the models wh
 ## Sandbox
 
 Every agent command runs under **nono** OS-level sandboxing by default (Seatbelt on macOS,
-Landlock on Linux). The sandbox confines writes and deletes to the target workspace while
-leaving reads, network, and all tools — including Playwright/Chromium — unrestricted. This is
-**accident containment**, not defense against a malicious agent: a stray `rm -rf` or `mv`
-outside the workspace is blocked by the OS.
+Landlock on Linux and, on Windows, Landlock inside a WSL2 distro). The sandbox confines writes
+and deletes to the target workspace while leaving reads, network, and all tools — including
+Playwright/Chromium — unrestricted. This is **accident containment**, not defense against a
+malicious agent: a stray `rm -rf` or `mv` outside the workspace is blocked by the OS.
 
 The sandbox is **always on** — there is no opt-out. Every agent command and every
 verification command runs under nono with the `vr-guard` profile, and `nono` is a hard,
@@ -67,6 +67,30 @@ For exotic toolchains whose cache paths the baseline profile does not cover, add
 Each entry is appended as `-a <path>` to both the agent and verification nono invocations.
 Entries are validated at config load: `..` (path traversal) is rejected; `~` and `$HOME`
 are expanded; and each path must resolve under `$HOME` or the workspace root.
+
+### Windows
+
+All three platforms run the **same profile through the same binary**. On Windows that binary
+lives inside a WSL2 distro: every command is started as `wsl.exe -d <distro> --exec …` and the
+distro's kernel enforces it, so the credential, browser-data and shell-history denials are
+enforced by the kernel here too — there is no "may be readable" caveat anywhere in the UI.
+The profile is placed inside the distro (`~/.config/visual-relay/vr-guard.json`, written
+through the `\\wsl.localhost` share) with the same overwrite-always behaviour.
+
+Landlock is active in the stock WSL2 kernel without any configuration: Microsoft's kernel
+config `arch/x86/configs/config-wsl` sets `CONFIG_SECURITY_LANDLOCK=y` and lists `landlock`
+first in `CONFIG_LSM` on the `linux-msft-wsl-5.15.y`,
+[`6.6`](https://raw.githubusercontent.com/microsoft/WSL2-Linux-Kernel/linux-msft-wsl-6.6.y/arch/x86/configs/config-wsl)
+and [`6.18`](https://raw.githubusercontent.com/microsoft/WSL2-Linux-Kernel/linux-msft-wsl-6.18.y/arch/x86/configs/config-wsl)
+branches, and the [WSL kernel release notes](https://learn.microsoft.com/en-us/windows/wsl/kernel-release-notes)
+record it as enabled since 5.15.57.1 (August 2022). The launch gate still checks it at
+runtime, because a custom `kernel=` in `.wslconfig` can take it away.
+
+Two consequences worth stating plainly: the workspace must live on the distro's own
+filesystem (a `/mnt/<letter>` workspace is refused), and the repository's build and test
+commands run inside the distro, so a Windows-only toolchain is not supported. See
+[TROUBLESHOOTING.md](../TROUBLESHOOTING.md) for the gate's messages and the runtime
+verification checklist.
 
 ## Author-test gating
 

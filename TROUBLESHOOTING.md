@@ -137,13 +137,21 @@ target's config shared with the repo; `.relay/.gitignore` keeps the rest out.
 
 ## Windows
 
+Windows runs the sandbox as `nono` inside a WSL2 distro: the same binary and the same
+`vr-guard` profile macOS and Linux use, enforced by the distro's kernel (Landlock).
+Visual Relay itself is still a Windows app; the commands it runs are Linux.
+
 **State locations.** Windows has no `XDG_DATA_HOME`/`HOME`, so Visual Relay falls back to the
 standard Windows folders (XDG/`HOME` still win when explicitly set):
 
 | What | Location |
 |------|----------|
-| UI state, settings (`.env`), sandbox policy | `%APPDATA%\visual-relay\` |
+| UI state, settings (`.env`) | `%APPDATA%\visual-relay\` |
 | Provisioned .NET SDK (when the launcher installs it) | `%LOCALAPPDATA%\visual-relay\dotnet\` |
+| Sandbox profile (`vr-guard.json`) | `~/.config/visual-relay/` **inside the distro**, written through `\\wsl.localhost\<distro>\...` |
+
+An `mxc-policy.json` beside the settings is left over from the deleted Windows sandbox.
+Nothing reads it any more — delete it.
 
 **`.\visual-relay` is blocked / "running scripts is disabled".** The PowerShell execution
 policy is blocking the launcher. The `.cmd` shim already passes `-ExecutionPolicy Bypass`, so
@@ -154,19 +162,105 @@ prefer `.\visual-relay launch` (which runs `visual-relay.cmd`). To run the `.ps1
 PATH for that session only (no global machine change). Re-run through `.\visual-relay`, or add
 `%LOCALAPPDATA%\visual-relay\dotnet` to your PATH for a standalone `dotnet`.
 
-**Task execution is blocked.** Windows confines writes with Microsoft Execution Containers
-(MXC); when `wxc-exec` is not provisioned, execution is blocked rather than run uncontained —
-there is no opt-out. Run `visual-relay provision-mxc` to download and install the pinned,
-Microsoft-signed `wxc-exec` runtime into `%LOCALAPPDATA%\visual-relay\mxc\` (a no-op if it is
-already present), or run execution inside WSL2 with `nono`. Inspection (queue, logs, traces,
-settings) works without any sandbox.
+**Task execution is blocked.** The launch gate checks four things — WSL, a WSL2 distro, nono
+inside it, Landlock active there — and names the first one that fails together with its fix.
+There is no opt-out and no unsandboxed fallback; inspection (queue, logs, traces, settings)
+works without any sandbox.
 
-Write-confinement is empirically verified against the real `wxc-exec` (a command writing
-outside the workspace is denied, inside is allowed). Where the BaseContainer/processcontainer
-backend is unavailable, MXC falls back to the **AppContainer + DACL** tier; for the fewest
-caveats run `wxc-host-prep prepare-system-drive` (elevated) once so AppContainer processes can
-read the system-drive root metadata. The confinement policy lists only writable roots that
-exist — a missing toolchain-cache dir is never sent to `wxc-exec` (it would fail to stamp it).
+| What the gate says | What to do |
+|--------------------|------------|
+| WSL is not installed (wsl.exe was not found) | `wsl --install -d Ubuntu` in an elevated PowerShell, reboot, then `wsl -d Ubuntu` once to create your Linux user |
+| no WSL distro is installed | the same, then re-run |
+| the WSL distro `<name>` selected by `VR_WSL_DISTRO` is not installed | install that one, or point `VR_WSL_DISTRO` at an installed distro (unset it to use the default) |
+| `<name>` is a WSL1 distro | `wsl --set-version <name> 2` |
+| nono was not found inside the WSL distro `<name>` | install nono 0.75.0 in the distro (see the README) and check `wsl -d <name> --exec sh -lc 'command -v nono'` |
+| Landlock is not active in the WSL distro `<name>` | remove a custom `kernel=` or `kernelCommandLine=` line from `%UserProfile%\.wslconfig`, then `wsl --update` and `wsl --shutdown`; stock kernels have enabled Landlock since 5.15.57.1 |
+| the home directory of the default user could not be read | run `wsl -d <name>` once so the distro finishes its first-run user setup |
+
+Every message ends with the same consequence: the build and test commands of the repository
+you point Visual Relay at run **inside that distro**, so their toolchain must be installed
+there, and a Windows-only toolchain (MSBuild against .NET Framework, Visual Studio build
+tools, Unity on Windows, anything that needs an `.exe`) is not supported.
+
+**Choosing the distro.** Visual Relay uses the WSL default distro. `VR_WSL_DISTRO=<name>`
+picks another one; unset it to go back to the default. `wsl -l -v` lists what is installed.
+
+**"The workspace … is a Windows drive seen through DrvFs".** A workspace under `/mnt/<letter>`
+(that is, any `C:\...` folder, including one picked through the folder dialog) is refused. DrvFs is roughly
+an order of magnitude slower for the many small files a build touches, and its permission
+model is not the one Landlock was designed against. Move the repository onto the distro's own
+filesystem (`/home/<user>/...`) and open it as `\\wsl.localhost\<distro>\home\<user>\...`.
+
+**Non-ASCII output looks like mojibake.** wsl.exe's own output (the distro listing, its error
+text) is UTF-16LE without a BOM unless `WSL_UTF8=1` is set. Visual Relay sets it — with
+`WSL_DISABLE_WARNINGS=1` — on every wsl.exe it launches, and decodes both streams as UTF-8.
+Reproducing a command by hand in PowerShell needs `$env:WSL_UTF8 = '1'` first, or what you get
+back will not parse.
+
+**"Failed to write the vr-guard sandbox profile … inside the WSL distro".** The profile is
+written through the distro's `\\wsl.localhost` share, which WSL only serves while `[automount]`
+`enabled = true` (the default) in the distro's `/etc/wsl.conf`. With automount and `mountFsTab`
+both off the Plan 9 server never starts and the share is unreachable. Re-enable it, then
+`wsl --shutdown` and start the distro again.
 
 **Git hooks.** `install-hooks` works on Windows through Git for Windows' bundled bash (the
-pre-commit hook is `#!/usr/bin/env bash`); a working `git` on PATH is required.
+pre-commit hook is `#!/usr/bin/env bash`); a working `git` on PATH is required. A hook
+installed into a workspace inside the distro is made executable through WSL, because files
+created from Windows over the share land without the execute bit.
+
+## Windows runtime verification checklist
+
+**These commands were not run by the change that introduced WSL support** — no Windows machine
+was available to it. Everything below is unverified and is what a person with Windows should
+run before trusting the Windows arm:
+
+- Landlock active at runtime in the WSL2 kernel
+- the DrvFs (`/mnt/c`) enforcement verdicts and the ext4-versus-DrvFs timings
+- the watchdog kill proof (the Linux process is gone, not just wsl.exe)
+- the exit-code and UTF-8 round trip through wsl.exe
+- the `-a <templates dir>` DrvFs grant
+- the folder-picker UNC round trip
+- the GUI end to end through the control API
+
+The Windows-gated tests in the suite cover the first four (`./visual-relay test Wsl` with
+`VR_RUN_NONO_INTEGRATION=1` on Windows; they skip everywhere else), and the manual
+`wsl-probe` GitHub Actions workflow runs them on a `windows-2025` runner. By hand, in
+PowerShell, with `$D = 'Ubuntu'`:
+
+```powershell
+$env:WSL_UTF8 = '1'
+wsl --version; wsl --status; wsl -l -v                       # WSL >= 2.x, distro VERSION 2
+wsl -d $D --exec uname -r                                     # …-microsoft-standard-WSL2
+wsl -d $D --exec cat /sys/kernel/security/lsm                 # contains "landlock"
+wsl -d $D --exec sh -c 'dmesg 2>/dev/null | grep -i landlock || journalctl -kb -g landlock'
+# nono 0.75.0 inside the distro
+wsl -d $D --exec sh -c 'wget -q https://github.com/nolabs-ai/nono/releases/download/v0.75.0/nono-cli_0.75.0_amd64.deb && sudo dpkg -i nono-cli_0.75.0_amd64.deb'
+wsl -d $D --exec sh -lc 'command -v nono && nono --version && nono setup --check-only'
+# profile + confinement probe on ext4, then on DrvFs
+wsl -d $D --exec sh -lc 'mkdir -p ~/.config/visual-relay && cp /mnt/c/path/to/visual-relay/packaging/nono/vr-guard.json ~/.config/visual-relay/'
+wsl -d $D --exec sh -lc 'W=$(mktemp -d ~/vr-probe.XXXX); cd $W; git init -q; P=~/.config/visual-relay/vr-guard.json;
+  nono run --profile $P --allow-cwd --silent -- sh -c "echo ok > in.txt && rm in.txt && git status --short && echo WS_OK";
+  nono run --profile $P --allow-cwd --silent -- sh -c "touch ~/Documents/vr-probe && echo DOC_WRITE_ALLOWED || echo DOC_WRITE_DENIED";
+  nono run --profile $P --allow-cwd --silent -- sh -c "cat ~/.ssh/id_* >/dev/null 2>&1 && echo SSH_READ_ALLOWED || echo SSH_READ_DENIED";
+  nono run --profile $P --allow-cwd --silent -- sh -c "ls /usr/bin >/dev/null && echo USRBIN_OK";
+  nono run --profile $P --allow-cwd --silent -- sh -c "curl -sI https://api.github.com >/dev/null && echo NET_OK";
+  nono run --profile $P --allow-cwd --silent -- sh -c "mkdir -p ~/.npm && echo x > ~/.npm/vr-probe && echo CACHE_OK"'
+# repeat the block with W under /mnt/c/vr-probe (DrvFs); record each verdict and `time` for `git status` on a real repo in both places
+# exit code + UTF-8 through wsl.exe (from PowerShell)
+wsl -d $D --exec sh -c 'exit 42'; $LASTEXITCODE                # 42
+wsl -d $D --exec printf 'h\xc3\xa9llo\n' | Format-Hex           # UTF-8 bytes intact
+# argv fidelity
+wsl -d $D --exec printf '[%s]\n' 'a b' 'c"d' "e'f" 'g\h' '$i' '`j`' 'ü'   # one line per arg, verbatim
+# kill proof (envelope shape VR uses)
+wsl -d $D --exec /bin/sh -c 'p=$1; shift; setsid "$@" & c=$!; echo $c > $p; wait $c' vr /tmp/vr.pid sleep 3600
+# in a second shell:
+$pid = (wsl -d $D --exec cat /tmp/vr.pid); wsl -d $D --exec kill -TERM -- -$pid; wsl -d $D --exec ps -p $pid   # must fail
+# CPU sampling shape
+wsl -d $D --exec ps -axo pid=,ppid=,time=
+# securityfs / tools presence for the gate
+wsl -d $D --exec sh -c 'command -v setsid ps cat && mount | grep securityfs'
+# then: ./visual-relay launch, pick \\wsl.localhost\Ubuntu\home\<u>\repo, run a task via the control API (127.0.0.1:8765)
+```
+
+Record the Landlock line, the kernel release, the nono version, the eight verdicts on ext4 and
+on DrvFs, the `git status` wall time on both, the kill proof, the exit code and the hex bytes.
