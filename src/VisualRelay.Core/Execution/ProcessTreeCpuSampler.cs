@@ -49,7 +49,12 @@ internal static class ProcessTreeCpuSampler
         return ps.ExitCode == 0 ? SumTreeCpuMs(rootPid, stdout) : null;
     }
 
-    private static long SumTreeCpuMs(int rootPid, string psOutput)
+    /// <summary>
+    /// Sums the tree of <paramref name="rootPid"/> from the text of a headerless
+    /// <c>ps -axo pid=,ppid=,time=</c>, whether captured from the host or from a
+    /// Linux distro through wsl.exe (the WSL tree control feeds it the latter).
+    /// </summary>
+    internal static long SumTreeCpuMs(int rootPid, string psOutput)
     {
         var childrenByParent = new Dictionary<int, List<int>>();
         var cpuByPid = new Dictionary<int, long>();

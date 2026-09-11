@@ -7,10 +7,6 @@ namespace VisualRelay.Core.Execution;
 
 internal static partial class ProcessCapture
 {
-    // CPU delta per sample window that counts as real work rather than
-    // scheduler dust from an idle-blocked process.
-    private const long CpuPulseEpsilonMs = 50;
-
     // Bound the post-exit stdout/stderr drain so a fully detached pipe-holder
     // can never wedge the run to the timeout cap (see the reap-then-drain in RunAsync).
     private const int DrainGraceMs = 4000;
@@ -53,10 +49,11 @@ internal static partial class ProcessCapture
         bool reapProcessTree = true,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
-        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
+        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null,
+        IProcessTreeControl? treeControl = null)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments);
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, reapProcessTree, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, reapProcessTree, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider, treeControl);
     }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -72,7 +69,8 @@ internal static partial class ProcessCapture
         bool reapProcessTree = true,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
-        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
+        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null,
+        IProcessTreeControl? treeControl = null)
     {
         var startInfo = new ProcessStartInfo(fileName);
         foreach (var argument in arguments)
@@ -80,7 +78,7 @@ internal static partial class ProcessCapture
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, reapProcessTree, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, reapProcessTree, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider, treeControl);
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -95,7 +93,8 @@ internal static partial class ProcessCapture
         bool reapProcessTree = true,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
-        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
+        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null,
+        IProcessTreeControl? treeControl = null)
     {
         var tp = timeProvider ?? TimeProvider.System;
         using var process = new Process();
@@ -103,6 +102,11 @@ internal static partial class ProcessCapture
         process.StartInfo.WorkingDirectory = workingDirectory;
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
+        // Always decode the child's streams as UTF-8. On Windows the default is the
+        // console code page, which mangles the non-ASCII bytes a Linux tool (behind
+        // wsl.exe) or any modern toolchain writes; on Unix UTF-8 is the default already.
+        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
         process.StartInfo.UseShellExecute = false;
         if (envRemove is not null)
         {
@@ -149,8 +153,13 @@ internal static partial class ProcessCapture
         process.BeginErrorReadLine();
 
         using var cpuCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // The tree behind wsl.exe is invisible to the host: sample it (and later
+        // stop it) through the injected strategy; otherwise use the host's own view.
+        Func<CancellationToken, Task<long?>> sampler = treeControl is not null
+            ? treeControl.SampleCpuMsAsync
+            : HostTreeSampler(process.Id);
         var cpuTask = cpuSampleIntervalMs > 0 && onActivity is not null
-            ? SampleTreeCpuLoopAsync(process.Id, cpuSampleIntervalMs, onActivity, onWedgeSample, socketProbe, tp, cpuCts.Token)
+            ? SampleTreeCpuLoopAsync(sampler, cpuSampleIntervalMs, onActivity, onWedgeSample, socketProbe, tp, cpuCts.Token)
             : Task.CompletedTask;
 
         try
@@ -159,7 +168,7 @@ internal static partial class ProcessCapture
             // callback has returned; GracefulStopThenKillAsync guards the disposed
             // process via SafeHasExited.
             await using var killRegistration = killToken.CanBeCanceled
-                ? killToken.Register(() => { _ = GracefulStopThenKillAsync(process, stageGroupId, tp); })
+                ? killToken.Register(() => { _ = GracefulStopThenKillAsync(process, stageGroupId, tp, treeControl); })
                 : default;
 
             // Propagate cancellation, mirroring the old WaitForExitAsync(cancellationToken).
@@ -167,7 +176,7 @@ internal static partial class ProcessCapture
 
             if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, tp, cancellationToken)) != exitedTcs.Task)
             {
-                await GracefulStopThenKillAsync(process, stageGroupId, tp);
+                await GracefulStopThenKillAsync(process, stageGroupId, tp, treeControl);
                 lock (outputLock) { return (-1, output.ToString(), true); }
             }
 
@@ -188,84 +197,6 @@ internal static partial class ProcessCapture
             cpuCts.Cancel();
             try { await cpuTask; } catch { /* sampler never propagates */ }
         }
-    }
-
-    /// <summary>
-    /// Single decision point for whether a CPU sample merits a liveness pulse.
-    /// Exposed as internal static so regression tests can exercise the exact
-    /// production algorithm rather than an inlined copy.
-    /// </summary>
-    internal static (bool Pulse, long? NewBaseline) TryDecideCpuPulse(
-        long? baseline, long sampleMs, long epsilonMs)
-    {
-        if (baseline is not null && sampleMs - baseline.Value >= epsilonMs)
-            return (true, sampleMs);
-        return (false, sampleMs);
-    }
-
-    /// <summary>
-    /// Pulses onActivity("cpu") whenever the process tree accrues CPU between
-    /// samples — the one activity signal the target repo's filesystem cannot
-    /// freeze. Sampling failures (null return) invalidate the baseline so
-    /// accumulated CPU during a failure gap can never cross the epsilon and
-    /// emit a spurious pulse. The next successful sample silently
-    /// re-establishes the baseline without signalling.
-    ///
-    /// On every successful sample it ALSO reports a <see cref="ActivityWatchdog.WedgeSample"/>
-    /// (agent-subtree-idle ⇔ this window's CPU delta was sub-epsilon, plus the
-    /// backend-socket-established verdict from <paramref name="socketProbe"/>) so the
-    /// watchdog's additive socket-wedge detector reads a fresh, pid-scoped verdict.
-    /// </summary>
-    private static async Task SampleTreeCpuLoopAsync(
-        int rootPid, int intervalMs, Action<string> onActivity,
-        Action<ActivityWatchdog.WedgeSample>? onWedgeSample, Func<bool>? socketProbe, TimeProvider tp, CancellationToken ct)
-    {
-        // A process starts with zero accrued CPU, so 0 is a correct first
-        // baseline — the first sample can already pulse. (A null-seeded
-        // baseline would silently push the earliest pulse to 2× interval,
-        // losing the race against small inactivity windows.)
-        long? baseline = 0;
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(intervalMs), tp, ct);
-                var sample = ProcessTreeCpuSampler.TrySampleTreeCpuMs(rootPid);
-                if (sample is null)
-                {
-                    baseline = null;
-                    continue;
-                }
-                var (pulse, newBaseline) = TryDecideCpuPulse(baseline, sample.Value, CpuPulseEpsilonMs);
-                if (pulse)
-                    onActivity("cpu");
-
-                // Report the wedge verdict: subtree idle ⇔ this window did NOT
-                // cross the CPU epsilon. Gated by socketProbe presence so the
-                // detector stays inert (no sample emitted) unless wired up.
-                if (onWedgeSample is not null && socketProbe is not null)
-                    onWedgeSample(new ActivityWatchdog.WedgeSample(
-                        SubtreeIdle: !pulse, BackendSocketEstablished: SafeSocketProbe(socketProbe)));
-
-                baseline = newBaseline;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // normal shutdown
-        }
-        catch
-        {
-            // sampling must never break the capture
-        }
-    }
-
-    // The socket probe is best-effort: any failure means "no wedge evidence",
-    // never a kill — swallow and report false.
-    private static bool SafeSocketProbe(Func<bool> socketProbe)
-    {
-        try { return socketProbe(); }
-        catch { return false; }
     }
 
     // ── Process-group helpers (POSIX only) ─────────────────────────
