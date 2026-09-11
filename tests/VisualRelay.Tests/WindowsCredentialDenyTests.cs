@@ -4,11 +4,11 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Windows credential-denial behaviour. The generated MXC policy must carry the
-/// credential set under <c>filesystem.deniedPaths</c> (a pure function, asserted
-/// on any OS), and the Windows inspector result must surface those denials with a
-/// Windows-only "may not be enforced" caveat — a caveat the macOS/Linux (nono)
-/// result must NOT carry, since nono genuinely enforces the denials.
+/// Windows credential-denial behaviour of the MXC policy: the generated policy
+/// must carry the credential set under <c>filesystem.deniedPaths</c> (a pure
+/// function, asserted on any OS). The inspector no longer has a Windows arm or a
+/// "may be readable" caveat: on Windows it asks nono inside the WSL distro, where
+/// the denials are enforced, so those tests left with it.
 /// </summary>
 public sealed class WindowsCredentialDenyTests
 {
@@ -91,87 +91,5 @@ public sealed class WindowsCredentialDenyTests
         Assert.Contains(@"%LOCALAPPDATA%\Microsoft\Credentials", dirs);
         Assert.Contains(dirs, p => p.Contains(@"Chrome\User Data"));
         Assert.Contains(dirs, p => p.Contains(@"Edge\User Data"));
-    }
-
-    // ── Windows caveat surfacing + scoping ───────────────────────────────
-
-    [Fact]
-    public void BuildWindowsResult_SurfacesDeniedPathsInBlocked()
-    {
-        var result = SandboxPathInspector.BuildWindowsResult(@"C:\repo", null);
-
-        // Every credential deny dir shows up as a Blocked entry in the panel.
-        foreach (var dir in MxcPolicyGenerator.WindowsCredentialDenyDirs())
-            Assert.Contains(result.BlockedPaths, e => e.Raw == dir);
-    }
-
-    [Fact]
-    public void BuildWindowsResult_CaveatTracksEnforcementFlag()
-    {
-        var result = SandboxPathInspector.BuildWindowsResult(@"C:\repo", null);
-        // Read the const into a local so flipping it stays a one-line production
-        // change that keeps this test green (no unreachable-branch warning).
-        var enforced = SandboxPathInspector.WindowsDeniedPathsEnforced;
-
-        if (enforced)
-        {
-            // Once MXC enforces deniedPaths, the caveat must disappear entirely.
-            Assert.Null(result.WindowsCredentialCaveat);
-            Assert.Null(result.WindowsCredentialCaveatUrl);
-            return;
-        }
-
-        // Default (not yet enforced): honest, conservative wording — not a guarantee.
-        Assert.False(string.IsNullOrWhiteSpace(result.WindowsCredentialCaveat));
-        Assert.Contains("denied", result.WindowsCredentialCaveat!, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("readable", result.WindowsCredentialCaveat!, StringComparison.OrdinalIgnoreCase);
-
-        // A real, absolute https tracking link to the MXC filesystem-policy work.
-        Assert.True(Uri.TryCreate(result.WindowsCredentialCaveatUrl, UriKind.Absolute, out var uri));
-        Assert.Equal(Uri.UriSchemeHttps, uri!.Scheme);
-        Assert.Contains("github.com/microsoft/mxc", result.WindowsCredentialCaveatUrl!);
-    }
-
-    [Fact]
-    public void NonoResult_CarriesNoCaveat()
-    {
-        // The macOS/Linux (nono) builder output must never carry the Windows caveat:
-        // nono enforces deny_credentials, so a "not enforced" note would misinform.
-        var nono = SandboxPathInspector.BuildResult(
-        [
-            new("/", "/", SandboxAccess.ReadOnly, "vr-guard"),
-            new("$HOME/.ssh", "/home/u/.ssh", SandboxAccess.Blocked, "deny_credentials"),
-        ]);
-
-        Assert.Null(nono.WindowsCredentialCaveat);
-        Assert.Null(nono.WindowsCredentialCaveatUrl);
-    }
-
-    // ── Platform-aware reads/writes summary ──────────────────────────────
-
-    [Fact]
-    public void BuildWindowsResult_ReadsSummarySaysReadsUnrestricted()
-    {
-        var result = SandboxPathInspector.BuildWindowsResult(@"C:\repo", null);
-
-        Assert.False(string.IsNullOrWhiteSpace(result.ReadsSummary));
-        // Windows reads are not restricted, so the summary must NOT repeat the nono
-        // "except the blocked paths" phrasing that would misdescribe MXC.
-        Assert.Contains("not restricted", result.ReadsSummary!, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("except the blocked", result.ReadsSummary!, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void NonoResult_ReadsSummaryKeepsBlockedPathsException()
-    {
-        var nono = SandboxPathInspector.BuildResult(
-            [new SandboxPathEntry("/", "/", SandboxAccess.ReadOnly, "vr-guard")]);
-
-        Assert.False(string.IsNullOrWhiteSpace(nono.ReadsSummary));
-        // macOS/Linux genuinely block the deny paths, so the summary keeps the
-        // "except the blocked paths" wording — distinct from the Windows text.
-        Assert.Contains("except the blocked paths", nono.ReadsSummary!, StringComparison.OrdinalIgnoreCase);
-        Assert.NotEqual(
-            SandboxPathInspector.BuildWindowsResult("/ws", null).ReadsSummary, nono.ReadsSummary);
     }
 }

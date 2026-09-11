@@ -16,7 +16,7 @@ public sealed partial class SandboxPathInspectorTests
         var groupJson = SampleAllowGroupJson();
         const string groupName = "test_runtime";
 
-        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName, SandboxPlatform.Linux, Home);
 
         // allow.read → ReadOnly
         var readable = entries.Where(e => e.Access == SandboxAccess.ReadOnly).ToList();
@@ -40,7 +40,7 @@ public sealed partial class SandboxPathInspectorTests
         var groupJson = SampleDenyGroupJson();
         const string groupName = "deny_test";
 
-        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName, SandboxPlatform.Linux, Home);
 
         // deny.commands entries (e.g. "curl", "wget") must NOT appear in any bucket.
         Assert.DoesNotContain(entries, e => e.Raw == "curl");
@@ -55,43 +55,12 @@ public sealed partial class SandboxPathInspectorTests
     }
 
     [Fact]
-    public void ParseGroupJson_FiltersByPlatform()
-    {
-        var json = SampleCrossPlatformGroupJson();
-        const string groupName = "cross_plat";
-
-        var entries = SandboxPathInspector.ParseGroupJson(json, groupName);
-
-        // "cross-platform" entries are always included.
-        Assert.Contains(entries, e => e.Raw == "/usr/share/common"
-                                      && e.Access == SandboxAccess.ReadOnly);
-
-        // Platform-specific entries:
-        if (OperatingSystem.IsMacOS())
-        {
-            Assert.Contains(entries, e => e.Raw == "/mac/specific/path");
-            Assert.DoesNotContain(entries, e => e.Raw == "/linux/specific/path");
-        }
-        else if (OperatingSystem.IsLinux())
-        {
-            Assert.Contains(entries, e => e.Raw == "/linux/specific/path");
-            Assert.DoesNotContain(entries, e => e.Raw == "/mac/specific/path");
-        }
-        // On Windows, neither platform-specific entry should appear (only cross-platform).
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.DoesNotContain(entries, e => e.Raw == "/mac/specific/path");
-            Assert.DoesNotContain(entries, e => e.Raw == "/linux/specific/path");
-        }
-    }
-
-    [Fact]
     public void ParseGroupJson_ExpandedFieldIsPreserved()
     {
         var groupJson = SampleAllowGroupJson();
         const string groupName = "test_runtime";
 
-        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName, SandboxPlatform.Linux, Home);
 
         var writable = entries.First(e => e.Raw == "/tmp/runtime-cache");
         Assert.Equal("/private/tmp/runtime-cache", writable.Expanded);
@@ -122,13 +91,13 @@ public sealed partial class SandboxPathInspectorTests
         var json = SampleAllowGroupJson();
 
         // The base JSON contains "/usr/local/bin" but not "/opt/new-tool/bin".
-        var baseEntries = SandboxPathInspector.ParseGroupJson(json, "runtime");
+        var baseEntries = SandboxPathInspector.ParseGroupJson(json, "runtime", SandboxPlatform.Linux, Home);
         Assert.Contains(baseEntries, e => e.Raw == "/usr/local/bin");
         Assert.DoesNotContain(baseEntries, e => e.Raw == "/opt/new-tool/bin");
 
         // Patch in the new path as an allow.read entry.
         var patched = PatchGroupAllowRead(json, "/opt/new-tool/bin", "/opt/new-tool/bin");
-        var patchedEntries = SandboxPathInspector.ParseGroupJson(patched, "runtime");
+        var patchedEntries = SandboxPathInspector.ParseGroupJson(patched, "runtime", SandboxPlatform.Linux, Home);
 
         Assert.Contains(patchedEntries,
             e => e.Raw == "/opt/new-tool/bin"

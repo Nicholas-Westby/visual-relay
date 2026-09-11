@@ -17,7 +17,7 @@ public sealed partial class SandboxPathInspectorTests
     {
         // `nono profile show` exited 0 but printed non-JSON (e.g. a banner / usage).
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
-            "not json at all {{{", _ => Task.FromResult<string?>(null));
+            "not json at all {{{", _ => Task.FromResult<string?>(null), SandboxPlatform.Linux, Home);
 
         Assert.Null(entries);
     }
@@ -29,7 +29,7 @@ public sealed partial class SandboxPathInspectorTests
 
         // A group query exits 0 but returns garbage — must degrade, not throw.
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
-            show, _ => Task.FromResult<string?>("<<< not json >>>"));
+            show, _ => Task.FromResult<string?>("<<< not json >>>"), SandboxPlatform.Linux, Home);
 
         Assert.Null(entries);
     }
@@ -41,7 +41,7 @@ public sealed partial class SandboxPathInspectorTests
         var show = """{ "groups": { "include": "oops" } }""";
 
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
-            show, _ => Task.FromResult<string?>(null));
+            show, _ => Task.FromResult<string?>(null), SandboxPlatform.Linux, Home);
 
         Assert.Null(entries);
     }
@@ -70,7 +70,7 @@ public sealed partial class SandboxPathInspectorTests
         var groupJson =
             """{ "name":"g", "deny": { "access": [ {"raw":null,"expanded":null}, {"raw":"~/.ssh"} ] } }""";
 
-        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g");
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g", SandboxPlatform.Linux, Home);
 
         Assert.DoesNotContain(entries, e => string.IsNullOrEmpty(e.Raw));
         Assert.Contains(entries, e => e.Raw == "~/.ssh");
@@ -84,7 +84,7 @@ public sealed partial class SandboxPathInspectorTests
         var groupJson =
             """{ "name":"g", "allow": { "read": [ {"raw":null,"expanded":null}, {"raw":"/usr/bin"} ] } }""";
 
-        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g");
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g", SandboxPlatform.Linux, Home);
 
         Assert.DoesNotContain(entries, e => string.IsNullOrEmpty(e.Raw));
         Assert.Contains(entries, e => e is { Raw: "/usr/bin", Access: SandboxAccess.ReadOnly });
@@ -98,7 +98,7 @@ public sealed partial class SandboxPathInspectorTests
         // form, so both show a concrete path rather than the un-expanded raw token.
         var groupJson = """{ "name":"g", "deny": { "access": [ "~/.ssh" ] } }""";
 
-        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g");
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g", SandboxPlatform.Linux, Home);
 
         var ssh = Assert.Single(entries, e => e.Raw == "~/.ssh");
         Assert.Equal(SandboxAccess.Blocked, ssh.Access);
@@ -115,7 +115,7 @@ public sealed partial class SandboxPathInspectorTests
         var groupJson =
             """{ "allow": { "read": [ {"raw":"/x","expanded":"/x","platform":"future-os"} ] } }""";
 
-        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g");
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g", SandboxPlatform.Linux, Home);
 
         Assert.Contains(entries, e => e.Raw == "/x" && e.Access == SandboxAccess.ReadOnly);
     }
@@ -127,7 +127,7 @@ public sealed partial class SandboxPathInspectorTests
 
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
             show, _ => Task.FromResult<string?>(
-                """{ "name":"odd", "platform":"future-os", "deny": { "access": [ {"raw":"~/.odd"} ] } }"""));
+                """{ "name":"odd", "platform":"future-os", "deny": { "access": [ {"raw":"~/.odd"} ] } }"""), SandboxPlatform.Linux, Home);
 
         Assert.NotNull(entries);
         Assert.Contains(entries!, e => e.Raw == "~/.odd" && e.Access == SandboxAccess.Blocked);

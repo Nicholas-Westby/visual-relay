@@ -37,7 +37,7 @@ public sealed partial class SandboxPathInspectorTests
         var showJson = SampleResolvedShowJson();
 
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
-            showJson, GroupPayloadProvider);
+            showJson, GroupPayloadProvider, SandboxPlatform.Linux, Home);
 
         Assert.NotNull(entries);
         // ~/.ssh (from deny_credentials) MUST appear as Blocked, attributed to its group.
@@ -58,7 +58,7 @@ public sealed partial class SandboxPathInspectorTests
         var showJson = SampleResolvedShowJson();
 
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
-            showJson, GroupPayloadProvider);
+            showJson, GroupPayloadProvider, SandboxPlatform.Linux, Home);
 
         Assert.NotNull(entries);
         // git_config exposes ~/.gitconfig as a read grant.
@@ -70,36 +70,6 @@ public sealed partial class SandboxPathInspectorTests
                                        && e.Access == SandboxAccess.ReadWrite);
     }
 
-    // ── Per-group platform filter (deny_keychains_macos vs _linux) ───────
-    [Fact]
-    public async Task ExpandInheritedGroupsAsync_HonorsPerGroupPlatformFilter()
-    {
-        var showJson = SampleResolvedShowJson();
-
-        var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
-            showJson, GroupPayloadProvider);
-
-        Assert.NotNull(entries);
-        if (OperatingSystem.IsMacOS())
-        {
-            Assert.Contains(entries!, e => e.Source == "deny_keychains_macos"
-                                           && e.Raw == "~/Library/Keychains");
-            Assert.DoesNotContain(entries!, e => e.Source == "deny_keychains_linux");
-        }
-        else if (OperatingSystem.IsLinux())
-        {
-            Assert.Contains(entries!, e => e.Source == "deny_keychains_linux"
-                                           && e.Raw == "~/.local/share/keyrings");
-            Assert.DoesNotContain(entries!, e => e.Source == "deny_keychains_macos");
-        }
-        else
-        {
-            // On any other OS neither platform-specific group contributes.
-            Assert.DoesNotContain(entries!, e => e.Source == "deny_keychains_macos");
-            Assert.DoesNotContain(entries!, e => e.Source == "deny_keychains_linux");
-        }
-    }
-
     // ── Graceful degradation: a failed group call → null (→ Unavailable) ──
     [Fact]
     public async Task ExpandInheritedGroupsAsync_ReturnsNullWhenAnyGroupFails()
@@ -109,7 +79,7 @@ public sealed partial class SandboxPathInspectorTests
         // Provider signals failure (null) for every group, mimicking a nono call
         // that exits non-zero — the inspector must degrade, not throw.
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
-            showJson, _ => Task.FromResult<string?>(null));
+            showJson, _ => Task.FromResult<string?>(null), SandboxPlatform.Linux, Home);
 
         Assert.Null(entries);
     }
@@ -122,35 +92,12 @@ public sealed partial class SandboxPathInspectorTests
         // objects {"raw":…,"expanded":…}, not bare strings. The parser must classify
         // them as Blocked and keep the expanded path.
         var entries = SandboxPathInspector.ParseGroupJson(
-            SampleDenyCredentialsGroupJson(), "deny_credentials");
+            SampleDenyCredentialsGroupJson(), "deny_credentials", SandboxPlatform.Linux, Home);
 
         var ssh = Assert.Single(entries, e => e.Raw == "~/.ssh");
         Assert.Equal(SandboxAccess.Blocked, ssh.Access);
         Assert.Equal("deny_credentials", ssh.Source);
         Assert.EndsWith("/.ssh", ssh.Expanded);
-    }
-
-    // ── Windows: honest read model (no phantom read-exceptions) ───────────
-    [Fact]
-    public void BuildWindowsResult_ReadableIsBroadWithNoClaimedExceptions()
-    {
-        var result = SandboxPathInspector.BuildWindowsResult("/ws", null);
-
-        Assert.True(result.IsAvailable);
-        // The Readable row must NOT imply macOS-style read-exceptions.
-        foreach (var e in result.ReadablePaths)
-        {
-            Assert.DoesNotContain("except", e.Raw, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("blocked", e.Raw, StringComparison.OrdinalIgnoreCase);
-        }
-        // It must say reads are unrestricted.
-        Assert.Contains(result.ReadablePaths,
-            e => e.Raw.Contains("not restricted", StringComparison.OrdinalIgnoreCase));
-        // Blocked conveys WRITE confinement only (correct for MXC).
-        Assert.Contains(result.BlockedPaths,
-            e => e.Raw.Contains("writes", StringComparison.OrdinalIgnoreCase));
-        // The workspace remains a writable grant.
-        Assert.Contains(result.WritablePaths, e => e.Raw == "/ws");
     }
 
     // ── Derived, not hardcoded (resolved-chain variant) ──────────────────
@@ -167,7 +114,7 @@ public sealed partial class SandboxPathInspectorTests
             showJson,
             name => Task.FromResult(name == "acme_denies"
                 ? """{ "name":"acme_denies", "platform":"cross-platform", "deny": { "access": [ {"raw":"~/.acme-secret","expanded":"/home/x/.acme-secret"} ] } }"""
-                : null));
+                : null), SandboxPlatform.Linux, Home);
 
         Assert.NotNull(entries);
         Assert.Contains(entries!, e => e.Raw == "~/.acme-secret"

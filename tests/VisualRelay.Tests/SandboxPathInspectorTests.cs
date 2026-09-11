@@ -14,7 +14,7 @@ public sealed partial class SandboxPathInspectorTests
     {
         var json = SampleVrGuardJson();
 
-        var entries = SandboxPathInspector.ParseOwnDirectives(json);
+        var entries = SandboxPathInspector.ParseOwnDirectives(json, SandboxPlatform.Linux, Home);
 
         // vr-guard's own allow entries → ReadWrite
         var writable = entries.Where(e => e.Access == SandboxAccess.ReadWrite).ToList();
@@ -36,41 +36,11 @@ public sealed partial class SandboxPathInspectorTests
     }
 
     [Fact]
-    public void ParseOwnDirectives_FiltersByOsWhenPredicate()
-    {
-        var json = SampleVrGuardJson();
-
-        var entries = SandboxPathInspector.ParseOwnDirectives(json);
-
-        // "when":"macos" entry should be included on macOS, excluded on Linux.
-        if (OperatingSystem.IsMacOS())
-        {
-            Assert.Contains(entries, e => e.Raw == "~/Library/Caches/NuGet"
-                                          && e.Access == SandboxAccess.ReadWrite);
-            Assert.DoesNotContain(entries, e => e.Raw == "$XDG_CACHE_HOME/NuGet");
-        }
-
-        // "when":"linux" entry should be excluded on macOS, included on Linux.
-        if (OperatingSystem.IsLinux())
-        {
-            Assert.Contains(entries, e => e.Raw == "$XDG_CACHE_HOME/NuGet"
-                                          && e.Access == SandboxAccess.ReadWrite);
-            Assert.DoesNotContain(entries, e => e.Raw == "~/Library/Caches/NuGet");
-        }
-
-        // Entries WITHOUT a "when" predicate are always included on any OS.
-        Assert.Contains(entries, e => e.Raw == "~/.npm"
-                                      && e.Access == SandboxAccess.ReadWrite);
-        Assert.Contains(entries, e => e.Raw == "~/.bun"
-                                      && e.Access == SandboxAccess.ReadWrite);
-    }
-
-    [Fact]
     public void ParseOwnDirectives_AllSourceIsVrGuard()
     {
         var json = SampleVrGuardJson();
 
-        var entries = SandboxPathInspector.ParseOwnDirectives(json);
+        var entries = SandboxPathInspector.ParseOwnDirectives(json, SandboxPlatform.Linux, Home);
 
         Assert.NotEmpty(entries);
         Assert.All(entries, e => Assert.Equal("vr-guard", e.Source));
@@ -82,12 +52,12 @@ public sealed partial class SandboxPathInspectorTests
     {
         // Start with a base json that lacks a unique marker path.
         var baseJson = SampleVrGuardJson();
-        var baseEntries = SandboxPathInspector.ParseOwnDirectives(baseJson);
+        var baseEntries = SandboxPathInspector.ParseOwnDirectives(baseJson, SandboxPlatform.Linux, Home);
         Assert.DoesNotContain(baseEntries, e => e.Raw == "~/.acme-toolchain/cache");
 
         // Now add that unique path to the allow array.
         var patchedJson = PatchAllowArray(baseJson, "$HOME/.acme-toolchain/cache");
-        var patchedEntries = SandboxPathInspector.ParseOwnDirectives(patchedJson);
+        var patchedEntries = SandboxPathInspector.ParseOwnDirectives(patchedJson, SandboxPlatform.Linux, Home);
 
         // The added path must appear as ReadWrite with source "vr-guard".
         Assert.Contains(patchedEntries,
@@ -122,7 +92,7 @@ public sealed partial class SandboxPathInspectorTests
         // own directives come from EmbeddedContent, not ~/.config/nono/profiles/.
         var content = NonoProfileEnsurer.EmbeddedContent;
 
-        var entries = SandboxPathInspector.ParseOwnDirectives(content);
+        var entries = SandboxPathInspector.ParseOwnDirectives(content, SandboxPlatform.Linux, Home);
 
         // The real embedded profile has allow, read, and deny sections.
         Assert.NotEmpty(entries);
@@ -138,36 +108,10 @@ public sealed partial class SandboxPathInspectorTests
         Assert.Contains(entries, e => e.Raw == "~/.npm" && e.Access == SandboxAccess.ReadWrite);
     }
 
-    // ── ExpandPath ───────────────────────────────────────────────────────
-    [Fact]
-    public void ExpandPath_ResolvesHomePrefix()
-    {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        var expanded = SandboxPathInspector.ExpandPath("$HOME/Documents");
-
-        Assert.Equal(Path.Combine(home, "Documents"), expanded);
-    }
-
-    [Fact]
-    public void ExpandPath_ResolvesTildePrefix()
-    {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        var expanded = SandboxPathInspector.ExpandPath("~/Documents");
-
-        // ~ should resolve the same way as $HOME.
-        Assert.Equal(Path.Combine(home, "Documents"), expanded);
-    }
-
-    [Fact]
-    public void ExpandPath_ReturnsUnchangedWhenNoHomePrefix()
-    {
-        Assert.Equal("/usr/local/bin", SandboxPathInspector.ExpandPath("/usr/local/bin"));
-        Assert.Equal("/tmp/scratch", SandboxPathInspector.ExpandPath("/tmp/scratch"));
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
+    /// <summary>The home every <c>~</c> and <c>$HOME</c> expands against in these tests.</summary>
+    private const string Home = "/home/x";
+
     /// <summary>
     /// A minimal vr-guard-style JSON with own allow/read/deny entries and
     /// OS "when" predicates for testing the classifier.

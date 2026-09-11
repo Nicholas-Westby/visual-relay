@@ -1,10 +1,20 @@
 using System.Text.Json;
+using VisualRelay.Core.Execution.Wsl;
 namespace VisualRelay.Core.Execution;
 /// <summary>Classifies a single path entry.</summary>
 public enum SandboxAccess { ReadOnly, ReadWrite, Blocked }
 /// <summary>One resolved path entry with provenance for UI display.</summary>
 public sealed record SandboxPathEntry(
     string Raw, string Expanded, SandboxAccess Access, string Source);
+
+/// <summary>
+/// The OS nono enforces the profile on, which decides the <c>when</c> predicates
+/// in vr-guard and the <c>platform</c> tokens in its groups. A parameter rather
+/// than the OS the inspector runs on, because on Windows nono runs inside the WSL
+/// distro: the enforced policy there is the Linux one.
+/// </summary>
+public enum SandboxPlatform { MacOs, Linux }
+
 /// <summary>
 /// The complete inspection result. <see cref="Unavailable"/> is returned when
 /// nono is absent or a group-expansion call fails.
@@ -17,23 +27,11 @@ public sealed class SandboxInspectionResult
     public IReadOnlyList<SandboxPathEntry> BlockedPaths { get; init; } = [];
 
     /// <summary>
-    /// One-line reads/writes summary shown above the path lists. Platform-specific
-    /// and carried by the result so the UI needs no OS check: the nono (macOS/Linux)
-    /// build says reads are the whole filesystem EXCEPT the blocked paths, while the
-    /// Windows build says reads are unrestricted (MXC does not read-block the
-    /// credential <c>deniedPaths</c>). <c>null</c> when unavailable.
+    /// One-line reads/writes summary shown above the path lists: reads are the
+    /// whole filesystem EXCEPT the blocked paths, which nono enforces on every
+    /// platform (inside the WSL distro on Windows). <c>null</c> when unavailable.
     /// </summary>
     public string? ReadsSummary { get; init; }
-
-    /// <summary>
-    /// Windows-only caveat shown against the credential denials (the MXC sandbox
-    /// may not enforce <c>deniedPaths</c> yet). <c>null</c> on macOS/Linux, where
-    /// nono genuinely enforces the denials and no caveat should appear.
-    /// </summary>
-    public string? WindowsCredentialCaveat { get; init; }
-
-    /// <summary>Tracking link for the Windows caveat; <c>null</c> when no caveat.</summary>
-    public string? WindowsCredentialCaveatUrl { get; init; }
 
     public static readonly SandboxInspectionResult Unavailable = new();
 }
@@ -47,11 +45,13 @@ public sealed class SandboxInspectionResult
 public static partial class SandboxPathInspector
 {
     /// <summary>
-    /// Resolves the effective sandbox policy for the current OS.
-    /// <paramref name="workspaceRoot"/> is the active workspace granted via
-    /// <c>--allow-cwd</c> (may be null). <paramref name="extraAllowPaths"/>
-    /// are per-repo <c>sandboxExtraAllowPaths</c>. <paramref name="nonoBinary"/>
-    /// overrides the nono path (tests); when null resolves <c>"nono"</c> on PATH.
+    /// Resolves the effective sandbox policy. On macOS and Linux nono is the binary
+    /// on PATH (<paramref name="nonoBinary"/> overrides it for tests); on Windows it
+    /// is the one inside the resolved WSL distro, asked through wsl.exe
+    /// (<see cref="InspectThroughWslAsync"/>), and without a resolved distro the
+    /// policy is unavailable. <paramref name="workspaceRoot"/> is the active
+    /// workspace granted via <c>--allow-cwd</c> (may be null);
+    /// <paramref name="extraAllowPaths"/> are per-repo <c>sandboxExtraAllowPaths</c>.
     /// </summary>
     public static async Task<SandboxInspectionResult> InspectAsync(
         string? workspaceRoot,
@@ -60,62 +60,96 @@ public static partial class SandboxPathInspector
         CancellationToken cancellationToken = default)
     {
         if (OperatingSystem.IsWindows())
-            return BuildWindowsResult(workspaceRoot, extraAllowPaths);
+        {
+            return WslContextResolver.TryGetCurrent() is { } context
+                ? await InspectThroughWslAsync(
+                    context, RunWslJsonAsync, ct => NonoProfileEnsurer.EnsureAsync(cancellationToken: ct),
+                    workspaceRoot, extraAllowPaths, cancellationToken)
+                : SandboxInspectionResult.Unavailable;
+        }
 
         var resolvedBinary = nonoBinary ?? PathExecutables.Find("nono");
         if (string.IsNullOrEmpty(resolvedBinary) || !File.Exists(resolvedBinary))
             return SandboxInspectionResult.Unavailable;
 
-        // Resolve the whole extends chain (vr-guard → default) so EVERY inherited
-        // group expands — incl. the deny_* credential/keychain groups — not just
-        // vr-guard's own nine. Own directives still come from the embedded
-        // profile (a registered copy `show` reads can be stale); `show` supplies
-        // only the fully-resolved group list, expanded via the existing groups path.
-        var profileJson = NonoProfileEnsurer.EmbeddedContent;
-        var showJson = await RunNonoProfileShowAsync(resolvedBinary, profileJson, cancellationToken);
+        return await ResolveAsync(
+            () => RunNonoProfileShowAsync(resolvedBinary, NonoProfileEnsurer.EmbeddedContent, cancellationToken),
+            name => RunNonoGroupAsync(resolvedBinary, name, cancellationToken),
+            CurrentPlatform, LocalHome, workspaceRoot, extraAllowPaths);
+    }
+
+    /// <summary>The platform nono enforces on from this machine: macOS itself, Linux itself, and on Windows the WSL distro.</summary>
+    internal static SandboxPlatform CurrentPlatform =>
+        OperatingSystem.IsMacOS() ? SandboxPlatform.MacOs : SandboxPlatform.Linux;
+
+    /// <summary>The home <c>~</c> expands against off Windows; null when unknown.</summary>
+    private static string? LocalHome
+    {
+        get
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return string.IsNullOrEmpty(home) ? null : home;
+        }
+    }
+
+    /// <summary>
+    /// The one pipeline behind both arms. <paramref name="show"/> resolves the
+    /// whole extends chain (vr-guard → default) so EVERY inherited group expands —
+    /// incl. the deny_* credential/keychain groups — not just vr-guard's own nine;
+    /// own directives still come from the embedded profile (a registered copy
+    /// `show` reads can be stale), and <paramref name="group"/> supplies each group's
+    /// payload. Either query failing degrades to Unavailable.
+    /// </summary>
+    private static async Task<SandboxInspectionResult> ResolveAsync(
+        Func<Task<string?>> show, Func<string, Task<string?>> group,
+        SandboxPlatform platform, string? home,
+        string? workspaceRoot, IReadOnlyList<string>? extraAllowPaths)
+    {
+        var showJson = await show();
         if (showJson is null)
             return SandboxInspectionResult.Unavailable;
-        var groupEntries = await ExpandInheritedGroupsAsync(
-            showJson, name => RunNonoGroupAsync(resolvedBinary, name, cancellationToken));
+        var groupEntries = await ExpandInheritedGroupsAsync(showJson, group, platform, home);
         if (groupEntries is null)
             return SandboxInspectionResult.Unavailable;
 
         var all = new List<SandboxPathEntry>();
-        all.AddRange(ParseOwnDirectives(profileJson));
+        all.AddRange(ParseOwnDirectives(NonoProfileEnsurer.EmbeddedContent, platform, home));
         all.AddRange(groupEntries);
-        AddPerRunWritables(all, workspaceRoot, extraAllowPaths);
+        AddPerRunWritables(all, workspaceRoot, extraAllowPaths, home);
         return BuildResult(all);
     }
 
     // ── Internal helpers (testable via InternalsVisibleTo) ─────────────────
 
     /// <summary>
-    /// Extracts own allow/read/deny directives from a vr-guard profile JSON.
-    /// Every entry has <see cref="SandboxPathEntry.Source"/> = <c>"vr-guard"</c>.
+    /// Extracts own allow/read/deny directives from a vr-guard profile JSON, keeping
+    /// the <c>when</c> entries of <paramref name="platform"/>. Every entry has
+    /// <see cref="SandboxPathEntry.Source"/> = <c>"vr-guard"</c>.
     /// </summary>
-    internal static IReadOnlyList<SandboxPathEntry> ParseOwnDirectives(string profileJson)
+    internal static IReadOnlyList<SandboxPathEntry> ParseOwnDirectives(
+        string profileJson, SandboxPlatform platform, string? home)
     {
         using var doc = JsonDocument.Parse(profileJson);
         var root = doc.RootElement;
         var entries = new List<SandboxPathEntry>();
         if (!root.TryGetProperty("filesystem", out var fs)) return entries;
         if (fs.TryGetProperty("allow", out var allow))
-            entries.AddRange(ParsePathArray(allow, SandboxAccess.ReadWrite, "vr-guard"));
+            entries.AddRange(ParsePathArray(allow, SandboxAccess.ReadWrite, "vr-guard", platform, home));
         if (fs.TryGetProperty("read", out var read))
-            entries.AddRange(ParsePathArray(read, SandboxAccess.ReadOnly, "vr-guard"));
+            entries.AddRange(ParsePathArray(read, SandboxAccess.ReadOnly, "vr-guard", platform, home));
         if (fs.TryGetProperty("deny", out var deny))
-            entries.AddRange(ParsePathArray(deny, SandboxAccess.Blocked, "vr-guard"));
+            entries.AddRange(ParsePathArray(deny, SandboxAccess.Blocked, "vr-guard", platform, home));
         return entries;
     }
 
     /// <summary>
     /// Extracts allow.read / allow.readwrite / deny.access from a
     /// <c>nono profile groups &lt;name&gt; --json</c> payload.
-    /// Filters by <c>platform</c> for the current OS; ignores
+    /// Filters by <c>platform</c> for <paramref name="platform"/>; ignores
     /// <c>deny.commands</c> and <c>deny.unlink</c>.
     /// </summary>
     internal static IReadOnlyList<SandboxPathEntry> ParseGroupJson(
-        string groupJson, string groupName)
+        string groupJson, string groupName, SandboxPlatform platform, string? home)
     {
         using var doc = JsonDocument.Parse(groupJson);
         var root = doc.RootElement;
@@ -123,53 +157,52 @@ public static partial class SandboxPathInspector
         if (root.TryGetProperty("allow", out var allow))
         {
             if (allow.TryGetProperty("read", out var read))
-                entries.AddRange(ParseGroupAllowEntries(read, SandboxAccess.ReadOnly, groupName));
+                entries.AddRange(ParseGroupAllowEntries(read, SandboxAccess.ReadOnly, groupName, platform));
             if (allow.TryGetProperty("readwrite", out var rw))
-                entries.AddRange(ParseGroupAllowEntries(rw, SandboxAccess.ReadWrite, groupName));
+                entries.AddRange(ParseGroupAllowEntries(rw, SandboxAccess.ReadWrite, groupName, platform));
         }
         if (root.TryGetProperty("deny", out var deny) &&
             deny.TryGetProperty("access", out var access))
-            entries.AddRange(ParseGroupDenyAccess(access, groupName));
+            entries.AddRange(ParseGroupDenyAccess(access, groupName, platform, home));
         return entries;
     }
 
     /// <summary>
-    /// Resolves <c>$HOME</c> and <c>~</c> prefixes to the real home directory.
-    /// Paths without either prefix are returned unchanged.
+    /// Resolves <c>$HOME</c> and <c>~</c> prefixes to <paramref name="home"/> (the
+    /// distro user's home on Windows). Paths without either prefix, or any path
+    /// when the home is unknown, are returned unchanged.
     /// </summary>
-    internal static string ExpandPath(string raw)
+    internal static string ExpandPath(string raw, string? home)
     {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrEmpty(home)) return raw;
         if (raw.StartsWith("$HOME", StringComparison.Ordinal))
-            return home + raw.Substring("$HOME".Length);
-        if (raw.StartsWith("~", StringComparison.Ordinal))
-            return home + raw.Substring("~".Length);
+            return home + raw["$HOME".Length..];
+        if (raw.StartsWith('~'))
+            return home + raw[1..];
         return raw;
     }
 
-    // BuildWindowsResult lives in the SandboxPathInspector.Windows.cs partial.
-
     private static void AddPerRunWritables(
         List<SandboxPathEntry> all, string? workspaceRoot,
-        IReadOnlyList<string>? extraAllowPaths)
+        IReadOnlyList<string>? extraAllowPaths, string? home)
     {
         if (!string.IsNullOrWhiteSpace(workspaceRoot))
-            all.Add(new SandboxPathEntry(workspaceRoot, workspaceRoot,
-                SandboxAccess.ReadWrite, "current workspace"));
+        {
+            // A workspace inside a WSL distro is held as its UNC path; the Linux
+            // view is the path nono actually grants, so it is the tooltip.
+            var expanded = WslPath.TryParseUnc(workspaceRoot, out _, out var linuxRoot) ? linuxRoot : workspaceRoot;
+            all.Add(new SandboxPathEntry(workspaceRoot, expanded, SandboxAccess.ReadWrite, "current workspace"));
+        }
         if (extraAllowPaths is { Count: > 0 })
         {
             foreach (var path in extraAllowPaths)
-                all.Add(new SandboxPathEntry(path, ExpandPath(path),
+                all.Add(new SandboxPathEntry(path, ExpandPath(path, home),
                     SandboxAccess.ReadWrite, "per-project extras"));
         }
     }
 
-    /// <summary>
-    /// The macOS/Linux (nono) reads/writes summary. Reads are the whole filesystem
-    /// EXCEPT the enforced deny/credential paths, which nono genuinely blocks.
-    /// </summary>
-    private const string NonoReadsSummaryText =
+    /// <summary>Reads are the whole filesystem EXCEPT the enforced deny/credential paths.</summary>
+    private const string ReadsSummaryText =
         "Reads: the whole filesystem except the blocked paths. " +
         "Writes: only the paths listed here (plus the current workspace).";
 
@@ -177,7 +210,7 @@ public static partial class SandboxPathInspector
         new()
         {
             IsAvailable = true,
-            ReadsSummary = NonoReadsSummaryText,
+            ReadsSummary = ReadsSummaryText,
             ReadablePaths = all.Where(e => e.Access == SandboxAccess.ReadOnly).ToList(),
             WritablePaths = all.Where(e => e.Access == SandboxAccess.ReadWrite).ToList(),
             BlockedPaths = all.Where(e => e.Access == SandboxAccess.Blocked).ToList(),
@@ -188,39 +221,35 @@ public static partial class SandboxPathInspector
     /// objects from vr-guard's filesystem sections.
     /// </summary>
     private static IEnumerable<SandboxPathEntry> ParsePathArray(
-        JsonElement array, SandboxAccess access, string source)
+        JsonElement array, SandboxAccess access, string source, SandboxPlatform platform, string? home)
     {
         foreach (var entry in array.EnumerateArray())
         {
             if (entry.ValueKind == JsonValueKind.String)
             {
                 var raw = entry.GetString()!;
-                yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), ExpandPath(raw), access, source);
+                yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), ExpandPath(raw, home), access, source);
             }
             else if (entry.ValueKind == JsonValueKind.Object)
             {
                 if (!entry.TryGetProperty("path", out var pathProp)) continue;
                 var raw = pathProp.GetString()!;
-                if (ShouldSkipByWhen(entry)) continue;
-                yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), ExpandPath(raw), access, source);
+                if (ShouldSkipByWhen(entry, platform)) continue;
+                yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), ExpandPath(raw, home), access, source);
             }
         }
     }
 
-    private static bool ShouldSkipByWhen(JsonElement entry)
-    {
-        if (!entry.TryGetProperty("when", out var when)) return false;
-        var os = when.GetString();
-        return (string.Equals(os, "macos", StringComparison.OrdinalIgnoreCase) && !OperatingSystem.IsMacOS())
-            || (string.Equals(os, "linux", StringComparison.OrdinalIgnoreCase) && !OperatingSystem.IsLinux());
-    }
+    /// <summary>The profile's own <c>when</c> predicate, under the same token rule as the groups' <c>platform</c>.</summary>
+    private static bool ShouldSkipByWhen(JsonElement entry, SandboxPlatform platform) =>
+        entry.TryGetProperty("when", out var when) && ShouldSkipPlatformToken(when.GetString(), platform);
 
     /// <summary>
     /// Parses allow.read / allow.readwrite entries from a group JSON:
     /// <c>[{"raw":"…","expanded":"…","platform":"cross-platform"}]</c>.
     /// </summary>
     private static IEnumerable<SandboxPathEntry> ParseGroupAllowEntries(
-        JsonElement array, SandboxAccess access, string source)
+        JsonElement array, SandboxAccess access, string source, SandboxPlatform platform)
     {
         foreach (var entry in array.EnumerateArray())
         {
@@ -230,13 +259,13 @@ public static partial class SandboxPathInspector
             if (string.IsNullOrEmpty(raw)) continue;
             var expanded = entry.TryGetProperty("expanded", out var ep)
                 ? (ep.GetString() ?? raw) : raw;
-            if (ShouldSkipByPlatform(entry)) continue;
+            if (ShouldSkipByPlatform(entry, platform)) continue;
             yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), expanded, access, source);
         }
     }
 
-    private static bool ShouldSkipByPlatform(JsonElement entry) =>
-        entry.TryGetProperty("platform", out var pp) && ShouldSkipPlatformToken(pp.GetString());
+    private static bool ShouldSkipByPlatform(JsonElement entry, SandboxPlatform platform) =>
+        entry.TryGetProperty("platform", out var pp) && ShouldSkipPlatformToken(pp.GetString(), platform);
 
     /// <summary>Runs <c>nono profile groups &lt;name&gt; --json</c>; stdout or null.</summary>
     private static Task<string?> RunNonoGroupAsync(

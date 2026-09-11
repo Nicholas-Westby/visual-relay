@@ -40,7 +40,7 @@ public sealed partial class SandboxPathInspectorTests
                 "allow": ["$HOME/.cargo"] } }
             """;
 
-        var entries = SandboxPathInspector.ParseOwnDirectives(json);
+        var entries = SandboxPathInspector.ParseOwnDirectives(json, SandboxPlatform.Linux, Home);
 
         // $HOME/… rows now render as ~/… …
         Assert.Contains(entries, e => e.Raw == "~/.gitconfig");
@@ -54,13 +54,12 @@ public sealed partial class SandboxPathInspectorTests
     [Fact]
     public void ParseOwnDirectives_KeepsExpandedAsConcreteHomePath()
     {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         const string json = """{ "filesystem": { "allow": ["$HOME/.cargo"] } }""";
 
-        var entry = SandboxPathInspector.ParseOwnDirectives(json).Single();
+        var entry = SandboxPathInspector.ParseOwnDirectives(json, SandboxPlatform.Linux, Home).Single();
 
         Assert.Equal("~/.cargo", entry.Raw);
-        Assert.Equal(Path.Combine(home, ".cargo"), entry.Expanded);
+        Assert.Equal("/home/x/.cargo", entry.Expanded);
     }
 
     // ── group producer: ~ preserved AND a $HOME group entry → ~ ──────────
@@ -76,7 +75,7 @@ public sealed partial class SandboxPathInspectorTests
             ] } }
             """;
 
-        var entries = SandboxPathInspector.ParseGroupJson(json, "go_runtime");
+        var entries = SandboxPathInspector.ParseGroupJson(json, "go_runtime", SandboxPlatform.Linux, Home);
 
         Assert.Contains(entries, e => e.Raw == "~/go");          // ~ preserved
         Assert.Contains(entries, e => e.Raw == "~/.rustup");     // $HOME → ~
@@ -93,7 +92,7 @@ public sealed partial class SandboxPathInspectorTests
             { "deny": { "access": ["$HOME/.ssh", "/etc/secret"] } }
             """;
 
-        var blocked = SandboxPathInspector.ParseGroupJson(json, "go_runtime");
+        var blocked = SandboxPathInspector.ParseGroupJson(json, "go_runtime", SandboxPlatform.Linux, Home);
 
         Assert.Contains(blocked, e => e.Raw == "~/.ssh" && e.Access == SandboxAccess.Blocked);
         Assert.Contains(blocked, e => e.Raw == "/etc/secret" && e.Access == SandboxAccess.Blocked);
@@ -111,7 +110,7 @@ public sealed partial class SandboxPathInspectorTests
             ] } }
             """;
 
-        var entry = SandboxPathInspector.ParseGroupJson(json, "rust_runtime").Single();
+        var entry = SandboxPathInspector.ParseGroupJson(json, "rust_runtime", SandboxPlatform.Linux, Home).Single();
 
         Assert.Equal("~/.rustup", entry.Raw);
         Assert.Equal("/Users/you/.rustup", entry.Expanded); // tooltip untouched

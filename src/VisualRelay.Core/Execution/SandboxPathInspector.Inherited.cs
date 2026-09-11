@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 namespace VisualRelay.Core.Execution;
@@ -46,12 +47,13 @@ public static partial class SandboxPathInspector
     /// by fetching its <c>nono profile groups &lt;name&gt; --json</c> payload through
     /// <paramref name="groupJsonProvider"/> and classifying it (<c>deny_*</c> → Blocked,
     /// allow.read → Readable, allow.readwrite → Writable), honouring each group's
-    /// <c>platform</c> filter. Returns <c>null</c> if ANY group fails to resolve —
-    /// preserving the graceful-degradation contract (caller maps null → Unavailable).
-    /// The provider is the only nono seam, so tests feed payloads without shelling out.
+    /// <c>platform</c> filter against <paramref name="platform"/>. Returns <c>null</c>
+    /// if ANY group fails to resolve — preserving the graceful-degradation contract
+    /// (caller maps null → Unavailable). The provider is the only nono seam, so tests
+    /// feed payloads without shelling out.
     /// </summary>
     internal static async Task<IReadOnlyList<SandboxPathEntry>?> ExpandInheritedGroupsAsync(
-        string showJson, Func<string, Task<string?>> groupJsonProvider)
+        string showJson, Func<string, Task<string?>> groupJsonProvider, SandboxPlatform platform, string? home)
     {
         try
         {
@@ -60,7 +62,7 @@ public static partial class SandboxPathInspector
             {
                 var groupJson = await groupJsonProvider(name);
                 if (groupJson is null) return null;
-                entries.AddRange(ExpandGroup(groupJson, name));
+                entries.AddRange(ExpandGroup(groupJson, name, platform, home));
             }
             return entries;
         }
@@ -73,33 +75,35 @@ public static partial class SandboxPathInspector
 
     /// <summary>
     /// Classifies one group payload, first applying the group-level <c>platform</c>
-    /// filter (<c>*_macos</c> / <c>*_linux</c> groups contribute only on their OS;
+    /// filter (<c>*_macos</c> / <c>*_linux</c> groups contribute only on their platform;
     /// cross-platform or unmarked groups always contribute), then delegating per-entry
     /// classification to <see cref="ParseGroupJson"/>.
     /// </summary>
-    private static IReadOnlyList<SandboxPathEntry> ExpandGroup(string groupJson, string groupName)
-        => ShouldSkipGroupByPlatform(groupJson) ? [] : ParseGroupJson(groupJson, groupName);
+    private static IReadOnlyList<SandboxPathEntry> ExpandGroup(
+        string groupJson, string groupName, SandboxPlatform platform, string? home)
+        => ShouldSkipGroupByPlatform(groupJson, platform) ? [] : ParseGroupJson(groupJson, groupName, platform, home);
 
     /// <summary>
-    /// True when the group's top-level <c>platform</c> names the OTHER OS. Delegates to
-    /// <see cref="ShouldSkipPlatformToken"/> so group-level and per-entry filtering stay
-    /// identical; "cross-platform", absent, or an unrecognised token never skips.
+    /// True when the group's top-level <c>platform</c> names the OTHER platform. Delegates
+    /// to <see cref="ShouldSkipPlatformToken"/> so group-level and per-entry filtering
+    /// stay identical; "cross-platform", absent, or an unrecognised token never skips.
     /// </summary>
-    private static bool ShouldSkipGroupByPlatform(string groupJson)
+    private static bool ShouldSkipGroupByPlatform(string groupJson, SandboxPlatform platform)
     {
         using var doc = JsonDocument.Parse(groupJson);
         return doc.RootElement.TryGetProperty("platform", out var pp)
-            && ShouldSkipPlatformToken(pp.GetString());
+            && ShouldSkipPlatformToken(pp.GetString(), platform);
     }
 
     /// <summary>
-    /// The single platform-token rule shared by the group-level and per-entry filters:
-    /// skip ONLY when the token names the OTHER OS ("macos" off macOS, "linux" off
-    /// Linux). "cross-platform", absent/null, or any unrecognised value is included.
+    /// The single platform-token rule shared by the profile's <c>when</c>, the
+    /// group-level and the per-entry filters: skip ONLY when the token names the OTHER
+    /// platform ("macos" off macOS, "linux" off Linux). "cross-platform", absent/null,
+    /// or any unrecognised value is included.
     /// </summary>
-    private static bool ShouldSkipPlatformToken(string? platform) =>
-        (string.Equals(platform, "macos", StringComparison.OrdinalIgnoreCase) && !OperatingSystem.IsMacOS())
-        || (string.Equals(platform, "linux", StringComparison.OrdinalIgnoreCase) && !OperatingSystem.IsLinux());
+    private static bool ShouldSkipPlatformToken(string? token, SandboxPlatform platform) =>
+        (string.Equals(token, "macos", StringComparison.OrdinalIgnoreCase) && platform != SandboxPlatform.MacOs)
+        || (string.Equals(token, "linux", StringComparison.OrdinalIgnoreCase) && platform != SandboxPlatform.Linux);
 
     /// <summary>
     /// Parses a group's <c>deny.access</c> array, accepting BOTH bare strings and the
@@ -108,19 +112,19 @@ public static partial class SandboxPathInspector
     /// Any per-entry <c>platform</c> is honoured too.
     /// </summary>
     private static IEnumerable<SandboxPathEntry> ParseGroupDenyAccess(
-        JsonElement access, string groupName)
+        JsonElement access, string groupName, SandboxPlatform platform, string? home)
     {
         foreach (var entry in access.EnumerateArray())
         {
             if (entry.ValueKind == JsonValueKind.String)
             {
                 var s = entry.GetString()!;
-                yield return new SandboxPathEntry(NormalizeRawForDisplay(s), ExpandPath(s), SandboxAccess.Blocked, groupName);
+                yield return new SandboxPathEntry(NormalizeRawForDisplay(s), ExpandPath(s, home), SandboxAccess.Blocked, groupName);
             }
             else if (entry.ValueKind == JsonValueKind.Object &&
                      entry.TryGetProperty("raw", out var rawProp))
             {
-                if (ShouldSkipByPlatform(entry)) continue;
+                if (ShouldSkipByPlatform(entry, platform)) continue;
                 var raw = rawProp.GetString();
                 if (string.IsNullOrEmpty(raw)) continue;
                 var expanded = entry.TryGetProperty("expanded", out var ep)
@@ -159,27 +163,41 @@ public static partial class SandboxPathInspector
         }
     }
 
+    private static Task<string?> RunNonoJsonAsync(
+        string nonoBinary, IReadOnlyList<string> args, CancellationToken cancellationToken) =>
+        RunJsonAsync(nonoBinary, args, environment: null, cancellationToken);
+
     /// <summary>
-    /// Shared launcher for read-only <c>nono … --json</c> queries used by both the
-    /// group-expansion and profile-show paths. Runs with a 10s timeout; returns stdout
-    /// on exit 0, else <c>null</c>. Cancellation from the caller propagates; the timeout
-    /// kills the process tree and degrades to <c>null</c> (never throws for nono issues).
+    /// Shared launcher for read-only <c>… --json</c> queries used by the group-expansion
+    /// and profile-show paths: nono itself on macOS/Linux, wsl.exe carrying nono on
+    /// Windows (hence the UTF-8 streams and the extra environment). Runs with a 10s
+    /// timeout; returns stdout on exit 0, else <c>null</c>. Cancellation from the caller
+    /// propagates; the timeout kills the process tree and degrades to <c>null</c>
+    /// (never throws for tool issues).
     /// </summary>
-    private static async Task<string?> RunNonoJsonAsync(
-        string nonoBinary, IReadOnlyList<string> args, CancellationToken cancellationToken)
+    private static async Task<string?> RunJsonAsync(
+        string fileName, IReadOnlyList<string> args,
+        IReadOnlyDictionary<string, string>? environment, CancellationToken cancellationToken)
     {
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = nonoBinary,
+                FileName = fileName,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
             foreach (var arg in args)
                 psi.ArgumentList.Add(arg);
+            if (environment is not null)
+            {
+                foreach (var (name, value) in environment)
+                    psi.Environment[name] = value;
+            }
             using var process = Process.Start(psi);
             if (process is null) return null;
             var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
