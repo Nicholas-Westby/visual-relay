@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -10,19 +11,31 @@ namespace VisualRelay.Core.Execution;
 /// agent with the same allowlist.  The shared <c>BuildNonoPrefix</c> builder
 /// keeps the agent and verification prefixes in lockstep; they differ only
 /// in the rollback flag pair.  The sandbox is always on — there is no opt-out.
+/// On Windows the same nono runs inside the resolved WSL distro, on the Linux
+/// workspace behind the UNC root, with the tree watched from inside the distro.
 /// </summary>
+/// <param name="inner">Decides the shape of the inner command: a shell line or a direct exec.</param>
+/// <param name="config">Supplies the sandbox allow-list, the timeouts and the target environment.</param>
+/// <param name="verboseDiagnostics">Output-only: shows nono's own banner instead of <c>--silent</c>.</param>
+/// <param name="timeProvider">Clock for the watchdog. Null uses system time.</param>
+/// <param name="host">Where the sandbox is launched from. Null uses this machine.</param>
 public sealed partial class SandboxedTestRunner(
     ITestRunner inner, RelayConfig config, bool verboseDiagnostics = false,
-    TimeProvider? timeProvider = null) : ITestRunner
+    TimeProvider? timeProvider = null, SandboxHost? host = null) : ITestRunner
 {
+    // Names the pid file a launch behind wsl.exe leaves in the distro.
+    private const string WslLaunchTag = "verify";
+
     private readonly TimeSpan _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+    // Resolved on use, not at construction: on Windows the first resolution probes the machine.
+    private SandboxHost Host => host ?? SandboxHost.Current;
 
     public async Task<TestRunResult> RunAsync(
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
-        var (fileName, args) = ResolveLaunch(command, rootPath);
-        var targetEnv = SandboxedStage.BuildTargetCommandEnvironment(config);
+        var launch = ResolveSandboxedLaunch(command, rootPath);
 
         // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
         // supervises the test process tree and can outlive the FINISHED tests —
@@ -31,13 +44,13 @@ public sealed partial class SandboxedTestRunner(
         // seconds. RunWatchedAsync reaps once the tree goes output-silent +
         // CPU-idle and surfaces the inner command's real red/green result.
         var result = await RunWatchedAsync(
-            fileName, args, rootPath, targetEnv.Overrides,
+            launch.FileName, launch.Arguments, rootPath, launch.Environment,
             firstOutputTimeoutMs: config.TestIdleGraceMilliseconds,
             idleGraceMs: config.TestIdleGraceMilliseconds,
             hardCap: _timeout,
             cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
             cancellationToken, _timeProvider,
-            envRemove: targetEnv.Remove);
+            envRemove: launch.EnvironmentRemove, treeControl: launch.TreeControl);
 
         // Post-process: extract and strip the --diagnostics-json session object
         // from the captured output so callers see clean command output only.
@@ -50,22 +63,40 @@ public sealed partial class SandboxedTestRunner(
     }
 
     /// <summary>
-    /// Resolves the launch target (FileName, Arguments) for the given command.
-    /// Exposed as internal for unit-test argument-shape assertions. On Windows the
-    /// verify command is wrapped in the OS-selected sandbox; <paramref name="rootPath"/>
-    /// is the workspace the MXC policy confines writes to.
+    /// The launch target (FileName, Arguments) for the given command. Exposed as
+    /// internal for unit-test argument-shape assertions; the full launch is
+    /// <see cref="ResolveSandboxedLaunch"/>.
     /// </summary>
     internal (string FileName, IReadOnlyList<string> Arguments) ResolveLaunch(string command, string? rootPath = null)
     {
-        if (OperatingSystem.IsWindows())
-            return ResolveWindowsLaunch(command, rootPath);
+        var launch = ResolveSandboxedLaunch(command, rootPath);
+        return (launch.FileName, launch.Arguments);
+    }
+
+    /// <summary>
+    /// Resolves the whole launch. On the local host it is nono wrapping the inner
+    /// command with the target environment; on Windows it is wsl.exe running nono
+    /// inside the distro on the Linux workspace <paramref name="rootPath"/> (the
+    /// UNC share) names, or an <see cref="InvalidOperationException"/> carrying the
+    /// refusal (no usable distro, a workspace the policy refuses). There is no
+    /// unsandboxed fallback on either.
+    /// </summary>
+    internal SandboxedLaunch ResolveSandboxedLaunch(string command, string? rootPath = null)
+    {
+        var host = Host;
+        if (host is { IsWindows: true, Wsl: null })
+            throw new InvalidOperationException(WslSandboxLauncher.BlockedMessage);
 
         // Sandbox always on: wrap in nono. verboseDiagnostics is output-only (--silent
         // when quiet); it never changes what the sandbox enforces.
         // requestDiagnostics: true requests --diagnostics-json so denial records are
         // captured and surfaced in verify artifacts — the verification path ONLY.
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath, requestDiagnostics: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(
+            config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath,
+            requestDiagnostics: true, host: host);
 
+        string program;
+        IReadOnlyList<string> arguments;
         if (inner is ShellTestRunner)
         {
             // Non-login shell (-c, not -lc): the sandboxed verify must use the SAME toolchain the
@@ -80,37 +111,26 @@ public sealed partial class SandboxedTestRunner(
             // `-c "<command>"` entry would reach /bin/sh as one unparseable argument
             // ("/bin/sh: - : invalid option", exit 2), making every sandboxed verify falsely red.
             // ArgumentList re-quotes each entry as needed, so the command passes through unescaped.
-            var args = new List<string>(prefix)
-            {
-                "/bin/sh",
-                "-c",
-                command
-            };
-            return ("nono", args);
+            program = "/bin/sh";
+            arguments = ["-c", command];
         }
         else
         {
-            var parts = DirectExecTestRunner.ResolveLaunch(command);
-            var args = new List<string>(prefix) { parts.FileName };
-            args.AddRange(parts.Arguments);
-            return ("nono", args);
+            (program, arguments) = DirectExecTestRunner.ResolveLaunch(command);
         }
-    }
 
-    // Windows verify launch: a shell command runs through cmd.exe /c, a script
-    // through direct exec; the resulting program is then wrapped in MXC, or
-    // blocked when no sandbox is available. There is no unsandboxed fallback.
-    private (string FileName, IReadOnlyList<string> Arguments) ResolveWindowsLaunch(string command, string? rootPath)
-    {
-        var (innerFile, innerArgs) = inner is ShellTestRunner
-            ? ShellTestRunner.BuildShellLaunch(command, isWindows: true)
-            : DirectExecTestRunner.ResolveLaunch(command);
-
-        var (mode, wxc, policy) = MxcProvisioner.ResolvePlan(rootPath);
-        return mode switch
+        if (host.Wsl is { } context)
         {
-            WindowsSandboxMode.Mxc => WindowsSandbox.BuildMxcLaunch(wxc!, policy!, innerFile, innerArgs),
-            _ => throw new InvalidOperationException(WindowsSandbox.BlockedMessage),
-        };
+            // Inside the distro the same /bin/sh -c runs (never a cmd.exe batch), and the
+            // target environment travels in the argv: a wsl.exe child's Windows environment
+            // does not cross into Linux, and the user-environment snapshot is a Unix concern.
+            var (wsl, error) = WslSandboxLauncher.Build(
+                context, rootPath ?? string.Empty, [context.NonoPath, .. prefix], program, arguments,
+                SandboxedStage.BuildSandboxEnvironment(config), WslLaunchTag);
+            return wsl is null ? throw new InvalidOperationException(error) : SandboxedLaunch.ForWsl(context, wsl);
+        }
+
+        var environment = SandboxedStage.BuildTargetCommandEnvironment(config);
+        return new SandboxedLaunch("nono", [.. prefix, program, .. arguments], environment.Overrides, environment.Remove, null);
     }
 }

@@ -64,11 +64,14 @@ public sealed class WslLauncherArgvTests
     [Fact]
     public void Envelope_IsTheDocumentedScript()
     {
-        // setsid puts the sandbox root in its own session/process group (so one
-        // kill -pgid reaches the whole tree); the pid lands in the pid file; cd
-        // failing exits 127 loudly because wsl.exe's own --cd is non-fatal.
+        // The pid file's directory is created first (a fresh distro has no
+        // /tmp/visual-relay, and the echo would fail silently); setsid puts the
+        // sandbox root in its own session/process group (so one kill -pgid reaches
+        // the whole tree); the pid lands in the pid file; cd failing exits 127
+        // loudly because wsl.exe's own --cd is non-fatal.
         Assert.Equal(
-            "p=$1; d=$2; shift 2; cd \"$d\" || exit 127; setsid \"$@\" & c=$!; echo \"$c\" > \"$p\"; wait \"$c\"",
+            "p=$1; d=$2; shift 2; mkdir -p \"$(dirname \"$p\")\" || exit 127; cd \"$d\" || exit 127; "
+            + "setsid \"$@\" & c=$!; echo \"$c\" > \"$p\"; wait \"$c\"",
             WslLauncher.Envelope);
     }
 

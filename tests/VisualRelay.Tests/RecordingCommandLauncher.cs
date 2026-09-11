@@ -1,4 +1,5 @@
 using VisualRelay.Core.Agent.Tools;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
@@ -29,17 +30,26 @@ internal sealed class RecordingCommandLauncher(
     /// <summary>The timeout that was actually applied.</summary>
     internal TimeSpan Timeout { get; private set; }
 
+    /// <summary>The environment overrides the launched process was given.</summary>
+    internal IReadOnlyDictionary<string, string> Environment { get; private set; } =
+        new Dictionary<string, string>();
+
+    /// <summary>The control for a tree the host cannot see (behind wsl.exe), or null.</summary>
+    internal IProcessTreeControl? TreeControl { get; private set; }
+
     /// <summary>How many times a command was launched.</summary>
     internal int Calls { get; private set; }
 
     /// <summary>The delegate to hand to <see cref="SandboxedCommandExecutor"/>.</summary>
     internal SandboxedCommandLauncher Launcher =>
-        (fileName, arguments, workingDirectory, timeout, _, _, _) =>
+        (fileName, arguments, workingDirectory, timeout, environment, _, treeControl, _) =>
         {
             FileName = fileName;
             Arguments = [.. arguments];
             WorkingDirectory = workingDirectory;
             Timeout = timeout;
+            Environment = environment;
+            TreeControl = treeControl;
             Calls++;
             clock?.Advance(TimeSpan.FromSeconds(elapsedSeconds));
             return Task.FromResult(new CommandRunOutcome(exitCode, output, timedOut));

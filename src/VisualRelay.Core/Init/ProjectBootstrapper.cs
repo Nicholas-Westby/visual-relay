@@ -65,10 +65,12 @@ public static class ProjectBootstrapper
 
     /// <summary>
     /// The runner every candidate is smoke-validated with: the SAME shell the pipeline
-    /// later runs the command through (<c>/bin/sh -c</c>, or <c>cmd.exe /c</c>), so a
-    /// command with <c>&amp;&amp;</c>, a pipe, a glob or an env-var prefix is judged as
-    /// it will actually behave. Argv-splitting it instead handed the operators to the
-    /// first program as arguments and rejected commands that run perfectly well.
+    /// later runs the command through (<c>/bin/sh -c</c>; on Windows inside the WSL
+    /// distro the workspace lives in, or <c>cmd.exe /c</c> where no distro is
+    /// resolved), so a command with <c>&amp;&amp;</c>, a pipe, a glob or an env-var
+    /// prefix is judged as it will actually behave. Argv-splitting it instead handed
+    /// the operators to the first program as arguments and rejected commands that run
+    /// perfectly well.
     /// </summary>
     /// <param name="timeout">Time box for the smoke run.</param>
     /// <returns>The validation runner.</returns>

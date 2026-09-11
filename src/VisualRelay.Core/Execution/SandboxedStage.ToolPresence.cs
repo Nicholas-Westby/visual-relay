@@ -2,16 +2,20 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
-// Pure, testable tool-presence probe: checking the required sandbox against PATH,
-// with Windows-sandbox awareness. Kept separate so each file stays under the
-// file-size guard.
+// Pure, testable tool-presence probe: the required sandbox against PATH on the
+// local host, against the resolved WSL distro on Windows. Kept separate so each
+// file stays under the file-size guard.
 public static partial class SandboxedStage
 {
-    // Returns the required launch tools that do NOT resolve against PATH (empty
-    // ⇒ all present). The sandbox is the only requirement and it is
-    // non-negotiable: every agent command is wrapped in it. PATH and the binary
-    // name are injectable so a test can simulate missing/present without touching
-    // the real PATH; callers probe the same PATH the launch uses.
+    /// <summary>What Windows needs instead of nono on PATH; named in the gate message.</summary>
+    private const string WslRequirement = "a WSL2 distro with nono installed inside it";
+
+    // Returns the required launch tools that do NOT resolve (empty ⇒ all present).
+    // The sandbox is the only requirement and it is non-negotiable: every agent
+    // command is wrapped in it. PATH and the binary name are injectable so a test
+    // can simulate missing/present without touching the real PATH; the host is
+    // injectable so the Windows arm (a resolved WSL context, not a binary on the
+    // Windows PATH) is exercised anywhere. Callers probe the same PATH the launch uses.
     //
     // There used to be a second requirement, the CLI binary of the retired
     // subprocess agent. Nothing spawns it any more, and leaving it here would
@@ -19,48 +23,38 @@ public static partial class SandboxedStage
     public static IReadOnlyList<string> MissingRequiredTools(
         RelayConfig config,
         string? pathValue = null,
-        string nonoBinary = NonoBinary)
-    {
-        var isWindows = OperatingSystem.IsWindows();
-        // On Windows there is no nono; the required sandbox is MXC, with no opt-out.
-        // Resolve its availability the same way the launch does.
-        var windowsMode = isWindows
-            ? WindowsSandbox.Select(MxcProvisioner.ResolveWxcExec() is not null)
-            : WindowsSandboxMode.Mxc; // unused off Windows
-
-        return MissingRequiredTools(
+        string nonoBinary = NonoBinary,
+        SandboxHost? host = null) =>
+        MissingRequiredTools(
             pathValue ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty,
-            nonoBinary, isWindows,
-            Environment.GetEnvironmentVariable("PATHEXT"), windowsMode);
-    }
+            nonoBinary, host ?? SandboxHost.Current,
+            Environment.GetEnvironmentVariable("PATHEXT"));
 
     /// <summary>
-    /// Pure tool-presence probe with the OS dispatch injected. The requirement is
-    /// nono on Unix and a non-blocked Windows sandbox on Windows. Returns the
-    /// missing requirement names (empty ⇒ runnable).
+    /// Pure tool-presence probe with the host injected. The requirement is nono on
+    /// PATH on the local host and a resolved WSL2 distro with nono inside it on
+    /// Windows. Returns the missing requirement names (empty ⇒ runnable).
     /// </summary>
     /// <param name="path">The PATH to resolve against.</param>
     /// <param name="nonoBinary">The sandbox binary name.</param>
-    /// <param name="isWindows">Whether to take the Windows arm.</param>
+    /// <param name="host">Where the sandbox is launched from.</param>
     /// <param name="pathext">PATHEXT, for Windows executable resolution.</param>
-    /// <param name="windowsMode">The selected Windows sandbox mode.</param>
     /// <returns>The missing requirement names.</returns>
     private static IReadOnlyList<string> MissingRequiredTools(
-        string path, string nonoBinary,
-        bool isWindows, string? pathext, WindowsSandboxMode windowsMode)
+        string path, string nonoBinary, SandboxHost host, string? pathext)
     {
         bool OnPath(string name) =>
             // A bare path component (no directory) is taken as a cwd-relative
             // executable, mirroring how the process launcher resolves it.
             Path.IsPathRooted(name) || name.Contains(Path.DirectorySeparatorChar)
                 ? File.Exists(name)
-                : PathExecutables.Resolve(name, path, pathext, isWindows, File.Exists) is not null;
+                : PathExecutables.Resolve(name, path, pathext, host.IsWindows, File.Exists) is not null;
 
         var missing = new List<string>(1);
-        if (isWindows)
+        if (host.IsWindows)
         {
-            if (windowsMode == WindowsSandboxMode.Blocked)
-                missing.Add("a Windows sandbox (provision wxc-exec)");
+            if (host.Wsl is null)
+                missing.Add(WslRequirement);
         }
         else if (!OnPath(nonoBinary))
         {

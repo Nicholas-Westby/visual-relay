@@ -16,19 +16,27 @@ namespace VisualRelay.Core.Agent.Tools;
 /// nono with rollback 730 ms); the undo Visual Relay already keeps — <c>run-base.txt</c>,
 /// <c>pre-run-untracked.txt</c>, <c>WorktreeResetter</c>, <c>RewriteUndoStore</c> —
 /// covers what rollback did, per commit, for the whole run.</para>
+/// <para>On Windows the same nono runs inside the resolved WSL distro: the launch is
+/// wsl.exe running the fixed envelope on the Linux workspace, and the tree behind it
+/// is watched and stopped from inside the distro.</para>
 /// </summary>
 /// <param name="config">Supplies the sandbox allow-list and the target command environment.</param>
 /// <param name="launcher">Spawns the wrapped command. Defaults to the real process launcher.</param>
 /// <param name="verboseDiagnostics">Output-only: shows nono's own banner instead of <c>--silent</c>.</param>
 /// <param name="timeProvider">Clock for the elapsed-time report. Null uses system time.</param>
+/// <param name="host">Where the sandbox is launched from. Null uses this machine.</param>
 public sealed partial class SandboxedCommandExecutor(
     RelayConfig config,
     SandboxedCommandLauncher? launcher = null,
     bool verboseDiagnostics = false,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    SandboxHost? host = null)
 {
     private readonly SandboxedCommandLauncher _launcher = launcher ?? RealLauncher;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+    // Resolved on use, not at construction: on Windows the first resolution probes the machine.
+    private SandboxHost Host => host ?? SandboxHost.Current;
 
     /// <summary>
     /// Runs an argv-form command: the program and its arguments reach the sandbox
@@ -74,19 +82,18 @@ public sealed partial class SandboxedCommandExecutor(
         if (Refuse(verdict) is { } refusal)
             return refusal;
 
-        var (fileName, launchArguments, launchError) = BuildLaunch(context.TargetRoot, verdict);
-        if (launchError is not null)
-            return ToolResult.Error(launchError);
+        var (launch, launchError) = BuildLaunch(context.TargetRoot, verdict);
+        if (launch is null)
+            return ToolResult.Error(launchError!);
 
-        var environment = SandboxedStage.BuildTargetCommandEnvironment(config);
         var startedAt = _timeProvider.GetTimestamp();
 
         CommandRunOutcome outcome;
         try
         {
             outcome = await _launcher(
-                fileName, launchArguments, context.TargetRoot, budget.Applied,
-                environment.Overrides, environment.Remove, cancellationToken);
+                launch.FileName, launch.Arguments, context.TargetRoot, budget.Applied,
+                launch.Environment, launch.EnvironmentRemove, launch.TreeControl, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -95,7 +102,7 @@ public sealed partial class SandboxedCommandExecutor(
         catch (Exception exception)
         {
             return ToolResult.Error(
-                $"the sandboxed command could not be launched ({fileName}): {exception.Message}");
+                $"the sandboxed command could not be launched ({launch.FileName}): {exception.Message}");
         }
 
         return Describe(outcome, budget, verdict.Rewritten, _timeProvider.GetElapsedTime(startedAt));

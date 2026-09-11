@@ -1,3 +1,5 @@
+using VisualRelay.Core.Execution;
+
 namespace VisualRelay.Core.Agent.Tools;
 
 /// <summary>What one launched command produced.</summary>
@@ -17,6 +19,7 @@ public readonly record struct CommandRunOutcome(int ExitCode, string Output, boo
 /// <param name="timeout">The timeout that was actually applied.</param>
 /// <param name="environment">Environment overrides for the child.</param>
 /// <param name="environmentRemove">Environment names to strip from the child.</param>
+/// <param name="treeControl">The control for a tree the host cannot see (behind wsl.exe), or null when the host sees it.</param>
 /// <param name="cancellationToken">Cancels the call.</param>
 /// <returns>What the command produced.</returns>
 public delegate Task<CommandRunOutcome> SandboxedCommandLauncher(
@@ -26,4 +29,5 @@ public delegate Task<CommandRunOutcome> SandboxedCommandLauncher(
     TimeSpan timeout,
     IReadOnlyDictionary<string, string> environment,
     IReadOnlySet<string> environmentRemove,
+    IProcessTreeControl? treeControl,
     CancellationToken cancellationToken);

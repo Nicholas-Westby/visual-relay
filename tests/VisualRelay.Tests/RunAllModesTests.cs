@@ -67,7 +67,6 @@ public sealed partial class RunAllModesTests
     [InlineData("guards")]
     [InlineData("install-hooks")]
     [InlineData("bump-version")]
-    [InlineData("provision-mxc")]
     public void AllCliCommands_AreRecognizedByRouter(string cmd)
     {
         Assert.True(CommandRouter.IsKnown(cmd),
@@ -82,7 +81,7 @@ public sealed partial class RunAllModesTests
         {
             "launch", "run", "build", "test", "format", "screenshot",
             "run-task", "init", "check", "inspect", "gen-sample",
-            "guards", "install-hooks", "bump-version", "provision-mxc",
+            "guards", "install-hooks", "bump-version",
         };
 
         foreach (var cmd in expected)
@@ -104,7 +103,7 @@ public sealed partial class RunAllModesTests
         {
             "launch", "build", "test", "format", "screenshot", "run-task",
             "init", "install-hooks", "bump-version", "check", "inspect",
-            "guards", "provision-mxc",
+            "guards",
         };
 
         foreach (var cmd in mustAppear)

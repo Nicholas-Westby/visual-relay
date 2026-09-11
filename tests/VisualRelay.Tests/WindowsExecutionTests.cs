@@ -3,11 +3,13 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Windows task-execution tests (Phase 3): git resolves through the PATHEXT helper
-/// (no xcrun, no <c>/bin/sh</c> fallback), and the shell test runner wraps the
-/// user's configured command in <c>cmd.exe /c</c> instead of <c>/bin/sh -lc</c>.
-/// The OS dispatch is a pure helper asserted on any OS; the real-git and real-shell
-/// cases are gated to Windows.
+/// Windows execution tests. Sandboxed runs on Windows go through wsl.exe (see the
+/// WSL launch tests: no cmd.exe batch, and the Linux tree is stopped from inside
+/// the distro rather than through a Windows tree kill). What remains native is the
+/// unsandboxed bootstrap validation where no usable distro exists (a cmd.exe batch),
+/// the host-side tree kill for native children such as the backend process, and
+/// git resolving through the PATHEXT helper. The OS dispatch is a pure helper
+/// asserted on any OS; the real-git and real-shell cases are gated to Windows.
 /// </summary>
 public sealed class WindowsExecutionTests
 {
@@ -39,11 +41,13 @@ public sealed class WindowsExecutionTests
     // ── ShellTestRunner runs a real command through cmd.exe on Windows ────
 
     [Fact]
-    public async Task ShellTestRunner_OnWindows_RunsCommandViaCmd()
+    public async Task ShellTestRunner_OnWindows_WithoutAUsableDistro_RunsCommandViaCmd()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows cmd.exe execution");
         using var repo = TestRepository.Create();
-        var runner = new ShellTestRunner(TimeSpan.FromSeconds(30));
+        // No resolved distro: the unsandboxed validation shell stays native. (With
+        // one, a drive-path repository is refused by the DrvFs policy instead.)
+        var runner = new ShellTestRunner(TimeSpan.FromSeconds(30), host: SandboxHost.Windows(null));
 
         var result = await runner.RunAsync(repo.Root, "echo hello-from-cmd");
 
@@ -51,7 +55,7 @@ public sealed class WindowsExecutionTests
         Assert.Contains("hello-from-cmd", result.Output, StringComparison.Ordinal);
     }
 
-    // ── Process-tree teardown on timeout (Windows) ───────────────────────
+    // ── Process-tree teardown on timeout (Windows, native children) ──────
 
     [Fact]
     public async Task ProcessCapture_OnWindows_TimeoutKillsChildTree()

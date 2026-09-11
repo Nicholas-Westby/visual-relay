@@ -78,7 +78,8 @@ public sealed partial class SandboxedTestRunner
     /// outlive the finished tests. <paramref name="hardCap"/> stays as the
     /// wall-clock backstop for a genuinely busy (CPU-active) hang the idle
     /// detector intentionally never trips. The outcome is interpreted by
-    /// <see cref="InterpretWatched"/>.
+    /// <see cref="InterpretWatched"/>. Behind wsl.exe the CPU samples and the
+    /// reap go through <paramref name="treeControl"/>, from inside the distro.
     /// </summary>
     internal static async Task<TestRunResult> RunWatchedAsync(
         string fileName, IReadOnlyList<string> args, string rootPath,
@@ -86,7 +87,8 @@ public sealed partial class SandboxedTestRunner
         int firstOutputTimeoutMs, int idleGraceMs, TimeSpan hardCap,
         int cpuSampleIntervalMs, CancellationToken cancellationToken,
         TimeProvider? timeProvider = null,
-        IReadOnlySet<string>? envRemove = null)
+        IReadOnlySet<string>? envRemove = null,
+        IProcessTreeControl? treeControl = null)
     {
         var tp = timeProvider ?? TimeProvider.System;
         var sw = Stopwatch.StartNew();
@@ -104,7 +106,8 @@ public sealed partial class SandboxedTestRunner
         var processTask = ProcessCapture.RunAsync(
             fileName, args, rootPath, hardCap, cancellationToken,
             environment: environment, envRemove: envRemove, killToken: watchdogCts.Token,
-            onActivity: watchdog.Pulse, cpuSampleIntervalMs: cpuSampleIntervalMs, timeProvider: tp);
+            onActivity: watchdog.Pulse, cpuSampleIntervalMs: cpuSampleIntervalMs, timeProvider: tp,
+            treeControl: treeControl);
         var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
 
         var reapedOnIdle = false;

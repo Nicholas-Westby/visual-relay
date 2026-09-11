@@ -36,31 +36,49 @@ public static partial class SandboxedStage
     /// command's output. This is OUTPUT-ONLY: enforcement, the loaded profile, the
     /// network policy, and the child exit code are all unchanged. Passing <c>true</c>
     /// restores nono's full diagnostics for debugging the sandbox itself.
+    /// Every path nono is handed is named as nono sees it from <paramref name="host"/>
+    /// (null: this machine): on Windows the profile's Linux placement and each
+    /// grant's view from inside the distro.
     /// </summary>
     internal static IReadOnlyList<string> BuildNonoPrefix(
         RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null,
         bool verboseDiagnostics = false, string? userTemplatesDirOverride = null,
-        string? workspaceRoot = null, bool requestDiagnostics = false)
+        string? workspaceRoot = null, bool requestDiagnostics = false, SandboxHost? host = null)
     {
-        // Load by absolute path, not the global profile name: NonoProfileEnsurer
-        // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
-        // wrote (overwrite-always) at run start, so the sandbox can never run under
-        // a stale installed-by-name copy.
-        var args = new List<string> { "run", "--profile", NonoProfileEnsurer.ResolveProfilePath(), "--allow-cwd" };
-
-        if (config.SandboxExtraAllowPaths is { Count: > 0 } paths)
-        {
-            foreach (var path in paths) { args.Add("-a"); args.Add(path); }
-        }
-
         // Standing write grant for the user task-templates dir so sandboxed runs can
         // author and update templates. Created eagerly so the grant always resolves
         // and users can discover the folder. Kilobytes of markdown — negligible
         // against nono's rollback-preflight copy budget.
         var templatesDir = userTemplatesDirOverride ?? TaskTemplates.ResolveUserTemplatesDir();
         Directory.CreateDirectory(templatesDir);
-        args.Add("-a");
-        args.Add(templatesDir);
+
+        return ComposeNonoPrefix(
+            config, rollback, skipDirs, verboseDiagnostics, templatesDir, workspaceRoot, requestDiagnostics,
+            host ?? SandboxHost.Current);
+    }
+
+    /// <summary>
+    /// The prefix itself, with no side effect: <see cref="BuildNonoPrefix"/> minus
+    /// the templates directory creation, so the path mapping of a host this machine
+    /// is not (the WSL host on a Unix test box) can be pinned without creating a
+    /// foreign path here. A grant the host cannot express is left out.
+    /// </summary>
+    internal static IReadOnlyList<string> ComposeNonoPrefix(
+        RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs, bool verboseDiagnostics,
+        string templatesDir, string? workspaceRoot, bool requestDiagnostics, SandboxHost host)
+    {
+        // Load by absolute path, not the global profile name: NonoProfileEnsurer
+        // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
+        // wrote (overwrite-always) at run start, so the sandbox can never run under
+        // a stale installed-by-name copy.
+        var args = new List<string> { "run", "--profile", host.ProfilePath, "--allow-cwd" };
+
+        if (config.SandboxExtraAllowPaths is { Count: > 0 } paths)
+        {
+            foreach (var path in paths) AddGrant(args, host, path);
+        }
+
+        AddGrant(args, host, templatesDir);
 
         // Auto-grant the workspace volume's .TemporaryItems directory when the
         // workspace root lives on an external macOS volume. Foundation atomic writes
@@ -68,17 +86,10 @@ public static partial class SandboxedStage
         // EPERM (PolicyBlocked) for swift build, swiftformat, and any tool doing
         // NSWriteAuxiliaryFile. This is an internal-only grant; users cannot add it
         // via SandboxExtraAllowPaths (RelayConfigLoader rejects paths outside $HOME).
-        if (workspaceRoot is { Length: > 0 })
-        {
-            var volumeTemp = WorkspaceVolumeTempDir.Resolve(workspaceRoot);
-            if (volumeTemp is not null)
-            {
-                // nono accepts -a for paths that don't yet exist. If it ever doesn't,
-                // best-effort create and fall back to no grant — never fail the run.
-                args.Add("-a");
-                args.Add(volumeTemp);
-            }
-        }
+        // nono accepts -a for paths that don't yet exist. If it ever doesn't,
+        // best-effort create and fall back to no grant — never fail the run.
+        if (workspaceRoot is { Length: > 0 } && WorkspaceVolumeTempDir.Resolve(workspaceRoot) is { } volumeTemp)
+            AddGrant(args, host, volumeTemp);
 
         if (skipDirs is { Count: > 0 })
         {
@@ -103,6 +114,16 @@ public static partial class SandboxedStage
 
         args.Add("--");
         return args;
+    }
+
+    // One -a grant, as the host's nono sees the path; nothing when it cannot.
+    private static void AddGrant(List<string> args, SandboxHost host, string path)
+    {
+        if (host.MapGrant(path) is { } grant)
+        {
+            args.Add("-a");
+            args.Add(grant);
+        }
     }
 
     /// <summary>

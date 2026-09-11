@@ -17,16 +17,18 @@ public static class WslLauncher
 {
     /// <summary>
     /// The fixed script wsl.exe runs (<c>sh -c &lt;Envelope&gt; vr &lt;pidFile&gt;
-    /// &lt;workspace&gt; &lt;command...&gt;</c>). It changes into the workspace and
-    /// exits 127 when that fails (wsl.exe's own <c>--cd</c> failure is non-fatal
-    /// and would silently run the command in the home directory); starts the
-    /// command through setsid so the sandbox root leads its own session and
-    /// process group (one <c>kill -- -pgid</c> from outside reaches the whole
-    /// tree, which killing wsl.exe never does); records that pid in the pid file;
-    /// and waits so the command's exit code is the envelope's.
+    /// &lt;workspace&gt; &lt;command...&gt;</c>). It creates the pid file's directory
+    /// (a fresh distro has none, and the echo below would fail silently); changes
+    /// into the workspace and exits 127 when that fails (wsl.exe's own <c>--cd</c>
+    /// failure is non-fatal and would silently run the command in the home
+    /// directory); starts the command through setsid so the sandbox root leads its
+    /// own session and process group (one <c>kill -- -pgid</c> from outside
+    /// reaches the whole tree, which killing wsl.exe never does); records that pid
+    /// in the pid file; and waits so the command's exit code is the envelope's.
     /// </summary>
     public const string Envelope =
-        "p=$1; d=$2; shift 2; cd \"$d\" || exit 127; setsid \"$@\" & c=$!; echo \"$c\" > \"$p\"; wait \"$c\"";
+        "p=$1; d=$2; shift 2; mkdir -p \"$(dirname \"$p\")\" || exit 127; cd \"$d\" || exit 127; "
+        + "setsid \"$@\" & c=$!; echo \"$c\" > \"$p\"; wait \"$c\"";
 
     private const string Shell = "/bin/sh";
     private const string ScriptName = "vr";
