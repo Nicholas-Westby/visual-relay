@@ -27,8 +27,14 @@ public sealed partial class RelayDriver
             return null;
         }
 
+        // A stage's advisory calls (the Author-tests diff audit) are not attempts —
+        // they run inside one attempt and write their own report — but the run paid
+        // for them at this stage, so the stage's total has to include them. They
+        // parse to attempt 0 and therefore sort before every real attempt, leaving
+        // the model and the shape of the estimate to the stage's own last attempt.
         var attempts = Directory
             .EnumerateFiles(taskDirectory, $"stage{stageNumber}-attempt*.report.json")
+            .Concat(Directory.EnumerateFiles(taskDirectory, $"stage{stageNumber}-audit*.report.json"))
             .Select(path => (path, estimate: TryEstimateCost(path)))
             .Where(entry => entry.estimate is not null)
             .OrderBy(entry => RelayAttempt.AttemptNumber(Path.GetFileName(entry.path)))

@@ -80,7 +80,7 @@ continues (Verify still gates the end result). The reason names what to fix:
 | `no test files declared` | The stage returned an empty `testFiles`, so there was nothing to gate. | Fine for a docs-only or config-only change; otherwise the task needs a test. |
 | `placeholder test command` | `testCmd` is the bootstrap placeholder: it exits 0 having run nothing. | Set a real `testCmd` in `.relay/config.json`, or re-run `bootstrap` once the project has a toolchain. |
 | `gate command unusable` | The command exited 127 (not found) or reported that it collected no tests. | Check `testFileCmd`: its `{files}` expansion must name runnable test files for this project. |
-| `no implementation to strip` | The tests passed and nothing outside them was in the manifest, so nothing could be taken away. | Expected for regression coverage of an already-correct behaviour; otherwise the plan's manifest is missing the file the change belongs in. |
+| `no implementation to strip` | The new tests pass against the current code, and nothing outside them could be taken away to make them fail. | So either the behaviour already exists (regression coverage, which is fine) or the tests do not exercise the change. Read the stage-5 diff to tell which. |
 | `green before implementation` | The tests passed with everything still in place, and at least one declared test file can carry implementation. The stage was re-asked once and still came back green. | Read the stage-5 diff: the change was probably implemented inside the test file, or the tests do not exercise it. |
 
 Every outcome is in `run.log` as a `verify_result` for stage 5, naming the
@@ -100,8 +100,9 @@ fix a repository it reads wrongly:
   about files that really are this project's tests. Bootstrap only creates the key;
   it never overwrites your globs.
 - **`authorTests.inlineTestExtensions`** — extensions whose files may carry tests
-  beside the implementation. Files with these extensions are never reverted for
-  "not being a test", and are judged by the as-is red check instead of by path.
+  beside the implementation. Every file on the model's test-file list is kept
+  whatever its extension; an inline-capable extension only changes how the gate
+  judges it (the as-is red check rather than the path).
   Bootstrap fills it from the detected languages (`[".rs"]` for Rust, `[".zig"]`
   for Zig, and so on) and empties it for a repository whose languages all keep
   tests in files of their own.

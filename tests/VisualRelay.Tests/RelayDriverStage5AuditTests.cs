@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using VisualRelay.Core.Costs;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
@@ -87,12 +88,21 @@ public sealed class RelayDriverStage5AuditTests
         var outcome = await driver.RunTaskAsync(repo.Root, "audit");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        // Two audits (one per gate pass), one re-ask: the second pass cannot buy another.
-        Assert.Equal(2, runner.AuditCalls.Count);
+        // One audit and one re-ask: the re-asked pass is not audited again, because
+        // the single re-ask it could have asked for is already spent.
+        Assert.Single(runner.AuditCalls);
         Assert.Equal(2, runner.Stage5Inputs.Count);
         var reask = Assert.Single(sink.Events, e => e.EventName == "author_test_reask");
         Assert.Equal("tests/app.tests.cs", reask.Data!["files"]);
         Assert.Equal("implementation hunks in the test diff", reask.Data["reason"]);
+        // The gate went red, so the message must say what the audit found and must
+        // not claim the tests passed.
+        Assert.Contains(
+            "An audit of your test diff reported implementation changes inside the files you "
+            + "listed as tests: tests/app.tests.cs.",
+            runner.Stage5Inputs[1], StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "passed before any implementation was stripped", runner.Stage5Inputs[1], StringComparison.Ordinal);
         var audit = sink.Events.First(e => e.EventName == "author_test_audit");
         Assert.Equal("1", audit.Data!["hunks"]);
         Assert.Equal("tests/app.tests.cs", audit.Data["files"]);
@@ -122,6 +132,56 @@ public sealed class RelayDriverStage5AuditTests
     }
 
     [Fact]
+    public async Task Stage5_AuditAndReaskCosts_ReachTheStagesOwnEntry()
+    {
+        var (repo, sim, runner, sink) = Fixture(
+            "always", ["tests/app.tests.cs"], auditAnswer: OneHunk, costReports: true);
+        using var owned = repo;
+        var driver = Driver(runner, sim, sink,
+            new TestRunResult(1, "1 failed"), new TestRunResult(1, "1 failed"), new TestRunResult(0, "ok"));
+
+        await driver.RunTaskAsync(repo.Root, "audit");
+
+        // Three priced calls: the stage, its re-ask, and the one audit. The loop's
+        // own sweep runs before the last two, so the entry has to be re-priced.
+        var taskDirectory = Path.Combine(repo.Root, ".relay", "audit");
+        var attempt1 = ReportCost(taskDirectory, "stage5-attempt1");
+        var expected = attempt1
+            + ReportCost(taskDirectory, "stage5-attempt2")
+            + ReportCost(taskDirectory, "stage5-audit1");
+        var costUsd = RelayDriverStage5GateTests.Stage5Status(repo, "audit").CostUsd;
+
+        Assert.True(attempt1 > 0, "the scripted reports should price");
+        Assert.NotNull(costUsd);
+        Assert.Equal(expected, costUsd!.Value, 10);
+    }
+
+    [Fact]
+    public async Task Stage5_ReaskAnswerUnusable_WarnsAndDiscardsWhatItWrote()
+    {
+        var (repo, sim, runner, sink) = Fixture(
+            "always", ["tests/app.tests.cs"], auditAnswer: OneHunk, reaskFails: true,
+            // The re-asked stage edits production code and then answers unusably.
+            reaskWrites: new Dictionary<string, string> { ["src/control.rs"] = "sneaked in\n" });
+        using var owned = repo;
+        var driver = Driver(runner, sim, sink, new TestRunResult(1, "1 failed"));
+
+        await driver.RunTaskAsync(repo.Root, "audit");
+
+        Assert.Equal(2, runner.Stage5Inputs.Count);
+        var invalid = Assert.Single(
+            sink.Events, e => e.EventName == "author_test_reask" && e.Data!.ContainsKey("result"));
+        Assert.Equal("invalid", invalid.Data!["result"]);
+        Assert.Equal("warn", invalid.Level);
+        Assert.Contains("the answer was unusable", await Ledger(repo), StringComparison.Ordinal);
+        // Attempt 2's edit is gone: an unreadable answer leaves no code behind.
+        Assert.Equal("old\n", await File.ReadAllTextAsync(Path.Combine(repo.Root, "src", "control.rs")));
+        // The first pass's result stands, so there is one gate record, not two.
+        Assert.Single(RelayDriverStage5GateTests.Stage5VerifyResults(sink));
+        Assert.Equal("red", RelayDriverStage5GateTests.Stage5Status(repo, "audit").Check);
+    }
+
+    [Fact]
     public async Task Stage5_AuditCallFails_LogsTheErrorAndCarriesOn()
     {
         var (repo, sim, runner, sink) = Fixture("always", ["tests/app.tests.cs"]);
@@ -141,7 +201,14 @@ public sealed class RelayDriverStage5AuditTests
     // ── helpers ──────────────────────────────────────────────────────────
 
     private static (TestRepository Repo, GitSimEngine Sim, AuthorTestStageRunner Runner, InMemoryRelayEventSink Sink)
-        Fixture(string mode, IReadOnlyList<string> testFiles, string? inlineExtension = null, string? auditAnswer = null)
+        Fixture(
+            string mode,
+            IReadOnlyList<string> testFiles,
+            string? inlineExtension = null,
+            string? auditAnswer = null,
+            bool costReports = false,
+            bool reaskFails = false,
+            IReadOnlyDictionary<string, string>? reaskWrites = null)
     {
         var repo = TestRepository.Create();
         repo.WriteConfig("test-suite", [], testFileCmd: "test-one {files}");
@@ -155,7 +222,10 @@ public sealed class RelayDriverStage5AuditTests
             testFiles,
             testFiles.ToDictionary(file => file, _ => "authored\n"))
         {
-            AuditAnswer = auditAnswer
+            AuditAnswer = auditAnswer,
+            CostReports = costReports,
+            ReaskFails = reaskFails,
+            ReaskWrites = reaskWrites
         };
         return (repo, sim, runner, new InMemoryRelayEventSink());
     }
@@ -168,6 +238,10 @@ public sealed class RelayDriverStage5AuditTests
 
     private static Task<string> Ledger(TestRepository repo) =>
         RelayDriverStage5GateTests.LedgerAsync(repo, "audit");
+
+    /// <summary>What one scripted stage report prices at.</summary>
+    private static double ReportCost(string taskDirectory, string stem) =>
+        RelayCostEstimator.EstimateReport(Path.Combine(taskDirectory, stem + ".report.json")).CostUsd;
 
     /// <summary>Sets <c>authorTests.diffAudit</c>, which bootstrap only ever seeds.</summary>
     private static void WriteDiffAudit(TestRepository repo, string mode, string? inlineExtension)

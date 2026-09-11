@@ -130,12 +130,10 @@ public static class ProjectBootstrapper
     /// </summary>
     public static async Task<bool> TryUpgradePlaceholderTestCommandAsync(
         string rootPath,
-        IGitInvoker? gitInvoker = null,
+        IGitInvoker gitInvoker,
         ITestRunner? validationRunner = null,
         CancellationToken cancellationToken = default)
     {
-        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
-
         var loaded = await RelayConfigLoader.TryLoadAsync(rootPath, cancellationToken);
         if (loaded.Status != RelayConfigStatus.Loaded
             || !string.Equals(loaded.Config.TestCommand, PlaceholderTestCommand, StringComparison.Ordinal))
@@ -152,7 +150,7 @@ public static class ProjectBootstrapper
 
         RelayConfigWriter.UpsertResolvedToolchain(rootPath, command);
 
-        var layout = await TestLayoutDetector.DetectAsync(rootPath, gi, cancellationToken);
+        var layout = await TestLayoutDetector.DetectAsync(rootPath, gitInvoker, cancellationToken);
         RelayConfigWriter.UpsertAuthorTests(rootPath, layout);
 
         return true;

@@ -189,12 +189,15 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     {
                         var s5 = await RunStage5WithReaskAsync(rootPath, runId, taskId, taskDirectory,
                             config, stage, input, manifest, ledger, statusEntries, json, body,
-                            implementationFrontLoaded, cancellationToken);
+                            invocation.ReportFile, implementationFrontLoaded, cancellationToken);
                         if (s5.Outcome is { } o)
                             return o;
                         body = s5.Body; check = s5.Check; checkReason = s5.Reason;
                         testDurationSeconds = s5.TestDurationSeconds;
-                        sessionCostUsd += s5.CostDelta; unknownCostStageCount += s5.UnknownCostDelta;
+                        // The sweep above ran before the re-ask and the audit wrote theirs.
+                        var s5Cost = RepriceStage5(taskDirectory, cost);
+                        cost = s5Cost.Cost;
+                        sessionCostUsd += s5Cost.SessionDelta; unknownCostStageCount += s5Cost.UnknownDelta;
                         implementationFrontLoaded = s5.ImplementationFrontLoaded;
                     }
 

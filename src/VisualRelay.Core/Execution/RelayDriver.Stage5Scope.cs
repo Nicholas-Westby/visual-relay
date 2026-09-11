@@ -65,18 +65,27 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// What attempt 2 is told, appended verbatim to the stage input. It states
-    /// the fact (the tests passed with the implementation still in place) and the
-    /// two ways out, without naming a language or a framework.
+    /// What attempt 2 is told, appended verbatim to the stage input. Each trigger
+    /// states its own fact — the gate's green before anything was stripped, or the
+    /// audit's reading of the diff — because a gate that went red must never be
+    /// described to the model as having passed. Neither names a language.
     /// </summary>
-    /// <param name="files">The declared test files that can carry implementation.</param>
+    /// <param name="reask">The re-ask being made, which decides the wording.</param>
     /// <returns>The message.</returns>
-    private static string AuthorTestReaskMessage(IReadOnlyList<string> files) =>
-        "Your new tests passed before any implementation was stripped, and at least one file "
-        + $"you listed as a test file can carry implementation: {string.Join(", ", files)}. Either "
-        + "the change was implemented inside a test file, or the tests do not exercise the change. "
-        + "Remove every implementation change from the test files so the new tests fail against the "
-        + "current code, or rewrite the tests so they fail. Do not touch implementation files.";
+    private static string AuthorTestReaskMessage(AuthorTestReask reask)
+    {
+        var files = string.Join(", ", reask.Files);
+        return string.Equals(reask.Reason, AuthorTestGateOutcome.GreenBeforeImplementation, StringComparison.Ordinal)
+            ? "Your new tests passed before any implementation was stripped, and at least one file "
+              + $"you listed as a test file can carry implementation: {files}. Either "
+              + "the change was implemented inside a test file, or the tests do not exercise the change. "
+              + "Remove every implementation change from the test files so the new tests fail against the "
+              + "current code, or rewrite the tests so they fail. Do not touch implementation files."
+            : "An audit of your test diff reported implementation changes inside the files you listed "
+              + $"as tests: {files}. Remove every implementation change from the test files so that only "
+              + "tests remain and the new tests fail against the current code; do not touch "
+              + "implementation files.";
+    }
 
     private Task PublishAuthorTestReaskAsync(
         string rootPath, string runId, string taskId, RelayStageDefinition stage,
@@ -87,6 +96,50 @@ public sealed partial class RelayDriver
                 ["reason"] = reask.Reason,
                 ["files"] = string.Join(',', reask.Files)
             }, cancellationToken);
+
+    /// <summary>
+    /// Handles a re-asked stage that answered with nothing the driver could read.
+    /// The first pass's outcome stands, so the first pass's tree must stand too:
+    /// the stage was asked to take implementation OUT of its test files, and an
+    /// unreadable answer is no licence to leave whatever attempt 2 wrote behind.
+    /// The filter runs again over attempt 1's declared list, and the warning says
+    /// why there is no second gate record to find.
+    /// </summary>
+    /// <param name="rootPath">The workspace root.</param>
+    /// <param name="runId">The run this belongs to.</param>
+    /// <param name="taskId">The task being run.</param>
+    /// <param name="config">The repository config, for the tasks directory.</param>
+    /// <param name="stage">The stage definition, for the event's stage and tier.</param>
+    /// <param name="reask">The re-ask that was made.</param>
+    /// <param name="testFiles">Attempt 1's declared test files, normalized.</param>
+    /// <param name="ledger">The ledger to write the note to.</param>
+    /// <param name="cancellationToken">Cancels the filter.</param>
+    private async Task DiscardUnusableReaskAsync(
+        string rootPath,
+        string runId,
+        string taskId,
+        RelayConfig config,
+        RelayStageDefinition stage,
+        AuthorTestReask reask,
+        IReadOnlyList<string> testFiles,
+        StringBuilder ledger,
+        CancellationToken cancellationToken)
+    {
+        await PublishStage5EventAsync("warn", "author_test_reask", rootPath, runId, taskId, stage,
+            new Dictionary<string, string>
+            {
+                ["reason"] = reask.Reason,
+                ["result"] = "invalid"
+            }, cancellationToken);
+
+        var filtered = await WorktreeFilter.DiscardNonTestEditsAsync(
+            rootPath, testFiles, config.TasksDir, _dependencies.GitInvoker, cancellationToken);
+        var discarded = filtered.TrackedDiscarded.Count + filtered.UntrackedDeleted.Count;
+        ledger.AppendLine(
+            "> **Re-ask (stage 5)**: the answer was unusable; the first result stands, "
+            + $"{discarded} file(s) discarded.");
+        ledger.AppendLine();
+    }
 
     private Task PublishAuthorTestUnprovenAsync(
         string rootPath, string runId, string taskId, RelayStageDefinition stage,

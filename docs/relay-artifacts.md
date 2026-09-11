@@ -43,7 +43,7 @@ in `red`, `unproven` with a reason, or a flag, and says so in `run.log`.
 | `author_test_scope_suspect` | warn | `files`, `scope` | A declared test file is neither a recognized test path nor an inline-capable extension. The entry is kept; this says it was believed, not verified. |
 | `author_test_gate_unusable` | warn | `command`, `reason`, `exitCode` and `outputTail` when a command ran | Exit 127, "no tests found/collected", or the bootstrap placeholder. |
 | `author_test_audit` | info | `mode`, `hunks` (count), `files`, `reasons` (clipped to 240 characters), or `error` when the call failed | One cheap-tier read of the stage's own diff, when `authorTests.diffAudit` asks for it. |
-| `author_test_reask` | info | `reason`, `files` | The one re-ask: either the tests passed with the implementation still in place and a declared file can carry implementation, or the audit reported a hunk. |
+| `author_test_reask` | info | `reason`, `files`; a second one carrying `result: invalid` when the re-asked stage answered unusably | The one re-ask: either the tests passed with the implementation still in place and a declared file can carry implementation, or the audit reported a hunk. `result: invalid` says the first pass's outcome stands, which is why there is no second gate record. |
 | `author_test_unproven` | warn | `reason` | The stage's final check is `unproven`. |
 
 `scope` reads `path=separate;path=inline-capable;path=suspect` — how each declared
@@ -55,8 +55,10 @@ reason of its own, `implementation hunks in the test diff`, for the re-ask the
 audit asks for; the audit never records a check.
 
 The audit's own call leaves `.relay/<task>/stage5-audit{n}/` and
-`stage5-audit{n}.report.json` beside the stage attempts — one per call, and its
-cost is folded into stage 5's like the re-ask's is.
+`stage5-audit{n}.report.json` beside the stage attempts, one per call. Neither is a
+stage attempt, so what the audit and the re-ask cost is folded into stage 5's entry
+explicitly: status.json's stage-5 `costUsd` and the stage's `stage_done` carry the
+whole stage, the audit's calls included, and so does the session total.
 
 `status.json` carries the verdict per stage. Each entry holds `stage`, `name`,
 `status`, `check`, `reason`, `durationSeconds`, `costUsd`, `turns`, `model`,

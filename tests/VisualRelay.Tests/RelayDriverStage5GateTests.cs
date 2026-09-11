@@ -198,6 +198,35 @@ public sealed class RelayDriverStage5GateTests
     }
 
     [Fact]
+    public async Task Stage5_PlusPrefixedTestFile_IsReadTheWayTheFilterReadsIt()
+    {
+        // "+path" is the Plan stage's new-file marker and the model repeats it
+        // here. The worktree filter has always stripped it, so everything else
+        // must too, or the file is kept and then gated under a name nothing knows.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], testFileCmd: "dotnet test {files}");
+        repo.WriteTask("plus", "# Prefixed test file\n");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/app.cs", "old\n");
+        sim.Commit(repo.Root, "seed");
+        var runner = new AuthorTestStageRunner(
+            ["src/app.cs", "+tests/app.tests.cs"], ["+tests/app.tests.cs"],
+            new Dictionary<string, string> { ["tests/app.tests.cs"] = "authored\n" });
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner,
+                new ScriptedTestRunner(new TestRunResult(1, "1 failed")), sink, sim),
+            RelayDriverOptions.NoGitCommit);
+
+        await driver.RunTaskAsync(repo.Root, "plus");
+
+        var verify = Assert.Single(Stage5VerifyResults(sink));
+        Assert.Equal("dotnet test tests/app.tests.cs", verify.Data!["command"]);
+        Assert.Equal("tests/app.tests.cs=separate", verify.Data["scope"]);
+        Assert.DoesNotContain(sink.Events, e => e.EventName == "author_test_scope_suspect");
+    }
+
+    [Fact]
     public async Task Stage5_NoTestFilesDeclared_RecordsUnproven()
     {
         using var repo = TestRepository.Create();

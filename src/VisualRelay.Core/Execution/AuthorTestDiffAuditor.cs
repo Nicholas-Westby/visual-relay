@@ -132,6 +132,8 @@ public static partial class AuthorTestDiffAuditor
         try
         {
             var diff = await BuildDiffAsync(rootPath, testFiles, git, cancellationToken);
+            // The call's report lands beside the stage's own attempts, where the
+            // stage's cumulative pricing picks it up; nothing is carried back.
             var answer = await runner.RunAsync(
                 Invocation(rootPath, taskId, runId, BuildPrompt(diff), config), cancellationToken);
             result = Read(answer);
@@ -147,15 +149,6 @@ public static partial class AuthorTestDiffAuditor
             cancellationToken);
         return result;
     }
-
-    /// <summary>
-    /// The report the latest call wrote, which is where its cost is read from.
-    /// </summary>
-    /// <param name="rootPath">The workspace root.</param>
-    /// <param name="taskId">The task being run.</param>
-    /// <returns>The absolute path of the report file.</returns>
-    internal static string ReportFile(string rootPath, string taskId) =>
-        TraceDirectory(rootPath, taskId, Math.Max(CallCount(rootPath, taskId), 1)) + ".report.json";
 
     private static StageInvocation Invocation(
         string rootPath, string taskId, string runId, string prompt, RelayConfig config)
@@ -213,9 +206,11 @@ public static partial class AuthorTestDiffAuditor
         try
         {
             using var document = JsonDocument.Parse(json);
+            // An object without the array is not a verdict: the model answered
+            // something, but not the question, so nothing was established.
             if (!document.RootElement.TryGetProperty("implementationHunks", out var hunks)
                 || hunks.ValueKind != JsonValueKind.Array)
-                return new AuthorTestAuditResult([], null);
+                return new AuthorTestAuditResult([], "the audit answered without an implementationHunks array");
 
             return new AuthorTestAuditResult([.. hunks.EnumerateArray().Select(Hunk).OfType<AuthorTestAuditHunk>()], null);
         }

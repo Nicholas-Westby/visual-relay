@@ -67,6 +67,39 @@ public sealed class FailedRunContextReaderTests
         }
     }
 
+    // ── the author-test gate is not a verify failure ─────────────────────────
+
+    [Fact]
+    public void Read_AuthorTestGateOutput_IsNotFailureEvidence()
+    {
+        var dir = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "NEEDS-REVIEW"), "flag reason line\nstage 10\n");
+            // Stage 5's record: a proven red is the gate working, and an unproven
+            // one has no output at all. Neither is something to ask a fix for.
+            File.WriteAllText(
+                Path.Combine(dir, "stage5-attempt1.verify-output.txt"),
+                "# verify output (autopsy artifact)\n# check: red\n[FAIL] the new test fails\n");
+            File.WriteAllText(
+                Path.Combine(dir, "stage5-attempt2.verify-output.txt"),
+                "# verify output (autopsy artifact)\n# check: unproven\n");
+            File.WriteAllText(
+                Path.Combine(dir, "stage10-attempt1.verify-output.txt"),
+                "# verify output (autopsy artifact)\n# check: red\n[FAIL] the real failure\n");
+
+            var ctx = FailedRunContextReader.Read(dir);
+
+            var only = Assert.Single(ctx.VerifyOutputs);
+            Assert.Equal(10, only.Stage);
+            Assert.DoesNotContain("the new test fails", only.Summary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectory(dir);
+        }
+    }
+
     // ── test red: [FAIL] lines preserved ─────────────────────────────────────
 
     [Fact]

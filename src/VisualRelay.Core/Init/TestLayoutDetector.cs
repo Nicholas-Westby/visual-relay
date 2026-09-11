@@ -50,11 +50,14 @@ public static partial class TestLayoutDetector
     public static async Task<TestLayoutDetection> DetectAsync(
         string rootPath, IGitInvoker git, CancellationToken cancellationToken)
     {
-        var (exitCode, output, timedOut) = await git.RunAsync(rootPath, ["ls-files"], cancellationToken);
+        // -z: NUL-delimited and never C-quoted, so a non-ASCII name cannot come
+        // back as "src/caf\303\251.rs" and count as a file with the extension
+        // ".rs\"" — or, worse, as a language the repository does not use.
+        var (exitCode, output, timedOut) = await git.RunAsync(rootPath, ["ls-files", "-z"], cancellationToken);
         if (exitCode != 0 || timedOut)
             return Empty;
 
-        var tracked = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var tracked = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         return Detect(tracked, path => ReadHead(rootPath, path));
     }
 

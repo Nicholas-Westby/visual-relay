@@ -37,6 +37,16 @@ internal static partial class WorktreeFilter
     }
 
     /// <summary>
+    /// The declared test-file list as this filter reads it, so every other reader
+    /// of the list — the scope check, the strip set, the targeted command and the
+    /// diff audit — can agree with what was kept and what was reverted.
+    /// </summary>
+    /// <param name="testFiles">The list exactly as the stage declared it.</param>
+    /// <returns>The same entries, normalized, with blanks dropped.</returns>
+    internal static IReadOnlyList<string> NormalizeTestFileList(IReadOnlyList<string> testFiles) =>
+        [.. testFiles.Select(NormalizeRepoRelativePath).Where(path => path.Length > 0)];
+
+    /// <summary>
     /// Discard every dirty tracked and new untracked file that is <b>not</b>
     /// in <paramref name="testFiles"/>.
     /// </summary>

@@ -18,7 +18,11 @@ public static partial class RelayRunHistory
             return new TaskRunMetric(taskId, []);
         }
 
+        // Advisory calls (the Author-tests diff audit) are reported against the
+        // stage that made them, exactly as the live stage_done folds them in, so
+        // the archived squash and the live event stay equal by construction.
         var stages = Directory.EnumerateFiles(taskDirectory, "stage*-attempt*.report.json")
+            .Concat(Directory.EnumerateFiles(taskDirectory, "stage*-audit*.report.json"))
             .Select(ReadStageMetric)
             .Where(metric => metric is not null)
             .Cast<StageRunMetric>()
@@ -176,6 +180,6 @@ public static partial class RelayRunHistory
         return File.GetLastWriteTimeUtc(reportPath);
     }
 
-    [GeneratedRegex(@"^stage(\d+)-attempt\d+\.report\.json$")]
+    [GeneratedRegex(@"^stage(\d+)-(?:attempt|audit)\d+\.report\.json$")]
     private static partial Regex ReportNameRegex();
 }

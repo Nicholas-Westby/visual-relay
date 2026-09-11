@@ -31,8 +31,20 @@ internal sealed class AuthorTestStageRunner(
     /// <summary>When true the audit's call comes back invalid, as a failed call does.</summary>
     public bool AuditFails { get; set; }
 
+    /// <summary>When true every call leaves the stage report a real runner leaves.</summary>
+    public bool CostReports { get; init; }
+
+    /// <summary>When true the re-asked stage (the second stage-5 call) answers unusably.</summary>
+    public bool ReaskFails { get; init; }
+
+    /// <summary>What that unusable re-ask writes to the tree before it answers.</summary>
+    public IReadOnlyDictionary<string, string>? ReaskWrites { get; init; }
+
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
+        if (CostReports)
+            StageReportSeed.Write(invocation);
+
         if (invocation.Stage.Name == AuthorTestDiffAuditor.StageName)
         {
             _auditCalls.Add(invocation);
@@ -45,12 +57,13 @@ internal sealed class AuthorTestStageRunner(
         if (invocation.Stage.Number == 5)
         {
             _stage5Inputs.Add(invocation.TaskInput);
-            foreach (var (relative, content) in stage5Writes ?? new Dictionary<string, string>())
+            if (ReaskFails && _stage5Inputs.Count > 1)
             {
-                var full = Path.Combine(invocation.TargetRoot, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                File.WriteAllText(full, content);
+                WriteAll(invocation.TargetRoot, ReaskWrites);
+                return Task.FromResult(new SubagentResult(string.Empty, null, false, "re-ask failed"));
             }
+
+            WriteAll(invocation.TargetRoot, stage5Writes);
         }
 
         var json = invocation.Stage.Number switch
@@ -69,6 +82,16 @@ internal sealed class AuthorTestStageRunner(
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+
+    private static void WriteAll(string root, IReadOnlyDictionary<string, string>? writes)
+    {
+        foreach (var (relative, content) in writes ?? new Dictionary<string, string>())
+        {
+            var full = Path.Combine(root, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllText(full, content);
+        }
     }
 }
 

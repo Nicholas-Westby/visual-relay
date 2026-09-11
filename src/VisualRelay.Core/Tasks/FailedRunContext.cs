@@ -31,6 +31,12 @@ public sealed record FailedVerifyOutput(int Stage, int Attempt, string Summary);
 /// </summary>
 public static class FailedRunContextReader
 {
+    /// <summary>
+    /// Author-tests. Its verify output records the red gate, which is the stage
+    /// succeeding, so it is never failure evidence.
+    /// </summary>
+    private const int AuthorTestGateStage = 5;
+
     public static FailedRunContext Read(string taskDirectory)
     {
         // ── NEEDS-REVIEW ────────────────────────────────────────────────
@@ -93,6 +99,13 @@ public static class FailedRunContextReader
                         continue;
 
                     var stage = int.Parse(m.Groups[1].Value);
+                    // Stage 5's record is the author-test gate, and a red there is
+                    // the stage working: the tests fail before the fix exists. It
+                    // is not a verify failure, and handing it to the fix-task
+                    // author asks for a "fix" that would delete the proof.
+                    if (stage == AuthorTestGateStage)
+                        continue;
+
                     var attempt = int.Parse(m.Groups[2].Value);
                     var tail = ReadTail(file, 200);
                     var summary = ExtractSummary(tail);

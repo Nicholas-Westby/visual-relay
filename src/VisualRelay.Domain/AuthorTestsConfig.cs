@@ -10,8 +10,9 @@ namespace VisualRelay.Domain;
 /// </param>
 /// <param name="InlineTestExtensions">
 /// Extensions whose files may legitimately carry tests next to the
-/// implementation. Lowercase, leading dot, distinct, sorted ordinal. Files with
-/// these extensions are never reverted for being "not a test".
+/// implementation. Lowercase, leading dot, distinct, sorted ordinal. Every file
+/// the model lists as a test file is kept whatever its extension; an
+/// inline-capable extension only changes how the gate judges it.
 /// </param>
 /// <param name="DiffAudit">
 /// One of <see cref="DiffAuditAuto"/>, <see cref="DiffAuditAlways"/> or

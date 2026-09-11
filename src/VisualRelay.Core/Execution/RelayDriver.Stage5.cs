@@ -14,15 +14,13 @@ public sealed partial class RelayDriver
     /// <param name="Gate">What the gate established, or null when flagged.</param>
     /// <param name="TestDurationSeconds">How long the gate command ran, or null when nothing ran.</param>
     /// <param name="Reask">The single re-ask this pass asks for, or null for none.</param>
-    /// <param name="CostDelta">USD the pass's own extra model call added.</param>
-    /// <param name="UnknownCostDelta">Unpriced runs that call added.</param>
+    /// <param name="TestFiles">What the pass declared as its test files, normalized.</param>
     private readonly record struct Stage5Result(
         RelayTaskOutcome? Outcome,
         AuthorTestGateOutcome? Gate,
         double? TestDurationSeconds,
         AuthorTestReask? Reask = null,
-        double CostDelta = 0,
-        int UnknownCostDelta = 0);
+        IReadOnlyList<string>? TestFiles = null);
 
     /// <summary>What stage 5 leaves behind for the stage loop.</summary>
     /// <param name="Outcome">Non-null when the stage flags.</param>
@@ -30,8 +28,6 @@ public sealed partial class RelayDriver
     /// <param name="Check">"red" or "unproven".</param>
     /// <param name="Reason">Why the check reads as it does, or null.</param>
     /// <param name="TestDurationSeconds">How long the last gate command ran.</param>
-    /// <param name="CostDelta">USD the re-ask added.</param>
-    /// <param name="UnknownCostDelta">Unpriced stage runs the re-ask added.</param>
     /// <param name="ImplementationFrontLoaded">True when the fix is already in the tree.</param>
     private sealed record Stage5StageResult(
         RelayTaskOutcome? Outcome,
@@ -39,8 +35,6 @@ public sealed partial class RelayDriver
         string? Check,
         string? Reason,
         double? TestDurationSeconds,
-        double CostDelta,
-        int UnknownCostDelta,
         bool ImplementationFrontLoaded);
 
     /// <summary>
@@ -63,41 +57,42 @@ public sealed partial class RelayDriver
         List<StageStatusEntry> statusEntries,
         JsonElement json,
         string body,
+        string reportFile,
         bool implementationFrontLoaded,
         CancellationToken cancellationToken)
     {
+        // The attempt the gate reports is the attempt the stage actually ran, read
+        // off the invocation's own report file, so the verify_result and the
+        // persisted gate output cannot drift from the stage's numbering.
         var pass = await HandleStage5Async(rootPath, runId, taskId, taskDirectory, config, stage,
-            manifest, ledger, statusEntries, json, attempt: 1, reaskUsed: false, cancellationToken);
-        var costDelta = pass.CostDelta;
-        var unknownCostDelta = pass.UnknownCostDelta;
+            manifest, ledger, statusEntries, json, AttemptOf(reportFile), reaskUsed: false, cancellationToken);
 
         if (pass is { Outcome: null, Reask: { } request })
         {
             var reask = await ReaskAuthorTestsAsync(rootPath, runId, taskId, taskDirectory, config,
                 stage, input, ledger, manifest, request, cancellationToken);
-            costDelta += reask.CostDelta;
-            unknownCostDelta += reask.UnknownCostDelta;
-            // An unusable answer leaves attempt 1's outcome standing: it is
-            // already the honest "unproven — green before implementation".
             if (reask.Contract is { } second)
             {
                 body = reask.Body;
                 pass = await HandleStage5Async(rootPath, runId, taskId, taskDirectory, config, stage,
-                    manifest, ledger, statusEntries, second, attempt: 2, reaskUsed: true, cancellationToken);
-                costDelta += pass.CostDelta;
-                unknownCostDelta += pass.UnknownCostDelta;
+                    manifest, ledger, statusEntries, second, reask.Attempt, reaskUsed: true, cancellationToken);
             }
+            else
+                // Attempt 1's outcome stands, so attempt 2's edits must not: it was
+                // asked to take implementation OUT of the test files and answered
+                // with nothing readable, which is no licence to leave code behind.
+                await DiscardUnusableReaskAsync(rootPath, runId, taskId, config, stage, request,
+                    pass.TestFiles ?? [], ledger, cancellationToken);
         }
 
         if (pass.Outcome is not null)
-            return new Stage5StageResult(pass.Outcome, body, null, null, null,
-                costDelta, unknownCostDelta, implementationFrontLoaded);
+            return new Stage5StageResult(pass.Outcome, body, null, null, null, implementationFrontLoaded);
 
         if (pass.Gate is { Check: AuthorTestCheck.Unproven, Reason: { } reason })
             await PublishAuthorTestUnprovenAsync(rootPath, runId, taskId, stage, reason, cancellationToken);
 
         return new Stage5StageResult(null, body, pass.Gate?.CheckName, pass.Gate?.Reason,
-            pass.TestDurationSeconds, costDelta, unknownCostDelta,
+            pass.TestDurationSeconds,
             await RecheckEarlyImplementationAsync(
                 rootPath, config, manifest, implementationFrontLoaded, cancellationToken));
     }
@@ -121,7 +116,13 @@ public sealed partial class RelayDriver
         bool reaskUsed,
         CancellationToken cancellationToken)
     {
-        var testFiles = ReadStringArray(json, "testFiles");
+        // One spelling for the whole stage. The filter has always normalized the
+        // list it is handed ("+src/a.rs" is the Plan stage's new-file marker,
+        // "./src/a.rs" is a model habit), so the scope check, the strip set, the
+        // targeted command and the audit have to see the same paths it does —
+        // otherwise a file the filter keeps is classified suspect, gated under a
+        // name no command can resolve, and audited under a third.
+        var testFiles = WorktreeFilter.NormalizeTestFileList(ReadStringArray(json, "testFiles"));
 
         // ── Step 1: Discard all non-testFiles edits ──────────────────
         // WorktreeFilter reverts tracked production-file changes to HEAD
@@ -182,8 +183,12 @@ public sealed partial class RelayDriver
         // ── Step 3: Scope check, the diff audit, then the gate ───────
         var verdicts = await CheckAuthorTestScopeAsync(
             rootPath, runId, taskId, stage, testFiles, config, ledger, cancellationToken);
-        var audit = await AuditAuthorTestDiffAsync(
-            rootPath, runId, taskId, config, testFiles, verdicts, ledger, cancellationToken);
+        // The audit can only ask for the one re-ask, so on the pass that already
+        // follows one it has nothing left to change and is not worth its call.
+        var audit = reaskUsed
+            ? default
+            : await AuditAuthorTestDiffAsync(
+                rootPath, runId, taskId, config, testFiles, verdicts, ledger, cancellationToken);
         var (outcome, result) = await RunAuthorTestGateAsync(rootPath, runId, taskId, stage,
             config, manifest, testFiles, verdicts, reaskUsed, cancellationToken);
 
@@ -191,14 +196,13 @@ public sealed partial class RelayDriver
             return new Stage5Result(
                 await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, outcome.Reason!, null,
                     statusEntries, cancellationToken),
-                null, null, null, audit.CostDelta, audit.UnknownCostDelta);
+                null, null, null, testFiles);
 
         await PublishAuthorTestVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage,
             attempt, config, outcome, result, manifest, cancellationToken);
         AppendAuthorTestGateLedger(ledger, outcome);
         return new Stage5Result(null, outcome, result?.Elapsed.TotalSeconds,
-            ResolveAuthorTestReask(outcome, audit, testFiles, reaskUsed),
-            audit.CostDelta, audit.UnknownCostDelta);
+            ResolveAuthorTestReask(outcome, audit, testFiles), testFiles);
     }
 
     /// <summary>
@@ -206,7 +210,7 @@ public sealed partial class RelayDriver
     /// same invocation builder every stage retry uses (so the attempt index, the
     /// trace directory and the report file follow the normal numbering).
     /// </summary>
-    private async Task<(string Body, JsonElement? Contract, double CostDelta, int UnknownCostDelta)>
+    private async Task<(string Body, JsonElement? Contract, int Attempt)>
         ReaskAuthorTestsAsync(
             string rootPath,
             string runId,
@@ -227,18 +231,17 @@ public sealed partial class RelayDriver
         var reasked = input with
         {
             Markdown = input.Markdown + Environment.NewLine + Environment.NewLine
-                + AuthorTestReaskMessage(reask.Files)
+                + AuthorTestReaskMessage(reask)
         };
         var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
             reasked, ledger, manifest);
         var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
-        double costDelta = 0;
-        var unknownCostDelta = 0;
-        if (TryEstimateCost(invocation.ReportFile) is { } cost) costDelta = cost.CostUsd; else unknownCostDelta = 1;
-
+        // No cost is carried out of here: the stage is re-priced from every report
+        // it left once the pass is over, which is the same rule the archive uses.
+        var attempt = AttemptOf(invocation.ReportFile);
         return result.IsValid && TryParseContractJson(result.Json, out var contract, out _)
-            ? (result.Json!, contract, costDelta, unknownCostDelta)
-            : (string.Empty, null, costDelta, unknownCostDelta);
+            ? (result.Json!, contract, attempt)
+            : (string.Empty, null, attempt);
     }
 
     /// <summary>

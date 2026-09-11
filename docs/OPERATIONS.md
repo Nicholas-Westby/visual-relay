@@ -92,8 +92,9 @@ writes what it found into `.relay/config.json`:
 - `detectedLanguages` — informational, what init detected, so the defaults below can be
   read back to a reason. Re-running bootstrap refreshes it.
 - `inlineTestExtensions` — the extensions whose files may legitimately carry tests next
-  to the implementation. Files with these extensions are never reverted for being "not a
-  test". Empty for a repository whose languages all keep tests in separate files, which
+  to the implementation. Every file the model lists as a test file is kept whatever its
+  extension; this key only changes how the gate judges one, and an entry here says a
+  file may be both. Empty for a repository whose languages all keep tests in separate files, which
   is also the right answer for a static site or an infrastructure repository. **Opt a
   language in by adding its extension** (`.ml` for OCaml's `ppx_inline_test`, `.erl` for
   EUnit behind `-ifdef(TEST)`, `.ts` for in-source Vitest); the key is per extension, so
@@ -102,9 +103,10 @@ writes what it found into `.relay/config.json`:
 - `diffAudit` — `auto` (default) audits the Author-tests diff only when an
   inline-capable or unrecognized file was edited, `always` audits every one, `off`
   disables the audit. Yours to set: bootstrap seeds it once and never overwrites it.
-  The audit is one cheap-tier call that reads the stage's diff (plus any test file
-  git does not track yet, up to 60,000 characters) and reports the hunks that change
-  behavior rather than assert it. A reported hunk buys the stage the same single
+  The audit is one cheap-tier call per Stage 5 run: it reads the stage's diff (plus any
+  test file git does not track yet, up to 60,000 characters) and reports the hunks that
+  change behavior rather than assert it. A re-asked stage is not audited again, because
+  the single re-ask its answer could buy is already spent. A reported hunk buys the stage the same single
   re-ask a green gate buys it, and nothing more: the audit never flags a task and
   never records a check, so a failed call is logged and the run carries on. What it
   answered lands in `run.log` as `author_test_audit`.
