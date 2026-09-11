@@ -112,10 +112,10 @@ internal static partial class FlaggedWorkStore
                 await gitInvoker.RunAsync(rootPath, ["update-ref", snapshotRef, snapshotSha], ct);
                 try
                 {
-                    var bundlePath = Path.Combine(taskDirectory, BundleFileName);
+                    var bundleArg = RepoRelativeBundle(rootPath, taskDirectory);
                     var bundleResult = await gitInvoker.RunAsync(
                         rootPath,
-                        ["bundle", "create", bundlePath, snapshotRef, $"^{runBaseSha}"],
+                        ["bundle", "create", bundleArg, snapshotRef, $"^{runBaseSha}"],
                         ct);
                     if (bundleResult.ExitCode != 0)
                         return;
@@ -162,8 +162,11 @@ internal static partial class FlaggedWorkStore
         if (!File.Exists(bundlePath))
             return RestoreResult.Unrestorable;
 
+        // .NET opens the absolute path; git is handed the repo-relative one.
+        var bundleArg = RepoRelativeBundle(rootPath, taskDirectory);
+
         // Verify the bundle.
-        var verifyResult = await gitInvoker.RunAsync(rootPath, ["bundle", "verify", bundlePath], ct);
+        var verifyResult = await gitInvoker.RunAsync(rootPath, ["bundle", "verify", bundleArg], ct);
         if (verifyResult.ExitCode != 0)
             return RestoreResult.Unrestorable;
 
@@ -172,7 +175,7 @@ internal static partial class FlaggedWorkStore
         var snapshotRef = $"refs/relay-snapshot/{taskId}";
         var fetchRef = $"refs/relay-resume/{taskId}";
         var fetchResult = await gitInvoker.RunAsync(
-            rootPath, ["fetch", bundlePath, $"+{snapshotRef}:{fetchRef}"], ct);
+            rootPath, ["fetch", bundleArg, $"+{snapshotRef}:{fetchRef}"], ct);
         if (fetchResult.ExitCode != 0)
             return RestoreResult.Unrestorable;
 
@@ -239,6 +242,13 @@ internal static partial class FlaggedWorkStore
                 rootPath, ["update-ref", "-d", fetchRef], ct, killToken: CancellationToken.None);
         }
     }
+
+    // The bundle as the git serving this workspace is handed it: relative to the
+    // root, forward slashes. Every invocation is `git -C <root>`, so both gits
+    // resolve it against that root — and the git of a workspace inside a WSL distro
+    // runs there, where the absolute path VR opens is a Windows path naming nothing.
+    private static string RepoRelativeBundle(string rootPath, string taskDirectory) =>
+        Path.GetRelativePath(rootPath, Path.Combine(taskDirectory, BundleFileName)).Replace('\\', '/');
 
     /// <summary>
     /// Deletes the flagged-work bundle and its sidecar. No-op if they don't exist.

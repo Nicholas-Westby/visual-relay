@@ -218,7 +218,6 @@ run before trusting the Windows arm:
 - Landlock active at runtime in the WSL2 kernel
 - the DrvFs (`/mnt/c`) enforcement verdicts and the ext4-versus-DrvFs timings
 - the watchdog kill proof (the Linux process is gone, not just wsl.exe)
-- that wsl.exe is started from the Windows temp directory, never the UNC workspace
 - the exit-code and UTF-8 round trip through wsl.exe
 - that planning worktrees, verify snapshots and the flagged-work index live inside the
   distro (`~/.cache/visual-relay/wt/…` and `/tmp/visual-relay/`), never under the Windows

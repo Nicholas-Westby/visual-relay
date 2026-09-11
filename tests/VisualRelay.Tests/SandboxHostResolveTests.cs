@@ -53,16 +53,25 @@ public sealed class SandboxHostResolveTests
 
     /// <summary>
     /// Windows with no usable distro is still the Windows host: the tool-presence
-    /// gate names WSL rather than nono, and nothing is ever run unsandboxed.
+    /// gate names WSL rather than nono, and nothing is ever run unsandboxed. The
+    /// unusable machine is scripted, so a Windows runner answers this from the
+    /// fixture instead of starting the real wsl.exe probe and warming its memo.
     /// </summary>
     [Fact]
     public async Task ResolveAsync_OnWindowsWithoutADistro_IsTheWindowsHostWithNoContext()
     {
-        var host = await SandboxHost.ResolveAsync(isWindows: true, TestContext.Current.CancellationToken);
+        try
+        {
+            WslContextResolver.UseProberForTests(_ => Task.FromResult(WslProbeFixtures.NoWsl()));
 
-        Assert.True(host.IsWindows);
-        // Off Windows there is nothing to probe; on Windows the real machine answers.
-        if (!OperatingSystem.IsWindows())
+            var host = await SandboxHost.ResolveAsync(isWindows: true, TestContext.Current.CancellationToken);
+
+            Assert.True(host.IsWindows);
             Assert.Null(host.Wsl);
+        }
+        finally
+        {
+            WslContextResolver.UseProberForTests(null);
+        }
     }
 }

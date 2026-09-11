@@ -57,6 +57,14 @@ internal sealed class GitSimContext(
         return idx < 0 ? [] : Args.Skip(idx + 1).ToList();
     }
 
+    /// <summary>
+    /// A path argument as git resolves it: git runs with the working tree's top as
+    /// its directory, so a RELATIVE path names a file under <see cref="Root"/> —
+    /// never one under the calling process's own current directory.
+    /// </summary>
+    public string ResolvePath(string path) =>
+        Path.IsPathRooted(path) ? path : Path.Combine(Root, path);
+
     public Worktree? Repo => GitSimRegistry.Find(Root);
 
     public bool TryRepo(out Worktree worktree)

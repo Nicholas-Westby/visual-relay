@@ -1,4 +1,5 @@
 using System.Text;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Core.CommitLint;
 
@@ -120,8 +121,13 @@ public sealed partial class HistoryRewriter
     private async Task<string> CommitTreeAsync(
         string repoRoot, RewriteCommit commit, string message, string? parent, CancellationToken ct)
     {
-        var tempFile = Path.Combine(Path.GetTempPath(), $"conform-msg-{Guid.NewGuid():N}.txt");
-        await File.WriteAllTextAsync(tempFile, message, new UTF8Encoding(false), ct);
+        // The message file has to be openable by the git that serves this repository
+        // — inside the distro on the Windows arm, where a Windows temp path is a
+        // relative name — while .NET writes and deletes it through its own form.
+        var messageFile = WorktreeNamespace.TempFileFor(
+            repoRoot, SandboxHost.Current, $"conform-msg-{Guid.NewGuid():N}.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(messageFile.Io)!);
+        await File.WriteAllTextAsync(messageFile.Io, message, new UTF8Encoding(false), ct);
         try
         {
             // Preserve author identity + author date; committer per policy: keep
@@ -145,7 +151,7 @@ public sealed partial class HistoryRewriter
             }
 
             args.Add("-F");
-            args.Add(tempFile);
+            args.Add(messageFile.Git);
 
             var (exit, output) = await RunGitAsync(repoRoot, args, ct, env);
             if (exit != 0)
@@ -154,7 +160,7 @@ public sealed partial class HistoryRewriter
         }
         finally
         {
-            try { File.Delete(tempFile); } catch { /* best-effort */ }
+            try { File.Delete(messageFile.Io); } catch { /* best-effort */ }
         }
     }
 

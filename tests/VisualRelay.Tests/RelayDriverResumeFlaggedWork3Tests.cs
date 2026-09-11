@@ -151,6 +151,51 @@ public sealed class RelayDriverResumeFlaggedWork3Tests
         Assert.Equal("// feature", await File.ReadAllTextAsync(featureFile));
     }
 
+    /// <summary>
+    /// Git is handed the bundle REPO-RELATIVE, never as the absolute path VR opens.
+    /// The invoker always runs <c>git -C &lt;root&gt;</c>, so both gits resolve it
+    /// against the root — and the git that serves a workspace inside a WSL distro
+    /// runs there, where the absolute path VR holds is a Windows path naming nothing.
+    /// </summary>
+    [Fact]
+    public async Task CaptureAndRestore_HandGitTheBundle_RepoRelative()
+    {
+        using var repo = ScratchRepo.Create();
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
+        var recorder = new RecordingGitInvoker(git);
+
+        var taskId = "task-relative";
+        var taskDirectory = Path.Combine(repo.Root, ".relay", taskId);
+        Directory.CreateDirectory(taskDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(taskDirectory, "run-base.txt"), await repo.HeadShaAsync(git));
+
+        var featureFile = Path.Combine(repo.Root, "src", "Feature.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(featureFile)!);
+        await File.WriteAllTextAsync(featureFile, "// feature");
+
+        await FlaggedWorkStore.CaptureAsync(repo.Root, taskId, taskDirectory,
+            flaggedStage: 6, recorder, DateTimeOffset.UtcNow, CancellationToken.None);
+
+        var absolute = Path.Combine(taskDirectory, "flagged-work.bundle");
+        Assert.True(File.Exists(absolute), "Bundle should exist after capture");
+        File.Delete(featureFile);
+
+        var result = await FlaggedWorkStore.RestoreAsync(
+            repo.Root, taskId, taskDirectory, recorder, CancellationToken.None);
+        Assert.True(result.IsSuccess, "Restore should succeed from the relative bundle path");
+        Assert.Equal("// feature", await File.ReadAllTextAsync(featureFile));
+
+        var relative = $".relay/{taskId}/flagged-work.bundle";
+        Assert.True(recorder.RecordedCall(["bundle", "create", relative]), "bundle create");
+        Assert.True(recorder.RecordedCall(["bundle", "verify", relative]), "bundle verify");
+        Assert.True(recorder.RecordedCall(["fetch", relative]), "fetch");
+        Assert.False(recorder.RecordedCall([absolute]), "no git call may carry the absolute path");
+    }
+
     [Fact]
     public async Task FlaggedWorkBundle_Deleted_OnDelete()
     {

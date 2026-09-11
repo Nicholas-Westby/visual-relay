@@ -26,7 +26,7 @@ internal static partial class GitSimCommands
         var sub = ctx.Args.ElementAtOrDefault(1);
         if (sub == "verify")
         {
-            var vp = ctx.Args.ElementAtOrDefault(2);
+            var vp = ctx.Args.ElementAtOrDefault(2) is { } given ? ctx.ResolvePath(given) : null;
             return vp is not null && File.Exists(vp) && TryReadBundle(vp) is not null
                 ? GitSimResult.Ok($"The bundle at {vp} is okay\n")
                 : GitSimResult.Code(1, "error: not a valid bundle\n");
@@ -35,7 +35,7 @@ internal static partial class GitSimCommands
         if (sub != "create")
             return ctx.Unsupported();
 
-        var path = ctx.Args.ElementAtOrDefault(2);
+        var path = ctx.Args.ElementAtOrDefault(2) is { } target ? ctx.ResolvePath(target) : null;
         var refName = ctx.Args.ElementAtOrDefault(3);
         if (path is null || refName is null)
             return ctx.Unsupported();
@@ -60,7 +60,7 @@ internal static partial class GitSimCommands
         if (!ctx.TryRepo(out var wt))
             return GitSimResult.Fatal("not a git repository (or any of the parent directories): .git");
 
-        var path = ctx.Args.ElementAtOrDefault(1);
+        var path = ctx.Args.ElementAtOrDefault(1) is { } source ? ctx.ResolvePath(source) : null;
         var refspec = ctx.Args.ElementAtOrDefault(2);
         if (path is null || refspec is null || !File.Exists(path))
             return GitSimResult.Fatal("could not read bundle");

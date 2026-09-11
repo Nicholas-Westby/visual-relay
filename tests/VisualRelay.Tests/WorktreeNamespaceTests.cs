@@ -78,6 +78,28 @@ public sealed class WorktreeNamespaceTests
     }
 
     /// <summary>
+    /// A throwaway file VR writes and the serving git then reads — the rewritten
+    /// commit message <c>commit-tree -F</c> is handed. It has to be openable by that
+    /// git, which is inside the distro when the workspace is, and by .NET, which is
+    /// not. Locally it stays the temp path it has always been, in both forms.
+    /// </summary>
+    [Fact]
+    public void TempFile_IsInsideTheDistroOnWindows_AndTodaysTempPathLocally()
+    {
+        var windows = WorktreeNamespace.TempFileFor(UncRoot, WindowsHost, "conform-msg-abc.txt");
+
+        Assert.Equal("/tmp/visual-relay/conform-msg-abc.txt", windows.Git);
+        Assert.Equal(@"\\wsl.localhost\Ubuntu\tmp\visual-relay\conform-msg-abc.txt", windows.Io);
+
+        var local = WorktreeNamespace.TempFileFor(
+            Path.Combine(Path.GetTempPath(), "vr-repo"), SandboxHost.Local, "conform-msg-abc.txt");
+        var expected = Path.Combine(Path.GetTempPath(), "conform-msg-abc.txt");
+
+        Assert.Equal(expected, local.Git);
+        Assert.Equal(expected, local.Io);
+    }
+
+    /// <summary>
     /// A Windows drive workspace is refused by the workspace policy, never served
     /// by the distro's git, so its namespace stays where it is today.
     /// </summary>

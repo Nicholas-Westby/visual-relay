@@ -47,6 +47,19 @@ public sealed record WorktreeNamespace(string Io, string Git, string? Distro)
         ServingDistro(rootPath, host) is { } wsl ? InDistro(wsl.Distro, LinuxTempRoot) : Local(Path.GetTempPath());
 
     /// <summary>
+    /// A throwaway file VR writes and the serving git then reads — the commit
+    /// message handed to <c>commit-tree -F</c> — in the directory
+    /// <see cref="TempIndexFor"/> names, which the caller creates through
+    /// <see cref="Io"/> before writing.
+    /// </summary>
+    /// <param name="rootPath">The workspace root, as VR holds it.</param>
+    /// <param name="host">Where the sandbox — and the serving git — runs.</param>
+    /// <param name="fileName">The file's name inside that directory.</param>
+    /// <returns>The file in both forms.</returns>
+    public static WorktreeNamespace TempFileFor(string rootPath, SandboxHost host, string fileName) =>
+        TempIndexFor(rootPath, host).Child(fileName);
+
+    /// <summary>
     /// The path git is handed for a directory VR already holds as
     /// <paramref name="ioPath"/> — a worktree it is about to remove, say.
     /// </summary>
