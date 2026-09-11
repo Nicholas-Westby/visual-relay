@@ -207,8 +207,15 @@ public partial class MainWindowViewModel
             return;
         }
 
-        RelayConfigWriter.Write(RootPath, command);
         var gitInvoker = new GitInvoker();
+        RelayConfigWriter.Write(RootPath, command);
+
+        // Mirror ProjectBootstrapper.BootstrapAsync: a manually-configured repo
+        // still needs its test layout detected so Stage 5 has an authorTests
+        // object to gate on, instead of silently getting none.
+        var detection = await TestLayoutDetector.DetectAsync(RootPath, gitInvoker, CancellationToken.None);
+        RelayConfigWriter.UpsertAuthorTests(RootPath, detection);
+
         var hookResult = await HookInstaller.InstallAsync(RootPath, CancellationToken.None, gitInvoker);
         if (hookResult is { Installed: false, Warning: not null })
         {

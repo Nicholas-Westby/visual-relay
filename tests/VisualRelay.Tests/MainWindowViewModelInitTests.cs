@@ -1,3 +1,4 @@
+using System.Text.Json;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
@@ -83,6 +84,29 @@ public sealed class MainWindowViewModelInitTests
         Assert.False(viewModel.NeedsInitialization);
         Assert.Equal("alpha", Assert.Single(viewModel.Tasks).Id);
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
+    /// <summary>
+    /// The manual "Create config" path must run the same test-layout detection
+    /// bootstrap does, so a repo configured this way still gets an
+    /// <c>authorTests</c> object for Stage 5 to gate on (rather than silently
+    /// having none).
+    /// </summary>
+    [Fact]
+    public async Task CreateConfig_WritesTheAuthorTestsObject()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        Assert.True(viewModel.NeedsInitialization);
+
+        viewModel.InitTestCommandInput = "dotnet test";
+        await viewModel.CreateConfigCommand.ExecuteAsync(null);
+
+        var raw = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"));
+        var root = JsonDocument.Parse(raw).RootElement;
+        Assert.True(root.TryGetProperty("authorTests", out _));
     }
 
     [Fact]
