@@ -1,0 +1,36 @@
+using VisualRelay.Core.Execution.Wsl;
+
+namespace VisualRelay.Tests;
+
+/// <summary>
+/// Canned <see cref="WslProbe"/> records shared by the gate, context and CLI
+/// decision tests: one fully usable machine, and the same machine with exactly
+/// one check failing, so each test names the check it is about.
+/// </summary>
+internal static class WslProbeFixtures
+{
+    public const string WslExe = @"C:\Windows\System32\wsl.exe";
+    public const string Kernel = "5.15.167.4-microsoft-standard-WSL2";
+
+    public static readonly WslDistro Ubuntu = new("Ubuntu", 2, true, "Running");
+    public static readonly WslDistro Debian = new("Debian", 1, false, "Stopped");
+
+    public static WslProbe Usable() => new(
+        WslExeFound: true, WslExePath: WslExe, Distros: [Ubuntu, Debian], RequestedDistro: null,
+        DistroName: "Ubuntu", IsWsl2: true, KernelRelease: Kernel, NonoPath: "/usr/local/bin/nono",
+        NonoVersion: "nono 0.75.0", LandlockActive: true, DistroHome: "/home/alice", Diagnostics: null);
+
+    public static WslProbe NoWsl() => WslProbe.Empty;
+
+    public static WslProbe NoDistro() => Usable() with { Distros = [], DistroName = null, IsWsl2 = false, KernelRelease = null, NonoPath = null, NonoVersion = null, LandlockActive = false, DistroHome = null };
+
+    public static WslProbe RequestedDistroMissing() => NoDistro() with { Distros = [Ubuntu, Debian], RequestedDistro = "Fedora" };
+
+    public static WslProbe Wsl1() => Usable() with { DistroName = "Debian", IsWsl2 = false, KernelRelease = "4.4.0-19041-Microsoft" };
+
+    public static WslProbe NonoMissing() => Usable() with { NonoPath = null, NonoVersion = null };
+
+    public static WslProbe LandlockInactive() => Usable() with { LandlockActive = false, Diagnostics = "lsm: lockdown,yama,bpf" };
+
+    public static WslProbe HomeUnknown() => Usable() with { DistroHome = null };
+}

@@ -1,39 +1,51 @@
+using VisualRelay.Core.Execution.Wsl;
+
 namespace VisualRelay.Cli.Gates;
 
 /// <summary>
-/// nono OS-level sandbox prerequisite (ported from the launcher's
-/// <c>_require_nono</c>). nono is a hard, always-required dependency: when it is
-/// absent, prints install instructions and signals a hard failure (exit 127).
-/// When present there is nothing to provision — the vr-guard profile is owned
-/// and self-healed by the app at run start, and it inherits nono's built-in
-/// <c>default</c>, so no pack has to be pulled first.
+/// The OS-level sandbox prerequisite (ported from the launcher's
+/// <c>_require_nono</c>). nono is a hard, always-required dependency: on macOS
+/// and Linux it must be on PATH; on Windows it must be installed inside a usable
+/// WSL2 distro, which is probed once here and decided by <see cref="WslGate"/>.
+/// When the prerequisite is missing, prints the fix and signals a hard failure
+/// (exit 127). When present there is nothing to provision: the vr-guard profile
+/// is owned and self-healed by the app at run start, and it inherits nono's
+/// built-in <c>default</c>, so no pack has to be pulled first.
 /// </summary>
 public static class NonoGate
 {
     /// <summary>
-    /// Ensures nono is available. The sandbox is always on, so nono is required
-    /// unconditionally. Returns 0 to proceed, or 127 when nono is missing (after
-    /// printing install instructions).
+    /// Ensures the sandbox is available. Returns 0 to proceed, or 127 when the
+    /// prerequisite is missing (after printing the fix). On Windows a successful
+    /// probe also becomes the process-wide <see cref="WslContext"/>, so anything
+    /// else running in this process reuses the same facts instead of probing again.
     /// </summary>
     public static int Require(string root)
     {
-        var (exitCode, message) = Decide(ProcessLauncher.OnPath("nono"), OperatingSystem.IsWindows());
+        var isWindows = OperatingSystem.IsWindows();
+        var probe = isWindows ? WslContextResolver.ProbeAsync(CancellationToken.None).GetAwaiter().GetResult() : null;
+        var (exitCode, message) = Decide(ProcessLauncher.OnPath("nono"), isWindows, probe);
         if (message is not null)
             Console.Error.WriteLine(message);
+        if (exitCode == 0 && probe is not null)
+            WslContextResolver.Override(WslContextResolver.FromProbe(probe));
         return exitCode;
     }
 
     /// <summary>
-    /// Pure OS-aware gate decision. nono is present → proceed (0). Missing on
-    /// macOS/Linux → hard fail (127) with install instructions (the sandbox is a
-    /// hard dependency there). Missing on Windows → proceed (0) silently: nono is the
-    /// Unix sandbox and Windows simply uses a different one (MXC, gated at run time),
-    /// so its absence is unremarkable and not worth a note. The returned message (when
-    /// non-null) is what <see cref="Require"/> prints to stderr.
+    /// Pure OS-aware gate decision. On Windows the decision is the WSL gate's,
+    /// made from <paramref name="probe"/> (an un-probed machine counts as one
+    /// without WSL); nono on the Windows PATH is irrelevant because the sandbox
+    /// binary lives inside the distro. Elsewhere nono on PATH proceeds (0) and a
+    /// missing nono hard-fails (127) with install instructions. The returned
+    /// message (when non-null) is what <see cref="Require"/> prints to stderr.
     /// </summary>
-    public static (int ExitCode, string? Message) Decide(bool onPath, bool isWindows)
+    public static (int ExitCode, string? Message) Decide(bool onPath, bool isWindows, WslProbe? probe)
     {
-        if (onPath || isWindows)
+        if (isWindows)
+            return WslGate.Decide(probe ?? WslProbe.Empty);
+
+        if (onPath)
             return (0, null);
 
         return (127,
