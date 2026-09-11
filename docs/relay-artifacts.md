@@ -29,6 +29,34 @@ the repo's own change, even when the agent self-committed a `.relay/` file mid-r
 | `.relay/<task>/NEEDS-REVIEW` | Control marker: a runner crash, a gate failure, or an operator cancel (reason `cancelled by operator`) flagged this task for review so drains do not loop on it. | Written by Visual Relay. | No |
 | `.relay/DRAIN-HALTED` | Control marker: repeated commit-gate rejections halted the drain. | Written by Visual Relay. | No |
 
+## The author-test gate's record (stage 5)
+
+Stage 5 writes tests that must fail before anything is implemented, and the gate
+proves it by stripping the manifest's implementation files, running the targeted
+test command and reading its exit code. The gate always runs once test files are
+declared and the command can run, and it never passes in silence: every run ends
+in `red`, `unproven` with a reason, or a flag, and says so in `run.log`.
+
+| Event | Level | Data | When |
+| --- | --- | --- | --- |
+| `verify_result` | info | `command` (the TARGETED command, not the full suite), `exitCode` (absent when nothing ran), `check`, `reason`, `strippedFiles` (comma-joined, may be empty), `scope`, `treeHash`, `outputFile` | Once per gate run, the same record stages 9-11 emit. `Attempt` is the stage attempt, so a re-ask leaves two. |
+| `author_test_scope_suspect` | warn | `files`, `scope` | A declared test file is neither a recognized test path nor an inline-capable extension. The entry is kept; this says it was believed, not verified. |
+| `author_test_gate_unusable` | warn | `command`, `reason`, `exitCode` and `outputTail` when a command ran | Exit 127, "no tests found/collected", or the bootstrap placeholder. |
+| `author_test_reask` | info | `reason`, `files` | The one re-ask: the tests passed with the implementation still in place and at least one declared file can carry implementation. |
+| `author_test_unproven` | warn | `reason` | The stage's final check is `unproven`. |
+
+`scope` reads `path=separate;path=inline-capable;path=suspect` — how each declared
+file was classified from `testPaths` and `authorTests.inlineTestExtensions` (see
+[OPERATIONS.md](OPERATIONS.md)). The reasons are exactly: `green before
+implementation`, `no implementation to strip`, `gate command unusable`,
+`placeholder test command`, `no test files declared`.
+
+`status.json` carries the verdict per stage. Each entry holds `stage`, `name`,
+`status`, `check`, `reason`, `durationSeconds`, `costUsd`, `turns`, `model`,
+`error`, `taskInputHash` and `testDurationSeconds`. `reason` is the companion to
+`check` for a check that does not speak for itself: stage 5's `unproven` records
+why it could prove nothing there, and it is null everywhere else.
+
 ## The `logSources` contract
 
 `logSources` in `.relay/config.json` (e.g. `["logs/app.log"]`) lists the TARGET

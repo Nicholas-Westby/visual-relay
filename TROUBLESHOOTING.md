@@ -69,6 +69,51 @@ Nothing reads these any more, so delete them if you want the space back:
 `XDG_DATA_HOME` defaults to `~/.local/share` if unset. Settings and sandbox
 policy live elsewhere and are still in use — remove only the two paths above.
 
+## Stage 5 records `unproven`
+
+The Author-tests gate proves the new tests fail before the change exists. When it
+cannot, it records `check: unproven` on the stage plus a `reason`, and the task
+continues (Verify still gates the end result). The reason names what to fix:
+
+| Reason | What happened | What to do |
+|--------|---------------|------------|
+| `no test files declared` | The stage returned an empty `testFiles`, so there was nothing to gate. | Fine for a docs-only or config-only change; otherwise the task needs a test. |
+| `placeholder test command` | `testCmd` is the bootstrap placeholder: it exits 0 having run nothing. | Set a real `testCmd` in `.relay/config.json`, or re-run `bootstrap` once the project has a toolchain. |
+| `gate command unusable` | The command exited 127 (not found) or reported that it collected no tests. | Check `testFileCmd`: its `{files}` expansion must name runnable test files for this project. |
+| `no implementation to strip` | The tests passed and nothing outside them was in the manifest, so nothing could be taken away. | Expected for regression coverage of an already-correct behaviour; otherwise the plan's manifest is missing the file the change belongs in. |
+| `green before implementation` | The tests passed with everything still in place, and at least one declared test file can carry implementation. The stage was re-asked once and still came back green. | Read the stage-5 diff: the change was probably implemented inside the test file, or the tests do not exercise it. |
+
+Every outcome is in `run.log` as a `verify_result` for stage 5, naming the
+command that ran, its exit code, what was stripped and how each declared file was
+classified — plus an `author_test_unproven` warning for the reason above.
+
+## Repositories with unusual test layouts
+
+Whether a test can be told from an implementation by its path is a property of the
+language. Bootstrap detects it and writes `authorTests` into `.relay/config.json`
+(the keys are documented in [docs/OPERATIONS.md](docs/OPERATIONS.md)). Two knobs
+fix a repository it reads wrongly:
+
+- **`testPaths`** (top level) — extra globs that count as test paths, on top of the
+  built-in filename and directory conventions: `["spec/**", "examples/*_example.go",
+  "t/**"]`. Use it when a scope check keeps warning `author_test_scope_suspect`
+  about files that really are this project's tests. Bootstrap only creates the key;
+  it never overwrites your globs.
+- **`authorTests.inlineTestExtensions`** — extensions whose files may carry tests
+  beside the implementation. Files with these extensions are never reverted for
+  "not being a test", and are judged by the as-is red check instead of by path.
+  Bootstrap fills it from the detected languages (`[".rs"]` for Rust, `[".zig"]`
+  for Zig, and so on) and empties it for a repository whose languages all keep
+  tests in files of their own.
+
+To opt a language in whose inline mechanism you actually use, add its extension by
+hand: `".ml"` for OCaml's `ppx_inline_test`, `".erl"` for EUnit behind
+`-ifdef(TEST)`, `".ts"` for in-source Vitest, `".move"` for in-module `#[test]`.
+The key is per extension, so a Rust and Python repository can treat `.rs` as
+inline-capable while `.py` stays gated by path. Re-running `bootstrap` refreshes
+`detectedLanguages` and `inlineTestExtensions`, so record a hand-added extension
+somewhere you will remember.
+
 ## A target repo already tracks `.relay` run artifacts
 
 Older versions force-added each run's bookkeeping (ledger, seals, manifest,
