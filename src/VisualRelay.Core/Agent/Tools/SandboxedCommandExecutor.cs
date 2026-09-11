@@ -92,7 +92,7 @@ public sealed partial class SandboxedCommandExecutor(
         try
         {
             outcome = await _launcher(
-                launch.FileName, launch.Arguments, context.TargetRoot, budget.Applied,
+                launch.FileName, launch.Arguments, launch.StartIn(context.TargetRoot), budget.Applied,
                 launch.Environment, launch.EnvironmentRemove, launch.TreeControl, cancellationToken);
         }
         catch (OperationCanceledException)

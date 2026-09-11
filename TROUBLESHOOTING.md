@@ -217,6 +217,7 @@ run before trusting the Windows arm:
 - Landlock active at runtime in the WSL2 kernel
 - the DrvFs (`/mnt/c`) enforcement verdicts and the ext4-versus-DrvFs timings
 - the watchdog kill proof (the Linux process is gone, not just wsl.exe)
+- that wsl.exe is started from the Windows temp directory, never the UNC workspace
 - the exit-code and UTF-8 round trip through wsl.exe
 - the `-a <templates dir>` DrvFs grant
 - the folder-picker UNC round trip
@@ -251,7 +252,8 @@ wsl -d $D --exec sh -c 'exit 42'; $LASTEXITCODE                # 42
 wsl -d $D --exec printf 'h\xc3\xa9llo\n' | Format-Hex           # UTF-8 bytes intact
 # argv fidelity
 wsl -d $D --exec printf '[%s]\n' 'a b' 'c"d' "e'f" 'g\h' '$i' '`j`' 'ü'   # one line per arg, verbatim
-# kill proof (envelope shape VR uses)
+# kill proof (SIMPLIFIED envelope: the real one also creates the pid directory and
+# cds into the workspace, see WslLauncher.Envelope)
 wsl -d $D --exec /bin/sh -c 'p=$1; shift; setsid "$@" & c=$!; echo $c > $p; wait $c' vr /tmp/vr.pid sleep 3600
 # in a second shell:
 $pid = (wsl -d $D --exec cat /tmp/vr.pid); wsl -d $D --exec kill -TERM -- -$pid; wsl -d $D --exec ps -p $pid   # must fail

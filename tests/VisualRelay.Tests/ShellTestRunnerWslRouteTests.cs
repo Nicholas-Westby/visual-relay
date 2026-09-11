@@ -30,6 +30,10 @@ public sealed class ShellTestRunnerWslRouteTests
         Assert.DoesNotContain("nono", launch.Arguments);
         Assert.Equal(WslExeEnvironment.Variables, launch.Environment);
         Assert.IsType<WslProcessTreeControl>(launch.TreeControl);
+        // wsl.exe is started from the Windows temp directory, never the UNC
+        // workspace: its own working directory only has to be one it can translate,
+        // and the envelope cds to the workspace inside the distro anyway.
+        Assert.Equal(Path.GetTempPath(), launch.StartIn(Root));
     }
 
     [Fact]
@@ -54,6 +58,8 @@ public sealed class ShellTestRunnerWslRouteTests
         Assert.Equal(new[] { flag, "dotnet test" }, launch.Arguments);
         Assert.Empty(launch.Environment);
         Assert.Null(launch.TreeControl);
+        // A local launch still follows the workspace.
+        Assert.Equal("/home/alice/repo", launch.StartIn("/home/alice/repo"));
     }
 
     [Fact]

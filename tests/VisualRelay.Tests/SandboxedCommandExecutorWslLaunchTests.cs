@@ -40,6 +40,10 @@ public sealed class SandboxedCommandExecutorWslLaunchTests
         Assert.Contains("/usr/local/bin/nono", launcher.Arguments);
         Assert.Equal(new[] { "/bin/sh", "-c", "ls -la | head -3" }, launcher.LaunchedCommand);
         Assert.DoesNotContain("cmd.exe", launcher.Arguments);
+        // wsl.exe is started from the Windows temp directory: its own working
+        // directory only has to be one it can translate, and the envelope cds to
+        // the workspace inside the distro itself.
+        Assert.Equal(Path.GetTempPath(), launcher.WorkingDirectory);
     }
 
     [Fact]
@@ -52,7 +56,7 @@ public sealed class SandboxedCommandExecutorWslLaunchTests
             "run_command", ["dotnet", "build", "-warnaserror"], NoArguments, WslRoot, CancellationToken.None);
 
         Assert.Equal(new[] { "dotnet", "build", "-warnaserror" }, launcher.LaunchedCommand);
-        Assert.Equal(Root, launcher.WorkingDirectory);
+        Assert.Equal(Path.GetTempPath(), launcher.WorkingDirectory);
         Assert.Equal(WslExeEnvironment.Variables, launcher.Environment);
         Assert.IsType<WslProcessTreeControl>(launcher.TreeControl);
     }

@@ -145,10 +145,55 @@ public sealed class ProcessCaptureTreeControlTests
         await pulsed.Task;
         var (exitCode, _, timedOut) = await run;
 
-        Assert.Equal([true, false], control.Stops);
+        // Polite, forced, and then the post-exit reap: a local wsl.exe that has gone
+        // is no proof the Linux tree went with it, so the reap runs either way.
+        Assert.Equal([true, false, false], control.Stops);
         Assert.Equal(1, control.Samples);
         Assert.False(timedOut);
         Assert.NotEqual(0, exitCode);
+    }
+
+    /// <summary>
+    /// The reap after a NORMAL exit. On POSIX the process-group kill takes the
+    /// stage's descendants with it; behind wsl.exe there is no group, so without
+    /// this the Linux tree was reaped only on a stop and a survivor could outlive
+    /// a finished run.
+    /// </summary>
+    [Fact]
+    public async Task ReapTree_ForcesTheTreeOnce_AndSurvivesAFailingControl()
+    {
+        var control = new RecordingTreeControl();
+        await ProcessCapture.ReapTreeAsync(control);
+        Assert.Equal([false], control.Stops);
+
+        var failing = new RecordingTreeControl { StopFailure = new InvalidOperationException("wsl.exe is gone") };
+        await ProcessCapture.ReapTreeAsync(failing);
+        Assert.Equal([false], failing.Stops);
+
+        // Nothing to reap where the host sees the tree itself.
+        await ProcessCapture.ReapTreeAsync(null);
+    }
+
+    /// <summary>
+    /// The wiring proof for the reap: a real child that exits by itself still has
+    /// its tree forced through the strategy. Opt-in because it spawns a shell;
+    /// still virtual-clock, because nothing here waits on the clock.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ChildExitsNormally_ReapsTheTreeThroughTheControl()
+    {
+        NonoIntegration.SkipIfNotOptedIn();
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the child is a POSIX shell");
+
+        var control = new RecordingTreeControl();
+
+        var (exitCode, _, timedOut) = await ProcessCapture.RunAsync(
+            "/bin/sh", ["-c", "exit 0"], Path.GetTempPath(), TimeSpan.FromMinutes(5), CancellationToken.None,
+            timeProvider: new ManualTimeProvider(), treeControl: control);
+
+        Assert.Equal(0, exitCode);
+        Assert.False(timedOut);
+        Assert.Equal([false], control.Stops);
     }
 
     private sealed class RecordingTreeControl(params long?[] samples) : IProcessTreeControl

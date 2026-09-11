@@ -46,4 +46,59 @@ public sealed class WslContextResolverTests
         if (!OperatingSystem.IsWindows())
             Assert.Null(WslContextResolver.TryGetCurrent());
     }
+
+    /// <summary>
+    /// The async accessor answers from the same override, so a caller on the UI
+    /// thread never reaches the blocking one.
+    /// </summary>
+    [Fact]
+    public async Task TryGetCurrentAsync_AnswersFromTheOverride()
+    {
+        var context = new WslContext(WslProbeFixtures.WslExe, "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        try
+        {
+            WslContextResolver.Override(context);
+
+            Assert.Same(context, await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            WslContextResolver.Override(null);
+        }
+
+        if (!OperatingSystem.IsWindows())
+            Assert.Null(await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// One probe per process, however many callers ask and whichever accessor they
+    /// use. The sync accessor blocks on the SAME task the async one awaits, and that
+    /// task runs on the thread pool — which is what keeps a blocked UI thread from
+    /// being the continuation the probe is waiting for.
+    /// </summary>
+    [Fact]
+    public async Task TheProbe_RunsOnceForEveryCaller_OnBothAccessors()
+    {
+        var probes = 0;
+        WslContextResolver.UseProberForTests(_ =>
+        {
+            Interlocked.Increment(ref probes);
+            return Task.FromResult(WslProbeFixtures.Usable());
+        });
+        try
+        {
+            var asked = await Task.WhenAll(
+                Enumerable.Range(0, 8).Select(_ => Task.Run(
+                    WslContextResolver.ProbedForTestsAsync, TestContext.Current.CancellationToken)));
+
+            Assert.Equal(1, probes);
+            Assert.All(asked, context => Assert.Equal("Ubuntu", context!.Distro));
+            Assert.Same(asked[0], await WslContextResolver.ProbedForTestsAsync());
+            Assert.Equal(1, probes);
+        }
+        finally
+        {
+            WslContextResolver.UseProberForTests(null);
+        }
+    }
 }

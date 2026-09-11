@@ -62,6 +62,19 @@ internal static partial class ProcessCapture
     }
 
     /// <summary>
+    /// The reap step for a tree the host cannot see. On POSIX the process-group kill
+    /// takes the stage's descendants with it when the child exits; behind wsl.exe
+    /// there is no group and no visible tree, so nothing reaped the Linux side after
+    /// an ordinary exit and a survivor could hold the workspace. Best-effort by
+    /// construction: the tree is usually already gone, and a control that fails must
+    /// never turn a finished run into a failed one.
+    /// </summary>
+    /// <param name="treeControl">The control, or null when the host sees the tree.</param>
+    /// <returns>The completed reap.</returns>
+    internal static Task ReapTreeAsync(IProcessTreeControl? treeControl) =>
+        treeControl is null ? Task.CompletedTask : SafeStopAsync(treeControl, graceful: false);
+
+    /// <summary>
     /// The stop sequence for a tree controlled through a strategy: ask the tree to
     /// stop, wait the grace window for the local process (which exits with its
     /// tree) to go, then force the tree and kill the local process. A failing

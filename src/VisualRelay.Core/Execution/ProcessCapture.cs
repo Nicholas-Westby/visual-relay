@@ -177,6 +177,7 @@ internal static partial class ProcessCapture
             if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, tp, cancellationToken)) != exitedTcs.Task)
             {
                 await GracefulStopThenKillAsync(process, stageGroupId, tp, treeControl);
+                await ReapTreeAsync(treeControl);
                 lock (outputLock) { return (-1, output.ToString(), true); }
             }
 
@@ -188,6 +189,7 @@ internal static partial class ProcessCapture
                 if (stageGroupId.HasValue)
                     try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
                 try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
+                await ReapTreeAsync(treeControl);
             }
             await Task.WhenAny(process.WaitForExitAsync(CancellationToken.None), Task.Delay(TimeSpan.FromMilliseconds(DrainGraceMs), tp, CancellationToken.None));
             lock (outputLock) { return (process.ExitCode, output.ToString(), false); }

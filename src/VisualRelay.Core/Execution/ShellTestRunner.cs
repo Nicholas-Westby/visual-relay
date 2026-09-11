@@ -45,7 +45,7 @@ public sealed class ShellTestRunner(TimeSpan? timeout = null, bool loginShell = 
         }
 
         var result = await ProcessCapture.RunAsync(
-            launch.FileName, launch.Arguments, rootPath, _timeout, cancellationToken,
+            launch.FileName, launch.Arguments, launch.StartIn(rootPath), _timeout, cancellationToken,
             environment: launch.Environment, treeControl: launch.TreeControl);
         var output = result.TimedOut
             ? $"test command timed out after {_timeout.TotalMilliseconds:F0}ms\n\n{result.Output}"

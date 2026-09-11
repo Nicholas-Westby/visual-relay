@@ -52,6 +52,12 @@ public static partial class SandboxPathInspector
     /// policy is unavailable. <paramref name="workspaceRoot"/> is the active
     /// workspace granted via <c>--allow-cwd</c> (may be null);
     /// <paramref name="extraAllowPaths"/> are per-repo <c>sandboxExtraAllowPaths</c>.
+    /// <para>
+    /// Not purely a read on Windows: the distro arm ensures the guard profile is
+    /// present inside the distro first (<see cref="NonoProfileEnsurer"/>), because
+    /// the profile nono is asked about is a file in the distro user's home and a
+    /// fresh distro has none. Off Windows the profile travels in the request.
+    /// </para>
     /// </summary>
     public static async Task<SandboxInspectionResult> InspectAsync(
         string? workspaceRoot,
@@ -61,7 +67,11 @@ public static partial class SandboxPathInspector
     {
         if (OperatingSystem.IsWindows())
         {
-            return WslContextResolver.TryGetCurrent() is { } context
+            // Awaited, never waited on: the first caller is the desktop app's
+            // background inspection, which starts on the UI thread. Blocking there
+            // on a probe whose own continuations come back to that same thread is a
+            // deadlock, not a delay.
+            return await WslContextResolver.TryGetCurrentAsync(cancellationToken) is { } context
                 ? await InspectThroughWslAsync(
                     context, RunWslJsonAsync, ct => NonoProfileEnsurer.EnsureAsync(cancellationToken: ct),
                     workspaceRoot, extraAllowPaths, cancellationToken)

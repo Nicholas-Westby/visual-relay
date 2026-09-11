@@ -44,7 +44,7 @@ public sealed partial class SandboxedTestRunner(
         // seconds. RunWatchedAsync reaps once the tree goes output-silent +
         // CPU-idle and surfaces the inner command's real red/green result.
         var result = await RunWatchedAsync(
-            launch.FileName, launch.Arguments, rootPath, launch.Environment,
+            launch.FileName, launch.Arguments, launch.StartIn(rootPath), launch.Environment,
             firstOutputTimeoutMs: config.TestIdleGraceMilliseconds,
             idleGraceMs: config.TestIdleGraceMilliseconds,
             hardCap: _timeout,

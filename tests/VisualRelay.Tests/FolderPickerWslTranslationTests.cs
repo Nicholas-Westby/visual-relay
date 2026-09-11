@@ -48,15 +48,32 @@ public sealed class FolderPickerWslTranslationTests
     [Theory]
     [InlineData("/Users/alice/repo", false)]
     [InlineData(@"C:\Users\alice\repo", false)]
-    [InlineData(@"\\server\share\repo", true)]
+    [InlineData(@"\\server\share\repo", false)]
     public void Decide_AnyOtherPick_IsAcceptedUnchanged(string picked, bool isWindows)
     {
-        // A drive-looking path off Windows is just a name; a foreign share is not
-        // a distro and Git for Windows serves it as before.
+        // A drive-looking path or a share name off Windows is just a name: there is
+        // no distro to translate it for, and the local sandbox reads it directly.
         var pick = FolderPickerWslTranslation.Decide(picked, isWindows);
 
         Assert.Equal(picked, pick.Root);
         Assert.Null(pick.Message);
+    }
+
+    /// <summary>
+    /// On Windows every sandboxed run goes through the distro, so a share that is
+    /// not one cannot be a workspace. Refusing it at the pick is the only place the
+    /// operator learns why; accepting it deferred the same failure to the first run.
+    /// </summary>
+    [Theory]
+    [InlineData(@"\\server\share\repo")]
+    [InlineData(@"\\127.0.0.1\c$\repo")]
+    public void Decide_AForeignSharePick_OnWindows_IsRefused(string picked)
+    {
+        var pick = FolderPickerWslTranslation.Decide(picked, isWindows: true);
+
+        Assert.Null(pick.Root);
+        Assert.Contains(@"\\wsl.localhost", pick.Message!, StringComparison.Ordinal);
+        Assert.Contains(@"\\wsl$", pick.Message!, StringComparison.Ordinal);
     }
 
     [Fact]

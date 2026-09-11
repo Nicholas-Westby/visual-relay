@@ -69,6 +69,8 @@ public sealed class SandboxedTestRunnerWslLaunchTests
         Assert.Equal(WslExeEnvironment.Variables, launch.Environment);
         Assert.Empty(launch.EnvironmentRemove);
         Assert.IsType<WslProcessTreeControl>(launch.TreeControl);
+        // And it is started from the Windows temp directory, not the UNC workspace.
+        Assert.Equal(Path.GetTempPath(), launch.StartIn(Root));
     }
 
     [Fact]

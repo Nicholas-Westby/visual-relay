@@ -12,7 +12,7 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// </summary>
 public static class WslProcessControl
 {
-    /// <summary>Inside the distro; the launch site creates it before the first launch.</summary>
+    /// <summary>Inside the distro; the envelope creates it before writing the pid file.</summary>
     public const string PidFileDirectory = "/tmp/visual-relay";
 
     /// <summary><c>kill -&lt;signal&gt; -- -&lt;pgid&gt;</c>: the whole process group, never group 0 or every process.</summary>
