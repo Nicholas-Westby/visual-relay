@@ -127,6 +127,46 @@ public sealed class RelayDriverManifestPrefixTests
         Assert.DoesNotContain(s6.Manifest, m => m.StartsWith('+'));
     }
 
+    /// <summary>
+    /// Stage 4 adopts the manifest the way every later reader normalizes a path.
+    /// Stage 5's declared test files, the worktree filter and the red gate all
+    /// compare Ordinal against a stripped, forward-slashed, dot-free path, so a
+    /// <c>./</c> entry that survived adoption was a second name for one file — and
+    /// the red gate then stripped a file stage 5 had declared as a test.
+    /// </summary>
+    [Fact]
+    public async Task Stage4_DotSlashManifestEntries_AreNormalizedLikeEveryLaterReader()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("t", "# Add feature\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "Existing.cs"), "old");
+
+        var runner = new NewFilePrefixStage4Runner(
+            "Add new feature.", ["./src/New.cs", "src/Existing.cs/"]);
+        var driver = new RelayDriver(
+            RelayDriverTestHelpers.DepsFor(repo, runner,
+                new ScriptedTestRunner(
+                    new TestRunResult(1, "red"), new TestRunResult(0, "green")),
+                new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "t");
+        Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+
+        var manifestOnDisk = await File.ReadAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "t", "manifest.txt"));
+        Assert.Contains("src/New.cs", manifestOnDisk, StringComparison.Ordinal);
+        Assert.DoesNotContain("./src/New.cs", manifestOnDisk, StringComparison.Ordinal);
+        Assert.DoesNotContain("src/Existing.cs/", manifestOnDisk, StringComparison.Ordinal);
+
+        var s6 = runner.Invocations.FirstOrDefault(i => i.Stage.Number == 6);
+        Assert.NotNull(s6);
+        Assert.Contains("src/New.cs", s6!.Manifest);
+        Assert.DoesNotContain(s6.Manifest, m => m.StartsWith("./", StringComparison.Ordinal) || m.EndsWith('/'));
+    }
+
     [Fact]
     public async Task PlanCompletenessRetry_NewFilePrefix_IsStrippedFromInMemoryManifest()
     {

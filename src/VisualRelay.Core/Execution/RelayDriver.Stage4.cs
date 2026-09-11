@@ -24,8 +24,12 @@ public sealed partial class RelayDriver
     /// <summary>
     /// Adopts the plan's manifest: task-directory entries are dropped (a plan that
     /// edits its own task file produces a manifest the commit stage cannot
-    /// honour), the rest are cleaned of the <c>+</c> prefix, and the narrowed test
-    /// command is rebuilt from them.
+    /// honour), the rest are normalized the way every later reader reads a path —
+    /// the <c>+</c> prefix, a leading <c>./</c>, backslashes and a trailing slash
+    /// all gone — and the narrowed test command is rebuilt from them. Stage 5
+    /// normalizes its declared test files the same way, and the red gate compares
+    /// the two Ordinal: an entry left unnormalized here is a second name for one
+    /// file, and the gate strips a file stage 5 declared as a test.
     /// </summary>
     private async Task<Stage4Result> HandleStage4Async(
         string rootPath,
@@ -50,11 +54,11 @@ public sealed partial class RelayDriver
         {
             if (IsPathUnderDirectory(rootPath, e, config.TasksDir))
                 dropped.Add(e);
-            else
-                clean.Add(e.StartsWith('+') ? e[1..] : e);
+            else if (WorktreeFilter.NormalizeRepoRelativePath(e) is { Length: > 0 } path)
+                clean.Add(path);
         }
 
-        manifest.AddRange(clean);
+        manifest.AddRange(clean.Distinct(StringComparer.Ordinal));
         if (dropped.Count > 0)
         {
             var note = dropped.Count == 1

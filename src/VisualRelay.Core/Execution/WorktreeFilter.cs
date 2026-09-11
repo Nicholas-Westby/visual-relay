@@ -23,8 +23,13 @@ internal static partial class WorktreeFilter
     /// <summary>
     /// Normalize a repo-relative path: strip leading <c>+</c>, replace <c>\</c>
     /// with <c>/</c>, trim leading <c>./</c> or <c>/</c>, trim trailing <c>/</c>.
+    /// internal because every reader of a model-written path list — the manifest
+    /// stage 4 adopts and the strip set the red gate computes included — has to
+    /// agree with this filter on when two names are one file.
     /// </summary>
-    private static string NormalizeRepoRelativePath(string path)
+    /// <param name="path">The path as the stage wrote it.</param>
+    /// <returns>The normalized path; empty when nothing is left.</returns>
+    internal static string NormalizeRepoRelativePath(string path)
     {
         if (path.Length > 0 && path[0] == '+')
             path = path[1..];

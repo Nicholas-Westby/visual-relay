@@ -11,10 +11,23 @@ public static class RedGate
 {
     private const string TagPrefix = "relay-redgate";
 
+    /// <summary>
+    /// The manifest entries that are NOT declared test files — what the gate strips
+    /// to make the tree red. Both sides are normalized first: the manifest comes
+    /// from stage 4 and the test list from stage 5, both written by a model, so one
+    /// file can arrive under two names (<c>./src/x</c> and <c>src/x</c>). Compared
+    /// raw, that difference put a DECLARED TEST in the strip set and the gate then
+    /// stashed the very test it was about to run.
+    /// </summary>
+    /// <param name="manifest">The plan's manifest.</param>
+    /// <param name="testFiles">The test files stage 5 declared.</param>
+    /// <returns>The normalized paths to strip.</returns>
     public static IReadOnlyList<string> ComputeStripSet(IReadOnlyList<string> manifest, IReadOnlyList<string> testFiles)
     {
-        var tests = testFiles.ToHashSet(StringComparer.Ordinal);
-        return manifest.Where(file => !tests.Contains(file)).ToArray();
+        var tests = WorktreeFilter.NormalizeTestFileList(testFiles).ToHashSet(StringComparer.Ordinal);
+        return [.. manifest
+            .Select(WorktreeFilter.NormalizeRepoRelativePath)
+            .Where(file => file.Length > 0 && !tests.Contains(file))];
     }
 
     public static string StashTag(string taskId, string nonce) => $"{TagPrefix}:{taskId}:{nonce}";
