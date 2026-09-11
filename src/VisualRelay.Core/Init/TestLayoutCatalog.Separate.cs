@@ -1,0 +1,97 @@
+namespace VisualRelay.Core.Init;
+
+// SEPARATE (78) — unit tests live in files of their own, so a path classifier
+// can gate them. One row per line on purpose: this is a data table, and a row
+// that spans lines is harder to scan than a long one.
+//
+// Four alias rows of the source list are merged here rather than carried twice:
+// ecmascript into javascript, bourne-shell into bash, caml into ocaml, and
+// kotlin-multiplatform into kotlin (whose source-set directories join kotlin's
+// test path patterns). Extensions a mainstream language also claims are gone
+// from the weaker row: .h from objective-c, .m from matlab, .v from v and coq,
+// .php from hack, .t stays with perl. Markers several languages share are gone
+// too, so matlab, v and coq keep only their own project file.
+public static partial class TestLayoutCatalog
+{
+    private static readonly TestLayoutLanguage[] SeparateRows =
+    [
+        new("python", TestLayoutBucket.Separate, [".py"], ["pyproject.toml", "setup.py", "setup.cfg", "tox.ini", "Pipfile"], ["tests/", "test/", "test_*.py", "*_test.py", "conftest.py"]),
+        new("c", TestLayoutBucket.Separate, [".c", ".h"], ["configure.ac"], ["test/", "tests/", "test_*.c", "*_test.c", "check_*.c"]),
+        new("cpp", TestLayoutBucket.Separate, [".cpp", ".cc", ".cxx", ".hpp"], ["conanfile.txt", "conanfile.py", "vcpkg.json"], ["test/", "tests/", "*_test.cc", "*_test.cpp", "Test*.cpp", "tst_*.cpp"]),
+        new("java", TestLayoutBucket.Separate, [".java"], ["pom.xml", "build.gradle", "settings.gradle"], ["src/test/java/**", "*Test.java", "*Tests.java", "Test*.java", "*IT.java", "*TestCase.java"]),
+        new("csharp", TestLayoutBucket.Separate, [".cs"], ["*.csproj", "*.sln", "Directory.Build.props"], ["tests/", "*.Tests/", "*.UnitTests/", "*Tests.cs", "*Test.cs"]),
+        new("javascript", TestLayoutBucket.Separate, [".js", ".mjs", ".cjs"], ["package.json", "jest.config.js", "jest.config.ts", "vitest.config.js", "vitest.config.ts"], ["__tests__/", "test/", "tests/", "*.test.js", "*.spec.js", "e2e/"]),
+        new("visual-basic", TestLayoutBucket.Separate, [".vb"], ["*.vbproj"], ["*Tests.vb", "*.Tests/"]),
+        new("r", TestLayoutBucket.Separate, [".r"], ["DESCRIPTION", "NAMESPACE"], ["tests/testthat/test-*.R", "tests/testthat.R"]),
+        new("fortran", TestLayoutBucket.Separate, [".f90", ".f"], ["fpm.toml"], ["test/", "test/*_test.f90", "*.pf"]),
+        new("go", TestLayoutBucket.Separate, [".go"], ["go.mod", "go.sum"], ["*_test.go", "testdata/"]),
+        new("delphi", TestLayoutBucket.Separate, [".pas", ".dpr"], ["*.dproj", "*.lpi"], ["tests/", "Test*.pas", "*Tests.pas"]),
+        new("php", TestLayoutBucket.Separate, [".php"], ["composer.json", "phpunit.xml", "phpunit.xml.dist"], ["tests/", "*Test.php"]),
+        new("ada", TestLayoutBucket.Separate, [".adb", ".ads"], ["*.gpr", "alire.toml"], ["tests/", "*-tests.adb", "test_*.adb"]),
+        new("swift", TestLayoutBucket.Separate, [".swift"], ["Package.swift"], ["Tests/", "*Tests.swift", "*Spec.swift"]),
+        new("objective-c", TestLayoutBucket.Separate, [".m"], ["Podfile"], ["Tests/", "*Tests.m", "*Spec.m"]),
+        new("julia", TestLayoutBucket.Separate, [".jl"], ["Project.toml", "Manifest.toml"], ["test/runtests.jl", "test/*.jl"]),
+        new("ruby", TestLayoutBucket.Separate, [".rb"], ["Gemfile", "*.gemspec", "Rakefile"], ["spec/*_spec.rb", "test/*_test.rb", "features/*.feature"]),
+        new("perl", TestLayoutBucket.Separate, [".pm", ".t"], ["cpanfile", "Makefile.PL", "Build.PL", "dist.ini"], ["t/*.t", "xt/*.t"]),
+        new("kotlin", TestLayoutBucket.Separate, [".kt", ".kts"], ["build.gradle.kts", "settings.gradle.kts"], ["src/test/kotlin/**", "*Test.kt", "*Spec.kt", "src/commonTest/kotlin/**", "src/jvmTest/**", "src/androidUnitTest/**", "src/iosTest/**"]),
+        new("matlab", TestLayoutBucket.Separate, [], ["*.prj"], ["tests/", "*Test.m", "test_*.m"]),
+        new("lua", TestLayoutBucket.Separate, [".lua"], ["*.rockspec", ".busted"], ["spec/*_spec.lua", "tests/", "test_*.lua"]),
+        new("powershell", TestLayoutBucket.Separate, [".ps1", ".psm1", ".psd1"], ["*.psd1"], ["*.Tests.ps1", "tests/"]),
+        new("abap", TestLayoutBucket.Separate, [".abap"], [".abapgit.xml"], ["*.clas.testclasses.abap"]),
+        new("ocaml", TestLayoutBucket.Separate, [".ml", ".mli"], ["dune-project", "dune", "*.opam"], ["test/", "tests/", "*_test.ml", "test_*.ml"]),
+        new("typescript", TestLayoutBucket.Separate, [".ts"], ["tsconfig.json", "deno.json"], ["__tests__/", "*.test.ts", "*.spec.ts", "test/", "*_test.ts"]),
+        new("dart", TestLayoutBucket.Separate, [".dart"], ["pubspec.yaml"], ["test/*_test.dart", "integration_test/"]),
+        new("xpp", TestLayoutBucket.Separate, [".xpp"], [], []),
+        new("lisp", TestLayoutBucket.Separate, [".lisp", ".lsp", ".asd"], ["*.asd", "qlfile"], ["t/", "tests/", "*-test.lisp", "*-tests.lisp"]),
+        new("scala", TestLayoutBucket.Separate, [".scala", ".sc"], ["build.sbt", "build.sc"], ["src/test/scala/**", "*Spec.scala", "*Suite.scala", "*Test.scala"]),
+        new("haskell", TestLayoutBucket.Separate, [".hs"], ["*.cabal", "stack.yaml", "package.yaml"], ["test/", "test/Spec.hs", "*Spec.hs", "test/Main.hs"]),
+        new("actionscript", TestLayoutBucket.Separate, [".as"], ["*.as3proj"], ["test/", "*Test.as"]),
+        new("apex", TestLayoutBucket.Separate, [".cls", ".trigger"], ["sfdx-project.json"], ["*Test.cls", "Test*.cls", "*_Test.cls"]),
+        new("bash", TestLayoutBucket.Separate, [".sh", ".bash"], [], ["test/", "tests/", "*.bats", "*_test.sh", "test_*.sh", "spec/*_spec.sh"]),
+        new("cfml", TestLayoutBucket.Separate, [".cfc", ".cfm"], ["box.json", "server.json"], ["tests/", "*Test.cfc", "*Spec.cfc"]),
+        new("clojure", TestLayoutBucket.Separate, [".clj", ".cljs", ".cljc"], ["deps.edn", "project.clj", "shadow-cljs.edn"], ["test/**/*_test.clj", "test/"]),
+        new("coffeescript", TestLayoutBucket.Separate, [".coffee"], [], ["test/*.coffee", "*.spec.coffee"]),
+        new("elixir", TestLayoutBucket.Separate, [".ex", ".exs"], ["mix.exs"], ["test/**/*_test.exs", "test/test_helper.exs"]),
+        new("erlang", TestLayoutBucket.Separate, [".erl", ".hrl"], ["rebar.config", "erlang.mk"], ["test/*_SUITE.erl", "test/*_tests.erl", "src/*_tests.erl"]),
+        new("fsharp", TestLayoutBucket.Separate, [".fs", ".fsx", ".fsi"], ["*.fsproj", "paket.dependencies"], ["tests/", "*Tests.fs", "Tests.fs"]),
+        new("groovy", TestLayoutBucket.Separate, [".groovy", ".gradle"], [], ["src/test/groovy/**", "*Test.groovy", "*Spec.groovy"]),
+        new("ml", TestLayoutBucket.Separate, [".sml", ".sig"], ["*.cm", "*.mlb"], ["test/", "tests/"]),
+        new("nim", TestLayoutBucket.Separate, [".nim", ".nims"], ["*.nimble"], ["tests/t*.nim", "tests/"]),
+        new("scheme", TestLayoutBucket.Separate, [".scm", ".ss", ".sld"], [], ["tests/", "test/", "*-test.scm"]),
+        new("solidity", TestLayoutBucket.Separate, [".sol"], ["foundry.toml", "hardhat.config.js", "hardhat.config.ts", "truffle-config.js"], ["test/*.t.sol"]),
+        new("tcl", TestLayoutBucket.Separate, [".tcl"], ["pkgIndex.tcl"], ["tests/*.test"]),
+        new("v", TestLayoutBucket.Separate, [], ["v.mod"], ["*_test.v", "tests/"]),
+        new("jsx", TestLayoutBucket.Separate, [".jsx"], [], ["__tests__/", "*.test.jsx", "*.spec.jsx"]),
+        new("tsx", TestLayoutBucket.Separate, [".tsx"], [], ["__tests__/", "*.test.tsx", "*.spec.tsx"]),
+        new("cuda-cpp", TestLayoutBucket.Separate, [".cu", ".cuh"], [], ["test/", "*_test.cu"]),
+        new("smalltalk", TestLayoutBucket.Separate, [".st"], [".project"], ["*-Tests/", "*Test.class.st"]),
+        new("raku", TestLayoutBucket.Separate, [".raku", ".rakumod", ".p6"], ["META6.json"], ["t/*.t", "xt/*.t"]),
+        new("elm", TestLayoutBucket.Separate, [".elm"], ["elm.json"], ["tests/*.elm", "tests/Tests.elm"]),
+        new("crystal", TestLayoutBucket.Separate, [".cr"], ["shard.yml"], ["spec/*_spec.cr", "spec/spec_helper.cr"]),
+        new("hack", TestLayoutBucket.Separate, [".hack"], [".hhconfig"], ["tests/", "*Test.php"]),
+        new("gdscript", TestLayoutBucket.Separate, [".gd"], ["project.godot"], ["test/test_*.gd", "tests/"]),
+        new("qml", TestLayoutBucket.Separate, [".qml"], [], ["tests/auto/", "tst_*.qml"]),
+        new("chapel", TestLayoutBucket.Separate, [".chpl"], ["Mason.toml"], ["test/*.chpl", "*.good"]),
+        new("mojo", TestLayoutBucket.Separate, [".mojo"], ["mojoproject.toml"], ["test/test_*.mojo"]),
+        new("gleam", TestLayoutBucket.Separate, [".gleam"], ["gleam.toml"], ["test/*_test.gleam"]),
+        new("rescript", TestLayoutBucket.Separate, [".res", ".resi"], ["rescript.json", "bsconfig.json"], ["tests/", "__tests__/", "*_test.res"]),
+        new("reasonml", TestLayoutBucket.Separate, [".re", ".rei"], [], ["test/", "__tests__/"]),
+        new("pony", TestLayoutBucket.Separate, [".pony"], ["corral.json"], ["_test.pony", "*/test/main.pony"]),
+        new("vyper", TestLayoutBucket.Separate, [".vy"], ["ape-config.yaml"], ["tests/test_*.py"]),
+        new("move", TestLayoutBucket.Separate, [".move"], ["Move.toml"], ["tests/*.move"]),
+        new("svelte", TestLayoutBucket.Separate, [".svelte"], ["svelte.config.js"], ["*.test.ts", "*.spec.ts", "src/**/__tests__/", "e2e/"]),
+        new("vue", TestLayoutBucket.Separate, [".vue"], [], ["__tests__/*.spec.ts", "*.spec.ts", "tests/unit/"]),
+        new("astro", TestLayoutBucket.Separate, [".astro"], ["astro.config.mjs"], ["src/**/*.test.ts", "e2e/"]),
+        new("odin", TestLayoutBucket.Separate, [".odin"], ["ols.json"], ["tests/", "*_test.odin"]),
+        new("haxe", TestLayoutBucket.Separate, [".hx"], ["haxelib.json", "*.hxml"], ["test/", "tests/", "Test*.hx", "*Test.hx"]),
+        new("vala", TestLayoutBucket.Separate, [".vala", ".vapi"], [], ["tests/"]),
+        new("lean", TestLayoutBucket.Separate, [".lean"], ["lakefile.lean", "lakefile.toml", "lean-toolchain"], ["test/", "tests/", "Test/"]),
+        new("idris", TestLayoutBucket.Separate, [".idr"], ["*.ipkg"], ["tests/"]),
+        new("agda", TestLayoutBucket.Separate, [".agda", ".lagda"], ["*.agda-lib"], ["test/"]),
+        new("coq", TestLayoutBucket.Separate, [], ["_CoqProject"], ["test-suite/", "tests/"]),
+        new("objective-cpp", TestLayoutBucket.Separate, [".mm"], [], ["Tests/", "*Tests.mm"]),
+        new("gherkin", TestLayoutBucket.Separate, [".feature"], ["cucumber.yml", "behave.ini"], ["features/*.feature", "features/step_definitions/", "tests/features/"]),
+        new("robot-framework", TestLayoutBucket.Separate, [".robot", ".resource"], [], ["tests/*.robot", "atests/", "utests/"]),
+        new("emacs-lisp", TestLayoutBucket.Separate, [".el"], ["Cask", "Eldev"], ["test/*-test.el", "test/*-tests.el"]),
+    ];
+}
