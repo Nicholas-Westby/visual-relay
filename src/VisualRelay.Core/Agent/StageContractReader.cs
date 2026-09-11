@@ -144,11 +144,33 @@ public static class StageContractReader
     /// <summary>
     /// The keys a contract line requires. A key written <c>"name"?:</c> is
     /// optional, which is how the fix-verify contract marks its amend list.
+    /// <para>
+    /// Only the contract object's OWN keys count. A contract that sketches the
+    /// shape of an array's elements — <c>{ "hunks": [ { "file": … } ] }</c> — is
+    /// describing what goes inside, not another key the answer must carry at the
+    /// top level; requiring those made every correct answer unreadable, and an
+    /// empty array unrepresentable.
+    /// </para>
     /// </summary>
     private static IEnumerable<string> RequiredKeys(string contract)
     {
+        // Depth counts the braces and brackets of the contract SKETCH, so the
+        // object's own keys sit at depth 1 and everything nested is skipped.
+        var depth = 0;
         for (var i = 0; i < contract.Length; i++)
         {
+            if (contract[i] is '{' or '[')
+            {
+                depth++;
+                continue;
+            }
+
+            if (contract[i] is '}' or ']')
+            {
+                depth--;
+                continue;
+            }
+
             if (contract[i] != '"') continue;
             var end = contract.IndexOf('"', i + 1);
             if (end < 0) yield break;
@@ -158,7 +180,7 @@ public static class StageContractReader
             while (after < contract.Length && contract[after] == ' ') after++;
 
             // A colon marks a key; a question mark before it marks it optional.
-            if (after < contract.Length && contract[after] == ':'
+            if (depth == 1 && after < contract.Length && contract[after] == ':'
                 && name.Length > 0 && name.All(c => char.IsLetterOrDigit(c) || c == '_'))
                 yield return name;
 

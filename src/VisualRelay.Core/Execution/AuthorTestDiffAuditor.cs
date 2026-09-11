@@ -166,8 +166,11 @@ public static partial class AuthorTestDiffAuditor
             Files: "none",
             Commands: "none",
             SystemPrompt: SystemPrompt,
+            // Only the object's own key is named. The contract reader requires
+            // every key the line spells, so naming the element's keys here made
+            // an empty answer — the ordinary one — impossible to satisfy.
             OutputContract: "End your reply with a single fenced ```json block, nothing after it, "
-                + """matching: { "implementationHunks": [ { "file": string, "reason": string } ] }""");
+                + """matching: { "implementationHunks": [ {file, reason} ] }""");
 
         return new StageInvocation(
             stage, Tier, runId, rootPath, taskId, prompt,
@@ -177,7 +180,11 @@ public static partial class AuthorTestDiffAuditor
             TraceDirectory: traceDirectory,
             ReportFile: traceDirectory + ".report.json",
             MaxTurns: 1,
-            AbsoluteCeilingMs: config.SubagentTimeoutMilliseconds);
+            AbsoluteCeilingMs: config.SubagentTimeoutMilliseconds,
+            // The whole diff is in the prompt, so there is nothing to look up and
+            // one turn is enough. Offered a tool catalog, the model spent that one
+            // turn on two lookups and the audit reported no answer at all.
+            WithoutTools: true);
     }
 
     private static string TraceDirectory(string rootPath, string taskId, int call) =>

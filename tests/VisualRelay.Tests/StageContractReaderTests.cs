@@ -217,6 +217,37 @@ public sealed class StageContractReaderTests
     }
 
     /// <summary>
+    /// A contract that sketches the shape of an array's ELEMENTS requires only the
+    /// object's own keys. The stage-5 audit asked for
+    /// <c>{ "implementationHunks": [ { "file": …, "reason": … } ] }</c> and every
+    /// answer was rejected for lacking a top-level "file" — which no correct answer
+    /// has, and an empty array cannot have at all.
+    /// </summary>
+    [Fact]
+    public void NestedKeysInTheContract_AreNotRequiredAtTheTopLevel()
+    {
+        const string contract =
+            """matching: { "implementationHunks": [ { "file": string, "reason": string } ] }""";
+
+        var empty = StageContractReader.Read("""{ "implementationHunks": [] }""", contract);
+        var filled = StageContractReader.Read(
+            """{ "implementationHunks": [ { "file": "a", "reason": "b" } ] }""", contract);
+
+        Assert.True(empty.Succeeded, empty.Error);
+        Assert.True(filled.Succeeded, filled.Error);
+    }
+
+    /// <summary>A key the contract names at the top level is still required.</summary>
+    [Fact]
+    public void ATopLevelKeyTheAnswerLacks_IsStillReported()
+    {
+        var result = StageContractReader.Read("""{ "summary": "did it" }""", SummaryContract);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("options", result.Error!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The fixture that broke the old stdout extractor: a closing fence sitting
     /// on the same line as content. In process this is unremarkable, because the
     /// reader matches braces rather than fences.

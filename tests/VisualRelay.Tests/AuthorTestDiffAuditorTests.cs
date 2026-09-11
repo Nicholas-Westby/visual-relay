@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
@@ -99,6 +100,50 @@ public sealed class AuthorTestDiffAuditorTests
             repo.Root, ["../outside/secret"], sim, TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("secret", diff, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The one call is answered from the prompt alone, so it is sent with no tools:
+    /// on the live default model the audit spent its single turn on two tool calls
+    /// and then reported an exhausted turn budget, every time it fired.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AsksForOneToollessTurnAgainstATopLevelContract()
+    {
+        using var repo = TestRepository.Create();
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/app", "old\n");
+        sim.Commit(repo.Root, "seed");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "tests", "t"), "asserts\n");
+        var runner = new CapturingSubagentRunner("""{"implementationHunks":[]}""");
+
+        var result = await AuthorTestDiffAuditor.RunAsync(
+            repo.Root, "a-task", "run-1", ["tests/t"], RelayConfigLoader.Defaults(),
+            runner, sim, new InMemoryRelayEventSink(), TestContext.Current.CancellationToken);
+
+        Assert.Null(result.Error);
+        Assert.Empty(result.ImplementationHunks);
+        var invocation = Assert.Single(runner.Invocations);
+        Assert.True(invocation.WithoutTools, "the audit must be sent with no tools");
+        Assert.Equal(1, invocation.MaxTurns);
+        // The reader requires every key the contract names, so naming the element's
+        // keys there makes an empty answer impossible to satisfy.
+        Assert.DoesNotContain("\"file\"", invocation.Stage.OutputContract, StringComparison.Ordinal);
+        Assert.Contains("implementationHunks", invocation.Stage.OutputContract, StringComparison.Ordinal);
+    }
+
+    /// <summary>Records what the audit asked for and answers with canned JSON.</summary>
+    private sealed class CapturingSubagentRunner(string json) : ISubagentRunner
+    {
+        public List<StageInvocation> Invocations { get; } = [];
+
+        public Task<SubagentResult> RunAsync(
+            StageInvocation invocation, CancellationToken cancellationToken = default)
+        {
+            Invocations.Add(invocation);
+            return Task.FromResult(new SubagentResult(json, json, true, null));
+        }
     }
 
     private static IReadOnlyList<AuthorTestScopeVerdict> Verdicts(string kinds) =>

@@ -45,8 +45,12 @@ public sealed partial class FirstPartySubagentRunner
         // The transcript is what the autopsy writes: a cancelled loop returns
         // nothing, so without this a killed stage leaves no trace of how far it got.
         var transcript = new AgentTranscriptBuffer();
+        // A stage that asks for no tools gets none: offering a catalog to a stage
+        // whose whole input is already in its prompt only invites it to spend the
+        // turn budget looking things up instead of answering.
+        var tools = invocation.WithoutTools ? [] : _tools;
         var loop = new AgentTurnLoop(
-            client, _tools, new FanOutAgentEventSink(events, watchdog, transcript), _timeProvider);
+            client, tools, new FanOutAgentEventSink(events, watchdog, transcript), _timeProvider);
 
         var options = new AgentLoopOptions(
             Model: route.UpstreamModel,

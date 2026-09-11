@@ -46,4 +46,9 @@ public sealed record StageInvocation(
     // Only Research (stage 2) ever gets a non-empty list; every other stage keeps the
     // default null. BuildPrompt renders a "Repository instructions" section naming
     // them right after the Manifest block, and omits it entirely when null or empty.
-    IReadOnlyList<string>? RepositoryInstructionFiles = null);
+    IReadOnlyList<string>? RepositoryInstructionFiles = null,
+    // True when the stage is answered from its prompt alone and must be sent with
+    // no tool definitions at all. A single-turn stage offered a tool catalog spends
+    // its one turn calling one, then reports an exhausted turn budget with no
+    // answer; the stage-5 diff audit did exactly that on every run that fired it.
+    bool WithoutTools = false);

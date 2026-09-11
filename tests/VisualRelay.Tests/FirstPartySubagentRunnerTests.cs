@@ -221,6 +221,35 @@ public sealed class FirstPartySubagentRunnerTests
         Assert.Contains("Relay stage", transport.Requests[0], StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A stage that asks for no tools sends none, so a single-turn stage cannot
+    /// spend its only turn on a tool call it never needed.
+    /// </summary>
+    [Fact]
+    public async Task AToollessStage_SendsNoToolsAtAll()
+    {
+        var transport = new ScriptedModelTransport().Answer("""{"summary":"s","options":[]}""");
+
+        var result = await Build(transport, Keys("DEEPSEEK_API_KEY", "HF_TOKEN"), new Sink(), [new EchoTool()])
+            .RunAsync(Invocation() with { MaxTurns = 1, WithoutTools = true });
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.DoesNotContain("\"tools\"", transport.Requests[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("echo", transport.Requests[0], StringComparison.Ordinal);
+    }
+
+    /// <summary>The ordinary stage still gets its tool catalog.</summary>
+    [Fact]
+    public async Task AnOrdinaryStage_StillSendsItsTools()
+    {
+        var transport = new ScriptedModelTransport().Answer("""{"summary":"s","options":[]}""");
+
+        await Build(transport, Keys("DEEPSEEK_API_KEY", "HF_TOKEN"), new Sink(), [new EchoTool()])
+            .RunAsync(Invocation());
+
+        Assert.Contains("\"tools\"", transport.Requests[0], StringComparison.Ordinal);
+    }
+
     /// <summary>A tool that echoes its argument, to burn turns.</summary>
     private sealed class EchoTool : IAgentTool
     {
