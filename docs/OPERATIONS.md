@@ -37,9 +37,16 @@ Key resolution happens per stage: each tier's chain is filtered to the models wh
 
 Every agent command runs under **nono** OS-level sandboxing by default (Seatbelt on macOS,
 Landlock on Linux and, on Windows, Landlock inside a WSL2 distro). The sandbox confines writes
-and deletes to the target workspace while leaving reads, network, and all tools — including
-Playwright/Chromium — unrestricted. This is **accident containment**, not defense against a
+and deletes to the target workspace while leaving network and all tools, including
+Playwright/Chromium, unrestricted. This is **accident containment**, not defense against a
 malicious agent: a stray `rm -rf` or `mv` outside the workspace is blocked by the OS.
+
+Reads differ by platform. On macOS they are unrestricted. On Linux, and so inside the WSL
+distro, Landlock can only allow, never deny beneath an allow, so nono refuses a grant that
+covers its own state or a denied path such as `~/.ssh`; reading `/` would be both. There the
+profile reads the system roots (`/usr`, `/etc`, `/opt`, `/var`) and the toolchain homes
+(`~/.cargo`, `~/.rustup`, `~/.nvm`, `~/go`, caches) instead, and the rest of your home, including
+the Windows drives under `/mnt`, stays unreadable.
 
 The sandbox is **always on** — there is no opt-out. Every agent command and every
 verification command runs under nono with the `vr-guard` profile, and `nono` is a hard,

@@ -101,7 +101,9 @@ public sealed partial class SandboxPathInspectorTests
         Assert.Contains(entries, e => e.Access == SandboxAccess.Blocked);
 
         // Verify specific known entries from the real vr-guard.json.
-        Assert.Contains(entries, e => e.Raw == "/" && e.Access == SandboxAccess.ReadOnly);
+        // Linux reads named system roots, never "/": nono refuses a Linux grant that covers its state.
+        Assert.Contains(entries, e => e.Raw == "/usr" && e.Access == SandboxAccess.ReadOnly);
+        Assert.DoesNotContain(entries, e => e.Raw == "/");
         Assert.Contains(entries, e => e.Raw == "~/.gitconfig" && e.Access == SandboxAccess.ReadOnly);
         Assert.Contains(entries, e => e.Raw == "~/Documents" && e.Access == SandboxAccess.Blocked);
         Assert.Contains(entries, e => e.Raw == "~/.cargo" && e.Access == SandboxAccess.ReadWrite);
