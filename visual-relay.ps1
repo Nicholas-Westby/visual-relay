@@ -15,6 +15,11 @@ $rest = if ($args.Count -ge 2) { @($args[1..($args.Count - 1)]) } else { @() }
 # launcher's exports so both platforms hand the CLI the same environment.
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+# The SDK's first run would print its welcome banner and install an ASP.NET Core
+# HTTPS development certificate into the user's store; Visual Relay needs neither.
+# DOTNET_NOLOGO matches the nix devshell the bash launcher enters.
+$env:DOTNET_NOLOGO = '1'
+$env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
 $env:MSBUILDDISABLENODEREUSE = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:VISUAL_RELAY_SCRIPT_DIR = $ScriptDir

@@ -114,6 +114,40 @@ public sealed class WindowsLauncherTests
     }
 
     [Fact]
+    public void Launch_KeepsDotnetFirstRunFromPrintingOrInstallingACertificate()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows-only launcher (powershell + .cmd stubs)");
+
+        // Measured on a fresh Windows 11: the first `dotnet run` printed the welcome
+        // banner and installed an ASP.NET Core HTTPS development certificate into the
+        // user's store. The caller's own values are the opposite, so only the
+        // launcher can produce the asserted ones.
+        var stubBin = NewStubBin();
+        var envFile = Path.Combine(stubBin, "dotnet-env.txt");
+        try
+        {
+            WriteCmdStub(stubBin, "dotnet",
+                "if \"%~1\"==\"--list-sdks\" ( echo 10.0.100 [C:\\sdk]& exit /b 0 )\r\n" +
+                ">\"%VR_DOTNET_ENV%\" echo NOLOGO=%DOTNET_NOLOGO% CERT=%DOTNET_GENERATE_ASPNET_CERTIFICATE%");
+            WriteCmdStub(stubBin, "git", "exit /b 0");
+
+            var (exit, _, stderr) = RunPs1(stubBin,
+                ["launch"],
+                new Dictionary<string, string>
+                {
+                    ["VR_DOTNET_ENV"] = envFile,
+                    ["DOTNET_NOLOGO"] = "0",
+                    ["DOTNET_GENERATE_ASPNET_CERTIFICATE"] = "true",
+                });
+
+            Assert.True(File.Exists(envFile), $"launcher never invoked dotnet run. stderr:\n{stderr}");
+            Assert.Equal("NOLOGO=1 CERT=false", File.ReadAllText(envFile).Trim());
+            Assert.Equal(0, exit);
+        }
+        finally { TryDelete(stubBin); }
+    }
+
+    [Fact]
     public void ProvisionedSdk_OffPath_IsReusedInsteadOfAskingAgain()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows-only launcher (powershell + .cmd stubs)");
