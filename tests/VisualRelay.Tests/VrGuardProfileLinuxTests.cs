@@ -68,7 +68,7 @@ public sealed class VrGuardProfileLinuxTests
         if (!doc.RootElement.GetProperty("filesystem").TryGetProperty(key, out var list))
             return [];
         return list.EnumerateArray().Select(e => e.ValueKind == JsonValueKind.String
-            ? (e.GetString()!, (string?)null)
+            ? (e.GetString()!, null)
             : (e.GetProperty("path").GetString()!, e.TryGetProperty("when", out var w) ? w.GetString() : null)).ToList();
     }
 

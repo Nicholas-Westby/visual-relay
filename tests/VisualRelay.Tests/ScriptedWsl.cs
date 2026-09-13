@@ -25,7 +25,7 @@ internal sealed class ScriptedWsl
     // marked PATH that ~/.profile (rustup) and ~/.bashrc (nvm) built.
     public const string UserPath = "/home/alice/.nvm/versions/node/v24.21.0/bin:/home/alice/.cargo/bin:/usr/bin:/bin";
 
-    public static string LoginPathReply(string path) =>
+    private static string LoginPathReply(string path) =>
         "bash: cannot set terminal process group (-1): Inappropriate ioctl for device\n" +
         "bash: no job control in this shell\n" +
         $"\n{WslProber.LoginPathMarker}{path}{WslProber.LoginPathMarker}\n";
