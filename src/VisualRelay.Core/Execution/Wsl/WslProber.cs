@@ -6,7 +6,8 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// Gathers a <see cref="WslProbe"/> by running wsl.exe through an injected runner
 /// (the delegate owns the process and its environment, including
 /// <c>WSL_UTF8=1</c>; tests script it and never spawn). Six steps: list the
-/// distros; pick the one <c>VR_WSL_DISTRO</c> names, else the default; read
+/// distros (with none listed, <c>--version</c> tells a missing WSL from a missing
+/// distro, and the probe stops); pick the one <c>VR_WSL_DISTRO</c> names, else the default; read
 /// <c>uname -r</c>; resolve nono through a login shell (so a profile-added
 /// <c>~/.cargo/bin</c> counts); read its version; read the kernel's LSM list;
 /// read the distro user's home. Every step after the listing runs with the
@@ -45,7 +46,10 @@ public static partial class WslProber
         if (distros.Count == 0)
         {
             notes.Add($"wsl -l -v (exit {listing.ExitCode}): {Compact(listing.Output)}");
-            return Finish(probe, notes);
+            // The inbox wsl.exe of a Windows without WSL answers every command with an
+            // install notice; only an installed WSL answers --version.
+            var version = await RunAsync(runWsl, ["--version"], ct);
+            return Finish(probe with { WslPlatformMissing = version.ExitCode != 0 }, notes);
         }
 
         var chosen = requestedDistro is null
@@ -133,7 +137,9 @@ public static partial class WslProber
 
     private static string Compact(string output)
     {
-        var text = Whitespace().Replace(output, " ").Trim();
+        // A notice written in UTF-16 (the inbox wsl.exe ignores WSL_UTF8) reaches the
+        // UTF-8 reader with a NUL after every character; drop them so it reads.
+        var text = Whitespace().Replace(output.Replace("\0", ""), " ").Trim();
         return text.Length <= DiagnosticsCap ? text : text[..DiagnosticsCap] + "…";
     }
 }

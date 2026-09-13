@@ -18,6 +18,7 @@ public sealed class WslGateDecisionTests
     private static WslProbe Fixture(string name) => name switch
     {
         nameof(WslProbeFixtures.NoWsl) => WslProbeFixtures.NoWsl(),
+        nameof(WslProbeFixtures.InboxStubOnly) => WslProbeFixtures.InboxStubOnly(),
         nameof(WslProbeFixtures.NoDistro) => WslProbeFixtures.NoDistro(),
         nameof(WslProbeFixtures.RequestedDistroMissing) => WslProbeFixtures.RequestedDistroMissing(),
         nameof(WslProbeFixtures.Wsl1) => WslProbeFixtures.Wsl1(),
@@ -35,6 +36,7 @@ public sealed class WslGateDecisionTests
 
     [Theory]
     [InlineData(nameof(WslProbeFixtures.NoWsl))]
+    [InlineData(nameof(WslProbeFixtures.InboxStubOnly))]
     [InlineData(nameof(WslProbeFixtures.NoDistro))]
     [InlineData(nameof(WslProbeFixtures.RequestedDistroMissing))]
     [InlineData(nameof(WslProbeFixtures.Wsl1))]
@@ -63,6 +65,19 @@ public sealed class WslGateDecisionTests
         Assert.Contains("reboot", message);
         Assert.Contains("wsl -d Ubuntu", message);
         Assert.Contains("inside the WSL2 distro you install;", message);
+    }
+
+    [Fact]
+    public void InboxStubOnly_SaysWslIsNotInstalled_WithTheElevatedInstallAndTheReboot()
+    {
+        // Windows 11 ships wsl.exe before WSL is installed, so "found" is not "installed".
+        var (_, message) = WslGate.Decide(WslProbeFixtures.InboxStubOnly());
+
+        Assert.StartsWith("visual-relay: WSL is not installed.", message);
+        Assert.Contains("wsl --install -d Ubuntu", message);
+        Assert.Contains("elevated PowerShell", message);
+        Assert.Contains("reboot", message);
+        Assert.DoesNotContain("no WSL distro", message);
     }
 
     [Fact]

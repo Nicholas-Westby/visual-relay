@@ -22,6 +22,8 @@ internal static class WslProbeFixtures
 
     public static WslProbe NoWsl() => WslProbe.Empty;
 
+    public static WslProbe InboxStubOnly() => NoDistro() with { WslPlatformMissing = true };
+
     public static WslProbe NoDistro() => Usable() with { Distros = [], DistroName = null, IsWsl2 = false, KernelRelease = null, NonoPath = null, NonoVersion = null, LandlockActive = false, DistroHome = null };
 
     public static WslProbe RequestedDistroMissing() => NoDistro() with { Distros = [Ubuntu, Debian], RequestedDistro = "Fedora" };

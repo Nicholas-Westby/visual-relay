@@ -170,7 +170,7 @@ works without any sandbox.
 
 | What the gate says | What to do |
 |--------------------|------------|
-| WSL is not installed (wsl.exe was not found) | `wsl --install -d Ubuntu` in an elevated PowerShell, reboot, then `wsl -d Ubuntu` once to create your Linux user |
+| WSL is not installed (Windows 11 ships a wsl.exe that only offers to install WSL) | `wsl --install -d Ubuntu` in an elevated PowerShell, reboot, then `wsl -d Ubuntu` once to create your Linux user |
 | no WSL distro is installed | the same, then re-run |
 | the WSL distro `<name>` selected by `VR_WSL_DISTRO` is not installed | install that one, or point `VR_WSL_DISTRO` at an installed distro (unset it to use the default) |
 | `<name>` is a WSL1 distro | `wsl --set-version <name> 2` |

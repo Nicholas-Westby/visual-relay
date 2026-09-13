@@ -33,8 +33,8 @@ public static class WslGate
 
     private static (string Problem, string Fix) FirstFailingCheck(WslProbe p)
     {
-        if (!p.WslExeFound)
-            return ("WSL is not installed (wsl.exe was not found).",
+        if (!p.WslExeFound || p.WslPlatformMissing)
+            return (p.WslExeFound ? "WSL is not installed." : "WSL is not installed (wsl.exe was not found).",
                 $"Install WSL: run `wsl --install -d {SuggestedDistro}` in an elevated PowerShell, reboot, "
                 + $"then run `wsl -d {SuggestedDistro}` once to create your Linux user.");
 

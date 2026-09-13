@@ -21,6 +21,12 @@ public sealed record WslProbe(
     string? DistroHome,
     string? Diagnostics)
 {
+    /// <summary>
+    /// True when wsl.exe exists but WSL itself does not: Windows 11 ships an inbox
+    /// wsl.exe that answers every command with an install notice until WSL is installed.
+    /// </summary>
+    public bool WslPlatformMissing { get; init; }
+
     /// <summary>Nothing found and nothing probed: what a machine without WSL looks like.</summary>
     public static WslProbe Empty { get; } =
         new(false, null, [], null, null, false, null, null, null, false, null, null);

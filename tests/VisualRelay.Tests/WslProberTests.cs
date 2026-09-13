@@ -1,3 +1,4 @@
+using System.Text;
 using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;
@@ -190,16 +191,37 @@ public sealed class WslProberTests
     [Fact]
     public async Task ListingFails_ReportsNoDistroWithoutProbingFurther()
     {
-        var wsl = new ScriptedWsl().On("-l -v", -1,
-            "Windows Subsystem for Linux has no installed distributions.\n");
+        var wsl = new ScriptedWsl()
+            .On("-l -v", -1, "Windows Subsystem for Linux has no installed distributions.\n")
+            .On("--version", 0, "WSL version: 2.7.14.0\nKernel version: 6.18.33.2-2\n");
 
         var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
 
         Assert.True(probe.WslExeFound);
+        Assert.False(probe.WslPlatformMissing);
         Assert.Empty(probe.Distros);
         Assert.Null(probe.DistroName);
-        Assert.Single(wsl.Calls);
+        Assert.Equal([["-l", "-v"], ["--version"]], wsl.Calls);
         Assert.Contains("no installed distributions", probe.Diagnostics);
+    }
+
+    [Fact]
+    public async Task InboxStubWithoutWsl_FlagsThePlatformMissing_AndReportsItsNoticeReadably()
+    {
+        // Measured on Windows 11 25H2 before WSL was installed: the inbox wsl.exe
+        // answers every command with this notice, exit 1, in UTF-16LE whatever
+        // WSL_UTF8 says, so the UTF-8 reader sees a NUL after every character.
+        const string notice = "The Windows Subsystem for Linux is not installed. You can install by running 'wsl.exe --install'.\r\n";
+        var asRead = Encoding.UTF8.GetString(Encoding.Unicode.GetBytes(notice));
+        var wsl = new ScriptedWsl().On("-l -v", 1, asRead).On("--version", 1, asRead);
+
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+
+        Assert.True(probe.WslPlatformMissing);
+        Assert.False(probe.IsUsable);
+        Assert.Equal([["-l", "-v"], ["--version"]], wsl.Calls);
+        Assert.Contains("The Windows Subsystem for Linux is not installed.", probe.Diagnostics);
+        Assert.DoesNotContain('\0', probe.Diagnostics!);
     }
 
     [Fact]
