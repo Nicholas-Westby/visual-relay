@@ -84,7 +84,10 @@ first in `CONFIG_LSM` on the `linux-msft-wsl-5.15.y`,
 and [`6.18`](https://raw.githubusercontent.com/microsoft/WSL2-Linux-Kernel/linux-msft-wsl-6.18.y/arch/x86/configs/config-wsl)
 branches, and the [WSL kernel release notes](https://learn.microsoft.com/en-us/windows/wsl/kernel-release-notes)
 record it as enabled since 5.15.57.1 (August 2022). The launch gate still checks it at
-runtime, because a custom `kernel=` in `.wslconfig` can take it away.
+runtime, because a custom `kernel=` in `.wslconfig` can take it away. It asks nono
+(`nono setup --check-only`, a Landlock syscall probe) rather than reading
+`/sys/kernel/security/lsm`: a systemd distro such as Ubuntu 26.04 does not mount
+securityfs under WSL, so that file is missing even while Landlock is up.
 
 Two consequences worth stating plainly: the workspace must live on the distro's own
 filesystem (a `/mnt/<letter>` workspace is refused), and the repository's build and test

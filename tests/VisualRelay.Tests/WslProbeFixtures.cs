@@ -32,7 +32,7 @@ internal static class WslProbeFixtures
 
     public static WslProbe NonoMissing() => Usable() with { NonoPath = null, NonoVersion = null };
 
-    public static WslProbe LandlockInactive() => Usable() with { LandlockActive = false, Diagnostics = "lsm: lockdown,yama,bpf" };
+    public static WslProbe LandlockInactive() => Usable() with { LandlockActive = false, Diagnostics = "nono setup --check-only (exit 1): nono: Setup error: Landlock is not available: No supported Landlock ABI detected" };
 
     public static WslProbe HomeUnknown() => Usable() with { DistroHome = null };
 }

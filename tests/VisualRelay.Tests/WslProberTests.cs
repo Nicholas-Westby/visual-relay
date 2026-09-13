@@ -16,12 +16,17 @@ public sealed class WslProberTests
         "* Ubuntu            Running         2\n" +
         "  Debian            Stopped         1\n";
 
+    // nono 0.75.0's own Landlock check (a syscall probe, crates/nono-cli/src/setup.rs).
+    private const string SandboxCheckPassed =
+        "[2/4] Testing sandbox support...\n  * Kernel version: 6.18.33.2-microsoft-standard-WSL2\n" +
+        "  * Landlock enabled (syscall probe)\n  * Filesystem ruleset creation verified\n  * WSL2 environment detected\n";
+
     private static ScriptedWsl HealthyUbuntu() => new ScriptedWsl()
         .On("-l -v", 0, ListOutput)
         .On("-d Ubuntu --exec uname -r", 0, "5.15.167.4-microsoft-standard-WSL2\n")
         .On("-d Ubuntu --exec sh -lc command -v nono", 0, "/usr/local/bin/nono\n")
         .On("-d Ubuntu --exec /usr/local/bin/nono --version", 0, "nono 0.75.0\n")
-        .On("-d Ubuntu --exec cat /sys/kernel/security/lsm", 0, "landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,apparmor,tomoyo")
+        .On("-d Ubuntu --exec env NONO_NO_UPDATE_CHECK=1 /usr/local/bin/nono setup --check-only", 0, SandboxCheckPassed)
         .On("-d Ubuntu --exec sh -lc printf %s \"$HOME\"", 0, "/home/alice");
 
     [Fact]
@@ -58,7 +63,7 @@ public sealed class WslProberTests
             ["-d", "Ubuntu", "--exec", "uname", "-r"],
             ["-d", "Ubuntu", "--exec", "sh", "-lc", "command -v nono"],
             ["-d", "Ubuntu", "--exec", "/usr/local/bin/nono", "--version"],
-            ["-d", "Ubuntu", "--exec", "cat", "/sys/kernel/security/lsm"],
+            ["-d", "Ubuntu", "--exec", "env", "NONO_NO_UPDATE_CHECK=1", "/usr/local/bin/nono", "setup", "--check-only"],
             ["-d", "Ubuntu", "--exec", "sh", "-lc", "printf %s \"$HOME\""],
         ];
         Assert.Equal(expected.Length, wsl.Calls.Count);
@@ -123,7 +128,7 @@ public sealed class WslProberTests
     }
 
     [Fact]
-    public async Task NonoMissing_LeavesNonoNullButStillProbesLandlockAndHome()
+    public async Task NonoMissing_LeavesNonoAndLandlockUnprobedButStillProbesHome()
     {
         var wsl = HealthyUbuntu().On("-d Ubuntu --exec sh -lc command -v nono", 1, "");
 
@@ -131,33 +136,36 @@ public sealed class WslProberTests
 
         Assert.Null(probe.NonoPath);
         Assert.Null(probe.NonoVersion);
-        Assert.DoesNotContain(wsl.Calls, argv => argv.Contains("--version"));
-        Assert.True(probe.LandlockActive);
+        Assert.DoesNotContain(wsl.Calls, argv => argv.Contains("--version") || argv.Contains("setup"));
+        Assert.False(probe.LandlockActive);
         Assert.Equal("/home/alice", probe.DistroHome);
         Assert.False(probe.IsUsable);
     }
 
     [Fact]
-    public async Task LandlockAbsentFromTheLsmList_IsInactive()
+    public async Task NonosSandboxCheckFails_LandlockIsInactive_AndTheReasonIsKept()
     {
-        var wsl = HealthyUbuntu().On("-d Ubuntu --exec cat /sys/kernel/security/lsm", 0, "lockdown,yama,bpf");
+        var wsl = HealthyUbuntu().On("-d Ubuntu --exec env NONO_NO_UPDATE_CHECK=1 /usr/local/bin/nono setup --check-only", 1,
+            "[2/4] Testing sandbox support...\nnono: Setup error: Landlock is not available: No supported Landlock ABI detected\n");
 
         var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
 
         Assert.False(probe.LandlockActive);
         Assert.False(probe.IsUsable);
-        Assert.Contains("lockdown,yama,bpf", probe.Diagnostics);
+        Assert.Contains("No supported Landlock ABI detected", probe.Diagnostics);
     }
 
     [Fact]
-    public async Task LsmFileUnreadable_IsInactive()
+    public async Task SecurityfsUnmounted_DoesNotDecideLandlock()
     {
-        var wsl = HealthyUbuntu().On("-d Ubuntu --exec cat /sys/kernel/security/lsm", 1,
-            "cat: /sys/kernel/security/lsm: No such file or directory");
+        // Measured on WSL 2.7.14 with Ubuntu 26.04 (systemd): securityfs is not mounted,
+        // so /sys/kernel/security/lsm does not exist, yet Landlock is up (ABI 7).
+        var wsl = HealthyUbuntu();
 
         var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
 
-        Assert.False(probe.LandlockActive);
+        Assert.True(probe.LandlockActive);
+        Assert.DoesNotContain(wsl.Calls, argv => argv.Any(a => a.Contains("/sys/kernel/security")));
     }
 
     [Fact]
@@ -166,6 +174,7 @@ public sealed class WslProberTests
         var wsl = HealthyUbuntu()
             .On("-d Ubuntu --exec sh -lc command -v nono", 0, "Welcome to Ubuntu\n/home/alice/.cargo/bin/nono\n")
             .On("-d Ubuntu --exec /home/alice/.cargo/bin/nono --version", 0, "nono 0.75.0")
+            .On("-d Ubuntu --exec env NONO_NO_UPDATE_CHECK=1 /home/alice/.cargo/bin/nono setup --check-only", 0, SandboxCheckPassed)
             .On("-d Ubuntu --exec sh -lc printf %s \"$HOME\"", 0, "Welcome to Ubuntu\n/home/alice");
 
         var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);

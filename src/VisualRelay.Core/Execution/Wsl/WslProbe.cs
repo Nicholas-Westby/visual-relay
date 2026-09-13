@@ -5,7 +5,7 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// <see cref="WslProber"/> and decided on by the CLI's WSL gate. A pure record so
 /// the decision, the messages and the resolved launch context are all testable
 /// without a Windows box. <see cref="Diagnostics"/> carries the raw facts behind
-/// a failed check (the LSM list, the listing text, an error) for the message.
+/// a failed check (nono's sandbox check, the listing text, an error) for the message.
 /// </summary>
 public sealed record WslProbe(
     bool WslExeFound,

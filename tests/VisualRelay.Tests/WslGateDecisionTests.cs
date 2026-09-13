@@ -138,7 +138,7 @@ public sealed class WslGateDecisionTests
         Assert.Contains("wsl --update", message);
         Assert.Contains("wsl --shutdown", message);
         Assert.Contains("5.15.57.1", message);
-        Assert.Contains("lockdown,yama,bpf", message);
+        Assert.Contains("No supported Landlock ABI detected", message);
     }
 
     [Fact]

@@ -9,7 +9,7 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// distros (with none listed, <c>--version</c> tells a missing WSL from a missing
 /// distro, and the probe stops); pick the one <c>VR_WSL_DISTRO</c> names, else the default; read
 /// <c>uname -r</c>; resolve nono through a login shell (so a profile-added
-/// <c>~/.cargo/bin</c> counts); read its version; read the kernel's LSM list;
+/// <c>~/.cargo/bin</c> counts); read its version and ask it whether Landlock is up;
 /// read the distro user's home. Every step after the listing runs with the
 /// distro selected explicitly. A runner failure never throws out of the probe
 /// (only cancellation does); it is recorded in <see cref="WslProbe.Diagnostics"/>.
@@ -22,7 +22,8 @@ public static partial class WslProber
     /// <summary>The kernel-release suffix Microsoft's stock WSL2 kernels carry.</summary>
     private const string Wsl2KernelMarker = "microsoft-standard-WSL2";
 
-    private const string LsmPath = "/sys/kernel/security/lsm";
+    /// <summary>The line nono's <c>setup --check-only</c> prints once its Landlock syscall probe succeeds.</summary>
+    private const string LandlockEnabledLine = "Landlock enabled";
     private const int DiagnosticsCap = 400;
 
     [GeneratedRegex(@"\s+")]
@@ -88,14 +89,19 @@ public static partial class WslProber
             var version = await RunAsync(runWsl, ["-d", distro, "--exec", nonoPath, "--version"], ct);
             var versionText = FirstLine(version.Output);
             probe = probe with { NonoVersion = version.ExitCode == 0 && versionText.Length > 0 ? versionText : null };
-        }
 
-        var lsm = await RunAsync(runWsl, ["-d", distro, "--exec", "cat", LsmPath], ct);
-        probe = probe with
-        {
-            LandlockActive = lsm.ExitCode == 0 && lsm.Output.Contains("landlock", StringComparison.OrdinalIgnoreCase),
-        };
-        notes.Add($"lsm: {Compact(lsm.Output)}");
+            // Landlock is decided by nono's own syscall probe, never by /sys/kernel/security/lsm:
+            // a systemd distro under WSL does not mount securityfs, so that file is missing while
+            // Landlock is up. The update check is off so the probe never waits on the network.
+            var check = await RunAsync(runWsl,
+                ["-d", distro, "--exec", "env", "NONO_NO_UPDATE_CHECK=1", nonoPath, "setup", "--check-only"], ct);
+            probe = probe with
+            {
+                LandlockActive = check.ExitCode == 0 && check.Output.Contains(LandlockEnabledLine, StringComparison.Ordinal),
+            };
+            if (!probe.LandlockActive)
+                notes.Add($"nono setup --check-only (exit {check.ExitCode}): {Compact(check.Output)}");
+        }
 
         var home = await RunAsync(runWsl, ["-d", distro, "--exec", "sh", "-lc", "printf %s \"$HOME\""], ct);
         var homePath = home.ExitCode == 0 ? LastAbsoluteLine(home.Output) : null;

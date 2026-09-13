@@ -245,11 +245,10 @@ in PowerShell, with `$D = 'Ubuntu'`:
 $env:WSL_UTF8 = '1'
 wsl --version; wsl --status; wsl -l -v                       # WSL >= 2.x, distro VERSION 2
 wsl -d $D --exec uname -r                                     # …-microsoft-standard-WSL2
-wsl -d $D --exec cat /sys/kernel/security/lsm                 # contains "landlock"
 wsl -d $D --exec sh -c 'dmesg 2>/dev/null | grep -i landlock || journalctl -kb -g landlock'
 # nono 0.75.0 inside the distro
 wsl -d $D --exec sh -c 'wget -q https://github.com/nolabs-ai/nono/releases/download/v0.75.0/nono-cli_0.75.0_amd64.deb && sudo dpkg -i nono-cli_0.75.0_amd64.deb'
-wsl -d $D --exec sh -lc 'command -v nono && nono --version && nono setup --check-only'
+wsl -d $D --exec sh -lc 'command -v nono && nono --version && nono setup --check-only'   # "Landlock enabled (syscall probe)"; the gate reads this, since /sys/kernel/security/lsm is missing on systemd distros
 # profile + confinement probe on ext4, then on DrvFs
 wsl -d $D --exec sh -lc 'mkdir -p ~/.config/visual-relay && cp /mnt/c/path/to/visual-relay/packaging/nono/vr-guard.json ~/.config/visual-relay/'
 wsl -d $D --exec sh -lc 'W=$(mktemp -d ~/vr-probe.XXXX); cd $W; git init -q; P=~/.config/visual-relay/vr-guard.json;
