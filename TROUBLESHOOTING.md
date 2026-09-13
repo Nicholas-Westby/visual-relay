@@ -154,14 +154,15 @@ standard Windows folders (XDG/`HOME` still win when explicitly set):
 An `mxc-policy.json` beside the settings is left over from the deleted Windows sandbox.
 Nothing reads it any more — delete it.
 
-**`.\visual-relay` is blocked / "running scripts is disabled".** The PowerShell execution
-policy is blocking the launcher. The `.cmd` shim already passes `-ExecutionPolicy Bypass`, so
-prefer `.\visual-relay launch` (which runs `visual-relay.cmd`). To run the `.ps1` directly,
-`powershell -ExecutionPolicy Bypass -File visual-relay.ps1 launch`.
+**`.\visual-relay` is blocked / "running scripts is disabled".** In PowerShell, `.\visual-relay`
+resolves to `visual-relay.ps1`, not to the `.cmd`, and a stock Windows 11 policy (Restricted)
+refuses to run it. Type `.\visual-relay.cmd launch`: the shim passes `-ExecutionPolicy Bypass`
+for you. To run the `.ps1` directly, `powershell -ExecutionPolicy Bypass -File visual-relay.ps1 launch`.
 
 **`dotnet` not found after the launcher installed it.** The launcher prepends its install dir to
-PATH for that session only (no global machine change). Re-run through `.\visual-relay`, or add
-`%LOCALAPPDATA%\visual-relay\dotnet` to your PATH for a standalone `dotnet`.
+PATH for that session only (no global machine change), and finds that dir again on every later
+launch. Re-run through `.\visual-relay.cmd`, or add `%LOCALAPPDATA%\visual-relay\dotnet` to your
+PATH for a standalone `dotnet`.
 
 **Task execution is blocked.** The launch gate checks four things — WSL, a WSL2 distro, nono
 inside it, Landlock active there — and names the first one that fails together with its fix.
@@ -174,7 +175,7 @@ works without any sandbox.
 | no WSL distro is installed | the same, then re-run |
 | the WSL distro `<name>` selected by `VR_WSL_DISTRO` is not installed | install that one, or point `VR_WSL_DISTRO` at an installed distro (unset it to use the default) |
 | `<name>` is a WSL1 distro | `wsl --set-version <name> 2` |
-| nono was not found inside the WSL distro `<name>` | install nono 0.75.0 in the distro (see the README) and check `wsl -d <name> --exec sh -lc 'command -v nono'` |
+| nono was not found inside the WSL distro `<name>` | install nono 0.75.0 in the distro (`curl -fsSL https://nono.sh/install.sh \| NONO_VERSION=v0.75.0 sh`, see the README) and check `wsl -d <name> --exec sh -lc 'command -v nono'` |
 | Landlock is not active in the WSL distro `<name>` | remove a custom `kernel=` or `kernelCommandLine=` line from `%UserProfile%\.wslconfig`, then `wsl --update` and `wsl --shutdown`; stock kernels have enabled Landlock since 5.15.57.1 |
 | the home directory of the default user could not be read | run `wsl -d <name>` once so the distro finishes its first-run user setup |
 

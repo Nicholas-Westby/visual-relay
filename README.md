@@ -40,37 +40,56 @@ enforcing the same profile through the WSL2 kernel, exactly as on macOS and Linu
 there are two halves to install — Visual Relay on Windows, and the sandbox inside a
 WSL2 distro.
 
-1. Install WSL2 and a distro in an elevated PowerShell, then open it once so it
-   creates your Linux user:
+1. Install WSL2 and a distro in an elevated PowerShell, then reboot. On a PC that has
+   never had WSL, this first run installs WSL itself but not the distro, so check with
+   `wsl -l -v` after the reboot and run the install again if no distro is listed (no
+   elevation needed). Then open the distro once so it creates your Linux user:
 
    ```powershell
    wsl --install -d Ubuntu
    wsl -d Ubuntu
    ```
 
-2. Install nono 0.75.0 **inside the distro** (not on Windows), and make sure a login
-   shell finds it:
+2. Install git and nono 0.75.0 **inside the distro** (not on Windows). Visual Relay pins
+   that nono version, so name it; the installer otherwise takes the latest release:
 
    ```bash
-   curl -fsSL https://nono.sh/install.sh | sh
+   sudo apt update && sudo apt install -y git curl
+   curl -fsSL https://nono.sh/install.sh | NONO_VERSION=v0.75.0 sh
    ```
 
    The `.deb` from the [v0.75.0 release](https://github.com/nolabs-ai/nono/releases/tag/v0.75.0)
-   works too. Set `VR_WSL_DISTRO=<name>` if the distro you want is not the WSL default.
+   works too; install it with `sudo apt install --no-install-recommends ./nono-cli_0.75.0_amd64.deb`,
+   because without that flag apt also pulls in gnome-keyring and about 80 MB of desktop
+   packages. Set `VR_WSL_DISTRO=<name>` if the distro you want is not the WSL default.
 
-3. Clone the repo and run (nix doesn't run on Windows, so dependencies are installed globally):
+3. Install the .NET 10 SDK on Windows. (Run from a terminal, the launcher offers to
+   install a per-user copy for you instead.)
+
+   ```powershell
+   winget install Microsoft.DotNet.SDK.10
+   ```
+
+4. Clone the repo and run it through `visual-relay.cmd` (nix doesn't run on Windows, so
+   dependencies are installed globally). Typing `./visual-relay` in PowerShell runs
+   `visual-relay.ps1`, which PowerShell's default execution policy refuses; the `.cmd`
+   passes the policy flag for you:
 
    ```powershell
    cd ~/repositories # or wherever you keep your repos
    git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
    cd visual-relay
-   ./visual-relay launch
+   .\visual-relay.cmd launch
    ```
 
 `--depth 1` does a shallow clone (latest commit only) for a faster, smaller
 download; omit it to fetch the full history.
 
-You can then run `visual-relay` in that folder the next time you want to launch it.
+You can then run `.\visual-relay.cmd` in that folder the next time you want to launch it.
+
+Provider keys go in `%APPDATA%\visual-relay\.env`, or use the key panel in the app. When
+`HOME` is set, as it is in Git Bash, Visual Relay reads `%USERPROFILE%\.config\visual-relay\.env`
+instead.
 
 **Keep the repositories you work on inside the distro** and open them as
 `\\wsl.localhost\<distro>\home\<user>\...`. A `C:\` path is refused: the Windows drives
@@ -79,10 +98,11 @@ files a build touches, and their permission model is not the one Landlock was de
 against.
 
 **Your project's build and test commands run inside WSL**, so the toolchain they need
-has to be installed in the distro. A Windows-only toolchain — MSBuild against .NET
-Framework, Visual Studio build tools, Unity on Windows, anything that needs an `.exe` —
-is not supported. If anything is missing, the launch gate names it and how to fix it;
-see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+has to be installed in the distro. Per-user installs such as rustup and nvm are found,
+because Visual Relay runs commands with the PATH your login shell builds. A Windows-only
+toolchain — MSBuild against .NET Framework, Visual Studio build tools, Unity on Windows,
+anything that needs an `.exe` — is not supported. If anything is missing, the launch gate
+names it and how to fix it; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 <!-- END install section -->
 
