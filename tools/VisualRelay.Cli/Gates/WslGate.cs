@@ -35,8 +35,10 @@ public static class WslGate
     {
         if (!p.WslExeFound || p.WslPlatformMissing)
             return (p.WslExeFound ? "WSL is not installed." : "WSL is not installed (wsl.exe was not found).",
-                $"Install WSL: run `wsl --install -d {SuggestedDistro}` in an elevated PowerShell, reboot, "
-                + $"then run `wsl -d {SuggestedDistro}` once to create your Linux user.");
+                $"Install WSL: run `wsl --install -d {SuggestedDistro}` in an elevated PowerShell and reboot. If "
+                + $"`wsl -l -v` then lists no distro (a first install can bring WSL without one), run "
+                + $"`wsl --install -d {SuggestedDistro}` again. Then run `wsl -d {SuggestedDistro}` once to create your "
+                + "Linux user.");
 
         if (p.DistroName is null && p.RequestedDistro is not null)
             return ($"the WSL distro '{p.RequestedDistro}' selected by {WslProber.DistroEnvVar} is not installed "
@@ -58,9 +60,11 @@ public static class WslGate
         if (p.NonoPath is null)
             return ($"nono was not found inside the WSL distro '{d}'.",
                 $"Install nono {PinnedNonoVersion} inside the distro: open it with `wsl -d {d}` and run "
-                + "`curl -fsSL https://nono.sh/install.sh | sh`, or install the .deb from "
-                + $"https://github.com/nolabs-ai/nono/releases/tag/v{PinnedNonoVersion}; then make sure a login shell "
-                + $"finds it (`wsl -d {d} --exec sh -lc 'command -v nono'`).");
+                + $"`curl -fsSL https://nono.sh/install.sh | NONO_VERSION=v{PinnedNonoVersion} sh` (the installer "
+                + "otherwise takes the latest release), or install the .deb from "
+                + $"https://github.com/nolabs-ai/nono/releases/tag/v{PinnedNonoVersion} with "
+                + $"`sudo apt install --no-install-recommends ./nono-cli_{PinnedNonoVersion}_amd64.deb`; then make sure "
+                + $"a login shell finds it (`wsl -d {d} --exec sh -lc 'command -v nono'`).");
 
         if (!p.LandlockActive)
             return ($"Landlock is not active in the WSL distro '{d}'.",

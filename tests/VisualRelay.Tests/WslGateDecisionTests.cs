@@ -77,6 +77,8 @@ public sealed class WslGateDecisionTests
         Assert.Contains("wsl --install -d Ubuntu", message);
         Assert.Contains("elevated PowerShell", message);
         Assert.Contains("reboot", message);
+        // Measured on Windows 11 25H2: the first install brought WSL but no distro.
+        Assert.Contains("run `wsl --install -d Ubuntu` again", message);
         Assert.DoesNotContain("no WSL distro", message);
     }
 
@@ -119,7 +121,9 @@ public sealed class WslGateDecisionTests
 
         Assert.Contains("nono was not found inside the WSL distro 'Ubuntu'", message);
         Assert.Contains("nono 0.75.0", message);
-        Assert.Contains("curl -fsSL https://nono.sh/install.sh | sh", message);
+        // The installer takes the latest release unless told otherwise; VR pins 0.75.0.
+        Assert.Contains("curl -fsSL https://nono.sh/install.sh | NONO_VERSION=v0.75.0 sh", message);
+        Assert.Contains("--no-install-recommends", message);
         Assert.Contains(".deb", message);
         Assert.Contains("v0.75.0", message);
         Assert.Contains("login shell", message);
