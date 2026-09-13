@@ -108,6 +108,10 @@ internal static partial class ProcessCapture
         process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
         process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
         process.StartInfo.UseShellExecute = false;
+        // No console window for the child. The desktop app has no console to share, so on
+        // Windows every console child (wsl.exe, git.exe) would otherwise open a visible
+        // terminal window that takes focus. The streams are redirected, so nothing is lost.
+        process.StartInfo.CreateNoWindow = true;
         if (envRemove is not null)
         {
             foreach (var key in envRemove)

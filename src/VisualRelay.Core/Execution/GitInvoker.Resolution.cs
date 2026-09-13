@@ -134,6 +134,8 @@ public sealed partial class GitInvoker
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                // git.exe is a console program; from the desktop app it would flash a window.
+                CreateNoWindow = true,
             };
             // When probing a non-nix binary, neutralise any inherited
             // DEVELOPER_DIR / SDKROOT so the probe matches run-time
