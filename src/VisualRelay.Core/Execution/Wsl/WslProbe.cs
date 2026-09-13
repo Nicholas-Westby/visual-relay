@@ -27,6 +27,13 @@ public sealed record WslProbe(
     /// </summary>
     public bool WslPlatformMissing { get; init; }
 
+    /// <summary>
+    /// The PATH the distro user's own login shell builds (profile and rc files, so
+    /// rustup, nvm and the like count), or null when it could not be read. Every
+    /// launch carries it; a plain <c>wsl --exec</c> gets only the distro default.
+    /// </summary>
+    public string? UserPath { get; init; }
+
     /// <summary>Nothing found and nothing probed: what a machine without WSL looks like.</summary>
     public static WslProbe Empty { get; } =
         new(false, null, [], null, null, false, null, null, null, false, null, null);

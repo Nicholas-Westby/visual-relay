@@ -79,8 +79,23 @@ public static class WslSandboxLauncher
 
         var pidFile = WslProcessControl.PidFilePath(Guid.NewGuid().ToString("N"), launchTag);
         var launch = WslLauncher.Build(
-            context.WslExePath, context.Distro, linuxWorkspace, pidFile, nonoPrefix, program, args, env);
+            context.WslExePath, context.Distro, linuxWorkspace, pidFile, nonoPrefix, program, args, WithUserPath(env, context));
         return (new WslSandboxLaunch(launch, pidFile, linuxWorkspace), null);
+    }
+
+    // A wsl.exe --exec child starts from the distro's default PATH, which lacks what the
+    // user's profile adds (~/.cargo/bin, nvm's node); the probed login-shell PATH is what
+    // the same command finds in their terminal, as the macOS environment snapshot is.
+    private static IReadOnlyDictionary<string, string>? WithUserPath(
+        IReadOnlyDictionary<string, string>? env, WslContext context)
+    {
+        if (context.UserPath is null || env?.ContainsKey("PATH") == true)
+            return env;
+        var merged = env is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(env, StringComparer.Ordinal);
+        merged["PATH"] = context.UserPath;
+        return merged;
     }
 
     /// <summary>The control that samples and stops the tree behind <paramref name="pidFile"/>, through real wsl.exe children.</summary>

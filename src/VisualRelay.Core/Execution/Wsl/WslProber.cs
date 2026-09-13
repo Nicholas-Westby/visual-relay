@@ -10,7 +10,8 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// distro, and the probe stops); pick the one <c>VR_WSL_DISTRO</c> names, else the default; read
 /// <c>uname -r</c>; resolve nono through a login shell (so a profile-added
 /// <c>~/.cargo/bin</c> counts); read its version and ask it whether Landlock is up;
-/// read the distro user's home. Every step after the listing runs with the
+/// read the distro user's home; on a usable distro, read the PATH the user's login
+/// shell builds. Every step after the listing runs with the
 /// distro selected explicitly. A runner failure never throws out of the probe
 /// (only cancellation does); it is recorded in <see cref="WslProbe.Diagnostics"/>.
 /// </summary>
@@ -25,6 +26,18 @@ public static partial class WslProber
     /// <summary>The line nono's <c>setup --check-only</c> prints once its Landlock syscall probe succeeds.</summary>
     private const string LandlockEnabledLine = "Landlock enabled";
     private const int DiagnosticsCap = 400;
+
+    /// <summary>Brackets the PATH the login shell prints, so what its rc files print around it is ignored.</summary>
+    internal const string LoginPathMarker = "__VR_PATH__";
+
+    /// <summary>
+    /// Runs the distro user's login shell as an interactive login shell (a terminal's
+    /// shell), which reads the profile and the whole rc file, and prints its PATH
+    /// between markers. stdin is closed so an rc file that reads input cannot wait.
+    /// </summary>
+    internal const string LoginPathScript =
+        "s=$(getent passwd \"$(id -un)\" | cut -d: -f7); "
+        + "exec \"${s:-/bin/sh}\" -lic 'printf \"\\n" + LoginPathMarker + "%s" + LoginPathMarker + "\\n\" \"$PATH\"' </dev/null";
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
@@ -109,7 +122,29 @@ public static partial class WslProber
         if (homePath is null)
             notes.Add($"$HOME (exit {home.ExitCode}): {Compact(home.Output)}");
 
+        if (probe.IsUsable)
+        {
+            var login = await RunAsync(runWsl, ["-d", distro, "--exec", "sh", "-c", LoginPathScript], ct);
+            probe = probe with { UserPath = BetweenMarkers(login.Output) };
+            if (probe.UserPath is null)
+                notes.Add($"login shell PATH (exit {login.ExitCode}), launches keep the distro default: {Compact(login.Output)}");
+        }
+
         return Finish(probe, notes);
+    }
+
+    /// <summary>The PATH between the first two markers, or null when it is absent or not a PATH.</summary>
+    private static string? BetweenMarkers(string output)
+    {
+        var start = output.IndexOf(LoginPathMarker, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += LoginPathMarker.Length;
+        var end = output.IndexOf(LoginPathMarker, start, StringComparison.Ordinal);
+        if (end < 0)
+            return null;
+        var path = output[start..end];
+        return path.Contains('/') ? path : null;
     }
 
     private static async Task<(int ExitCode, string Output)> RunAsync(

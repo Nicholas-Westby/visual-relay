@@ -10,24 +10,11 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class WslProberTests
 {
-    private const string Exe = @"C:\Windows\System32\wsl.exe";
-    private const string ListOutput =
-        "  NAME              STATE           VERSION\n" +
-        "* Ubuntu            Running         2\n" +
-        "  Debian            Stopped         1\n";
+    private const string Exe = ScriptedWsl.Exe;
+    private const string ListOutput = ScriptedWsl.ListOutput;
+    private const string SandboxCheckPassed = ScriptedWsl.SandboxCheckPassed;
 
-    // nono 0.75.0's own Landlock check (a syscall probe, crates/nono-cli/src/setup.rs).
-    private const string SandboxCheckPassed =
-        "[2/4] Testing sandbox support...\n  * Kernel version: 6.18.33.2-microsoft-standard-WSL2\n" +
-        "  * Landlock enabled (syscall probe)\n  * Filesystem ruleset creation verified\n  * WSL2 environment detected\n";
-
-    private static ScriptedWsl HealthyUbuntu() => new ScriptedWsl()
-        .On("-l -v", 0, ListOutput)
-        .On("-d Ubuntu --exec uname -r", 0, "5.15.167.4-microsoft-standard-WSL2\n")
-        .On("-d Ubuntu --exec sh -lc command -v nono", 0, "/usr/local/bin/nono\n")
-        .On("-d Ubuntu --exec /usr/local/bin/nono --version", 0, "nono 0.75.0\n")
-        .On("-d Ubuntu --exec env NONO_NO_UPDATE_CHECK=1 /usr/local/bin/nono setup --check-only", 0, SandboxCheckPassed)
-        .On("-d Ubuntu --exec sh -lc printf %s \"$HOME\"", 0, "/home/alice");
+    private static ScriptedWsl HealthyUbuntu() => ScriptedWsl.HealthyUbuntu();
 
     [Fact]
     public async Task HealthyMachine_RecordsEveryFactAndIsUsable()
@@ -48,10 +35,11 @@ public sealed class WslProberTests
         Assert.Equal("nono 0.75.0", probe.NonoVersion);
         Assert.True(probe.LandlockActive);
         Assert.Equal("/home/alice", probe.DistroHome);
+        Assert.Equal(ScriptedWsl.UserPath, probe.UserPath);
     }
 
     [Fact]
-    public async Task HealthyMachine_RunsExactlyTheSixDocumentedStepsInOrder()
+    public async Task HealthyMachine_RunsExactlyTheSevenDocumentedStepsInOrder()
     {
         var wsl = HealthyUbuntu();
 
@@ -65,6 +53,7 @@ public sealed class WslProberTests
             ["-d", "Ubuntu", "--exec", "/usr/local/bin/nono", "--version"],
             ["-d", "Ubuntu", "--exec", "env", "NONO_NO_UPDATE_CHECK=1", "/usr/local/bin/nono", "setup", "--check-only"],
             ["-d", "Ubuntu", "--exec", "sh", "-lc", "printf %s \"$HOME\""],
+            ["-d", "Ubuntu", "--exec", "sh", "-c", WslProber.LoginPathScript],
         ];
         Assert.Equal(expected.Length, wsl.Calls.Count);
         for (var i = 0; i < expected.Length; i++)
@@ -254,27 +243,5 @@ public sealed class WslProberTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => WslProber.ProbeAsync(
             (_, ct) => { ct.ThrowIfCancellationRequested(); return Task.FromResult((0, "")); },
             null, Exe, cts.Token));
-    }
-
-    private sealed class ScriptedWsl
-    {
-        private readonly Dictionary<string, (int ExitCode, string Output)> _replies = new(StringComparer.Ordinal);
-
-        public List<IReadOnlyList<string>> Calls { get; } = [];
-
-        public ScriptedWsl On(string argv, int exitCode, string output)
-        {
-            _replies[argv] = (exitCode, output);
-            return this;
-        }
-
-        public Task<(int ExitCode, string Output)> RunAsync(IReadOnlyList<string> argv, CancellationToken ct)
-        {
-            Calls.Add(argv.ToList());
-            var key = string.Join(' ', argv);
-            return Task.FromResult(_replies.TryGetValue(key, out var reply)
-                ? reply
-                : (1, $"scripted wsl.exe: no reply for [{key}]"));
-        }
     }
 }

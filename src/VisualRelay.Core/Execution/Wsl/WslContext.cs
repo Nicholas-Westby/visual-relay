@@ -1,12 +1,13 @@
 namespace VisualRelay.Core.Execution.Wsl;
 
 /// <summary>
-/// The four facts a Windows launch needs: which wsl.exe, which distro, the
-/// absolute nono path inside it (a non-login <c>--exec</c> has no profile PATH),
-/// and the distro user's home (where the guard profile is placed).
+/// The facts a Windows launch needs: which wsl.exe, which distro, the absolute
+/// nono path inside it (a non-login <c>--exec</c> has no profile PATH), the distro
+/// user's home (where the guard profile is placed), and the PATH their login shell
+/// builds, which every launch carries so profile-installed toolchains resolve.
 /// </summary>
 // ReSharper disable once NotAccessedPositionalProperty.Global — NonoPath heads the nono prefix at the launch site, which lands with the executor's WSL arm
-public sealed record WslContext(string WslExePath, string Distro, string NonoPath, string DistroHome);
+public sealed record WslContext(string WslExePath, string Distro, string NonoPath, string DistroHome, string? UserPath = null);
 
 /// <summary>
 /// Process-wide resolution of the <see cref="WslContext"/>. The override wins when
@@ -97,7 +98,7 @@ public static class WslContextResolver
     /// <summary>The context a usable probe resolves to; null for any unusable probe.</summary>
     public static WslContext? FromProbe(WslProbe probe) =>
         probe.IsUsable
-            ? new WslContext(probe.WslExePath!, probe.DistroName!, probe.NonoPath!, probe.DistroHome!)
+            ? new WslContext(probe.WslExePath!, probe.DistroName!, probe.NonoPath!, probe.DistroHome!, probe.UserPath)
             : null;
 
     /// <summary>

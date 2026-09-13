@@ -84,6 +84,28 @@ public sealed class WslSandboxLauncherTests
     }
 
     [Fact]
+    public void Build_CarriesTheUsersLoginPath_SoProfileInstalledToolchainsResolve()
+    {
+        var context = Context with { UserPath = "/home/alice/.cargo/bin:/usr/bin" };
+
+        var (launch, _) = WslSandboxLauncher.Build(
+            context, @"\\wsl.localhost\Ubuntu\home\alice\repo", Prefix, "/bin/sh", ["-c", "cargo test"],
+            new Dictionary<string, string> { ["CI"] = "1" }, "verify");
+
+        Assert.Contains("PATH=/home/alice/.cargo/bin:/usr/bin", launch!.Launch.Arguments);
+        Assert.Contains("CI=1", launch.Launch.Arguments);
+    }
+
+    [Fact]
+    public void Build_WithoutAUserPath_LeavesPathToWsl()
+    {
+        var (launch, _) = WslSandboxLauncher.Build(
+            Context, @"\\wsl.localhost\Ubuntu\home\alice\repo", Prefix, "true", [], null, "tool");
+
+        Assert.DoesNotContain(launch!.Launch.Arguments, a => a.StartsWith("PATH=", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Build_RefusedWorkspace_YieldsTheRefusalAndNoLaunch()
     {
         var (launch, error) = WslSandboxLauncher.Build(Context, @"C:\repo", Prefix, "true", [], null, "tool");
