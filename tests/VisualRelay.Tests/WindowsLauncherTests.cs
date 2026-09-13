@@ -114,31 +114,80 @@ public sealed class WindowsLauncherTests
     }
 
     [Fact]
+    public void ProvisionedSdk_OffPath_IsReusedInsteadOfAskingAgain()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows-only launcher (powershell + .cmd stubs)");
+
+        // The consent install puts the SDK under %LOCALAPPDATA%\visual-relay\dotnet
+        // and prepends it to PATH for that window only. A later window has it on
+        // disk but not on PATH, and must use it rather than ask to install again.
+        var stubBin = NewStubBin();
+        var localAppData = NewStubBin();
+        var provisioned = Path.Combine(localAppData, "visual-relay", "dotnet");
+        var argvFile = Path.Combine(stubBin, "dotnet-argv.txt");
+        try
+        {
+            Directory.CreateDirectory(provisioned);
+            WriteCmdStub(provisioned, "dotnet",
+                "if \"%~1\"==\"--list-sdks\" ( echo 10.0.100 [C:\\sdk]& exit /b 0 )\r\n" +
+                ">>\"%VR_DOTNET_ARGV%\" echo %*");
+            WriteCmdStub(stubBin, "git", "exit /b 0");
+
+            var (exit, _, stderr) = RunPs1(stubBin,
+                ["launch"],
+                new Dictionary<string, string>
+                {
+                    ["LOCALAPPDATA"] = localAppData,
+                    ["VR_DOTNET_ARGV"] = argvFile,
+                });
+
+            Assert.True(File.Exists(argvFile), $"launcher never ran the provisioned dotnet. stderr:\n{stderr}");
+            Assert.Contains("VisualRelay.Cli.csproj", File.ReadAllText(argvFile));
+            Assert.Equal(0, exit);
+        }
+        finally
+        {
+            TryDelete(stubBin);
+            TryDelete(localAppData);
+        }
+    }
+
+    [Fact]
     public void MissingDotnet_NonInteractive_PrintsHint_DoesNotInstall_NonZero()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows-only launcher (powershell + .cmd stubs)");
 
         var stubBin = NewStubBin();
+        var emptyLocalAppData = NewStubBin();
         var installerRan = Path.Combine(stubBin, "installer-ran.txt");
         try
         {
             // No dotnet stub: the launcher must detect the missing SDK. A stub
             // installer that, if ever run, leaves evidence — it must NOT run in a
-            // non-interactive context (redirected stdio ⇒ no TTY).
+            // non-interactive context (redirected stdio ⇒ no TTY). LOCALAPPDATA
+            // points at an empty dir so a machine's own provisioned SDK stays out.
             WriteCmdStub(stubBin, "vr-dotnet-installer", $">\"{installerRan}\" echo ran");
 
             var (exit, _, stderr) = RunPs1(stubBin,
                 ["launch"],
                 new Dictionary<string, string>
                 {
+                    ["LOCALAPPDATA"] = emptyLocalAppData,
                     ["VISUAL_RELAY_DOTNET_INSTALLER"] = Path.Combine(stubBin, "vr-dotnet-installer.cmd"),
                 });
 
             Assert.NotEqual(0, exit);
             Assert.Matches("(?i)dotnet-install|winget install Microsoft.DotNet|\\.NET 10", stderr);
+            // The per-user alternative must install where the next launch looks, or
+            // following the hint leads straight back to this message.
+            Assert.Contains(Path.Combine(emptyLocalAppData, "visual-relay", "dotnet"), stderr);
             Assert.False(File.Exists(installerRan), "installer must not run in a non-interactive context");
         }
-        finally { TryDelete(stubBin); }
+        finally
+        {
+            TryDelete(stubBin);
+            TryDelete(emptyLocalAppData);
+        }
     }
 
     private static void TryDelete(string dir)

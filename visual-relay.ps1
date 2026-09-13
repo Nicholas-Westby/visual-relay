@@ -33,24 +33,35 @@ function Test-DotnetSdk10 {
     return $false
 }
 
+function Use-ProvisionedDotnet {
+    $env:DOTNET_ROOT = $ProvisionedDotnet
+    $env:PATH = "$ProvisionedDotnet;$env:PATH"
+}
+
 function Install-Dotnet {
     # Honor an install-command override (used by tests, like the bash launcher's
     # VISUAL_RELAY_NIX_INSTALLER); otherwise run Microsoft's official script into
     # a per-user dir and prepend it to PATH for this session only.
     if ($env:VISUAL_RELAY_DOTNET_INSTALLER) { & $env:VISUAL_RELAY_DOTNET_INSTALLER; return }
-    $dir = Join-Path $env:LOCALAPPDATA 'visual-relay\dotnet'
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    New-Item -ItemType Directory -Force -Path $ProvisionedDotnet | Out-Null
     $installer = Join-Path $env:TEMP 'vr-dotnet-install.ps1'
     Invoke-WebRequest -Uri 'https://dot.net/v1/dotnet-install.ps1' -OutFile $installer -UseBasicParsing
-    & $installer -Channel 10.0 -InstallDir $dir
-    $env:DOTNET_ROOT = $dir
-    $env:PATH = "$dir;$env:PATH"
+    & $installer -Channel 10.0 -InstallDir $ProvisionedDotnet
+    Use-ProvisionedDotnet
 }
+
+# The per-user dir the consent install below writes to. That install is on PATH
+# only for the window that ran it, so a later window finds the SDK here instead
+# of asking to install it again.
+$ProvisionedDotnet = Join-Path $env:LOCALAPPDATA 'visual-relay\dotnet'
+if (-not (Test-DotnetSdk10) -and (Test-Path $ProvisionedDotnet)) { Use-ProvisionedDotnet }
 
 # .NET 10 SDK - required to run anything. Detect; if absent, consent-install on a
 # TTY, else print the install one-liner and stop (no surprise global installs).
 if (-not (Test-DotnetSdk10)) {
-    $hint = "  irm https://dot.net/v1/dotnet-install.ps1 | iex    (or: winget install Microsoft.DotNet.SDK.10)"
+    # The per-user form names -InstallDir so the SDK lands where the next launch looks.
+    $hint = "  winget install Microsoft.DotNet.SDK.10`n" +
+        "  (or per user: & ([scriptblock]::Create((irm https://dot.net/v1/dotnet-install.ps1))) -Channel 10.0 -InstallDir '$ProvisionedDotnet')"
     if (-not $interactive) {
         [Console]::Error.WriteLine("visual-relay: the .NET 10 SDK was not found. Install it:`n$hint")
         exit 1
