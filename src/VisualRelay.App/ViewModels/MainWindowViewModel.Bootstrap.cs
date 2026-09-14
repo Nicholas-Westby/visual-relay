@@ -68,7 +68,8 @@ public partial class MainWindowViewModel
                 ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
                   + "scaffolds the project; the real test command is adopted automatically once a toolchain appears."
                 : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.");
-        return headline + " " + DescribeTestLayout(result.TestLayout)
+        var formatNote = result.FormatNote is { } note ? " " + note : string.Empty;
+        return headline + " " + DescribeTestLayout(result.TestLayout) + formatNote
                + " Config written to .relay/config.json and left uncommitted.";
     }
 

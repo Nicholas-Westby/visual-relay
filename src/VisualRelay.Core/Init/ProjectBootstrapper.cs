@@ -13,7 +13,8 @@ public sealed record ProjectBootstrapResult(
     string TestCommand,
     string ConfigPath,
     SetupCheckDiagnostic? SetupCheck = null,
-    TestLayoutDetection? TestLayout = null);
+    TestLayoutDetection? TestLayout = null,
+    string? FormatNote = null);
 
 /// <summary>
 /// One-shot "make this folder runnable by Visual Relay" routine. Detects (or
@@ -99,6 +100,11 @@ public static class ProjectBootstrapper
         // 2. Write .relay/config.json (also writes .relay/.gitignore; detects guard/format).
         var configPath = RelayConfigWriter.Write(rootPath, command);
 
+        // 2a. A formatter the clean checkout does not already satisfy would reformat the
+        //     whole project in every task's commit, so it is left out when its check fails.
+        var formatNote = await FormatBaselineCheck.ApplyAsync(
+            rootPath, validationRunner ?? CreateValidationRunner(timeout), cancellationToken);
+
         // 2b. Detect the test layout from the tracked files and record the
         //     author-test defaults it implies, so the operator can see (and edit)
         //     why Stage 5 will gate their test files the way it does.
@@ -117,7 +123,7 @@ public static class ProjectBootstrapper
         // is the operator's call.
         return new ProjectBootstrapResult(
             gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath,
-            setupCheck, layout);
+            setupCheck, layout, formatNote);
     }
 
     /// <summary>
