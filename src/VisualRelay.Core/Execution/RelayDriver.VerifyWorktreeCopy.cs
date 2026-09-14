@@ -67,6 +67,9 @@ public sealed partial class RelayDriver
         var result = new List<(string, bool)>();
         var ignored = await _dependencies.GitInvoker.RunAsync(
             sourcePath, new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z" }, cancellationToken);
+        // A failed listing is git's error text, not entries.
+        if (ignored.ExitCode != 0)
+            return result;
         foreach (var raw in SplitNul(ignored.Output))
         {
             var isDirectory = raw.EndsWith('/');

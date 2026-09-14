@@ -65,6 +65,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             RelayGitignoreWriter.EnsureWritten(rootPath);
             IReadOnlySet<string>? preRunUntracked = await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
             var runBaseSha = await CaptureRunBaseShaAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
+            var ignoredKnown = await CaptureIgnoredEntriesAsync(rootPath, cancellationToken);
 
             foreach (var stage in RelayStages.All)
             {
@@ -77,6 +78,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     continue;
                 if (_options.LastStageToRun is { } last && stage.Number > last)
                     break;
+                await AuditIgnoredEntriesAsync(rootPath, runId, taskId, stage.Number, ignoredKnown, ledger, cancellationToken);
                 if (stage.Number == 11 && fixVerifyHandled)
                     continue;
                 if (stage.Number == 8 && reviewPairHandled)
