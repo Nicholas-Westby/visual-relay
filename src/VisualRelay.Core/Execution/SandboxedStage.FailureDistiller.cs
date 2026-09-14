@@ -123,7 +123,7 @@ public static partial class SandboxedStage
         line.Contains("command execution failed", StringComparison.OrdinalIgnoreCase) ||
         line.Contains("command not found", StringComparison.OrdinalIgnoreCase) ||
         // A real test failure is exactly what we want to surface. "Failed " at line
-        // start matches this codebase's failing-test format (see ExtractFailureIds);
+        // start matches this codebase's failing-test format (see TestFailureIds);
         // \bFAIL\b (uppercase) matches bun/jest "FAIL path/to/test". NOT "N fail" —
         // a benign "0 failed" summary must never anchor.
         line.StartsWith("Failed ", StringComparison.Ordinal) ||

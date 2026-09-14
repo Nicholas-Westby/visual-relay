@@ -237,7 +237,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                     cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                             // Skip baseline diff when bootstrap/guard/new-guard-probe is the source.
                             var newFailures = (config.BaselineVerify && !stage10BootstrapFailed && !stage10GuardFailed && stage10NewGuardOutput is null)
-                                ? await GetNewFailuresAsync(rootPath, taskId, runId, runBaseSha, config.TestCommand, stage10TestResult, cancellationToken)
+                                ? await GetNewFailuresAsync(rootPath, taskId, runId, runBaseSha, config.TestCommand, stage10TestResult, stage10VerifyOutputPath, cancellationToken)
                                 : null;
                             if (!config.BaselineVerify || newFailures is not null || stage10BootstrapFailed || stage10GuardFailed || stage10NewGuardOutput is not null)
                             {

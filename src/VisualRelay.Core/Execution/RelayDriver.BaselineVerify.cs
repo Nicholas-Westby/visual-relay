@@ -1,19 +1,10 @@
+using System.Globalization;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
 public sealed partial class RelayDriver
 {
-    private static HashSet<string> ExtractFailureIds(string? output)
-    {
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        if (string.IsNullOrWhiteSpace(output)) return ids;
-        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            if (line.Trim().StartsWith("Failed ", StringComparison.Ordinal))
-                ids.Add(line.Trim()["Failed ".Length..].Trim());
-        return ids;
-    }
-
     /// <summary>
     /// The failures in <paramref name="workingResult"/> that the run's base commit does not have:
     /// null when there are none, "verify failed" when the base could not be run or the red run
@@ -23,16 +14,52 @@ public sealed partial class RelayDriver
     /// </summary>
     private async Task<string?> GetNewFailuresAsync(
         string rootPath, string taskId, string runId, string? runBaseSha, string testCommand,
-        TestRunResult workingResult, CancellationToken ct)
+        TestRunResult workingResult, string? verifyOutputPath, CancellationToken ct)
     {
-        var baseline = await RunOnTheBaseAsync(rootPath, taskId, runId, runBaseSha, testCommand, ct);
-        if (baseline is null || baseline.TimedOut) return "verify failed";
-        var current = ExtractFailureIds(workingResult.Output);
+        var current = TestFailureIds.Extract(workingResult.Output);
+        // A red run that names no failing test leaves the base nothing to subtract, so it is not run.
         if (current.Count == 0 && workingResult.ExitCode != 0)
             return "verify failed";
-        current.ExceptWith(ExtractFailureIds(baseline.Output));
-        return current.Count == 0 ? null
-            : string.Join(", ", current.Order(StringComparer.Ordinal));
+        var baseline = await RunOnTheBaseAsync(rootPath, taskId, runId, runBaseSha, testCommand, ct);
+        if (baseline is null || baseline.TimedOut) return "verify failed";
+        var onTheBase = TestFailureIds.Extract(baseline.Output);
+        var preExisting = current.Count(onTheBase.Contains);
+        current.ExceptWith(onTheBase);
+        var newFailures = string.Join(", ", current.Order(StringComparer.Ordinal));
+        await PublishBaselineAsync(rootPath, runId, taskId, baseline, verifyOutputPath, newFailures, preExisting, ct);
+        return current.Count == 0 ? null : newFailures;
+    }
+
+    /// <summary>
+    /// Keeps the base run's output beside the verify output and says what was subtracted: a
+    /// "new test failures" flag used to leave nothing to check the base's side against.
+    /// </summary>
+    private async Task PublishBaselineAsync(
+        string rootPath, string runId, string taskId, TestRunResult baseline, string? verifyOutputPath,
+        string newFailures, int preExisting, CancellationToken ct)
+    {
+        string? outputFile = null;
+        if (verifyOutputPath is not null)
+        {
+            outputFile = verifyOutputPath.Replace(".verify-output.txt", ".baseline-output.txt", StringComparison.Ordinal);
+            try
+            {
+                await File.WriteAllTextAsync(outputFile, baseline.Output, ct);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                outputFile = null;
+            }
+        }
+
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "info", "verify_baseline", runId, rootPath, taskId, 10,
+            Data: new Dictionary<string, string>
+            {
+                ["newFailures"] = newFailures,
+                ["preExisting"] = preExisting.ToString(CultureInfo.InvariantCulture),
+                ["outputFile"] = outputFile ?? string.Empty,
+            }), ct);
     }
 
     /// <summary>
