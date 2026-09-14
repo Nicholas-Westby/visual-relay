@@ -98,6 +98,8 @@ Endpoints:
     stage completes.
   - `testCommandIsPlaceholder` — true when `testCmd` is Visual Relay's no-op placeholder
     (it exits 0 having run nothing), so a green Verify proves nothing about the change.
+  - `configDiagnostic` — why `.relay/config.json` was refused (a malformed entry), or null.
+    A refused config also leaves `tasks` empty, so check this before concluding tasks are gone.
   - `drainHalted` / `haltReason` — the drain circuit breaker's halt marker and its
     reason (clipped to 500 characters); false/null when no root is open or no marker exists.
   - `cancelRequested` — true from a `cancel` request until the run has finished winding

@@ -35,6 +35,9 @@ public sealed partial class ControlApi
             statusText = vm.StatusText,
             // True ⇒ testCmd is the no-op placeholder: a green Verify proves nothing.
             testCommandIsPlaceholder = vm.TestCommandIsPlaceholder,
+            // Why .relay/config.json was refused, or null: a refused config also empties the
+            // task list, which without this reads as tasks that vanished.
+            configDiagnostic = vm.ConfigDiagnostic,
             setupCheck = vm.SetupCheck is { } sc ? new
             {
                 command = sc.Command,
