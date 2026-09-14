@@ -281,6 +281,8 @@ public partial class MainWindowViewModel
 
         IsNewTaskDialogOpen = false;
         await ReloadTaskListAsync(slug);
+        // The count counts the new task (the control API read "0 pending" beside two); a run keeps its line.
+        if (!IsBusy) StatusText = FormatQueueStatus();
     }
 
     private bool CanOpenNewTaskDialog() =>
