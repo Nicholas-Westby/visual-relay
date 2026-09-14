@@ -68,7 +68,7 @@ internal static partial class TestFailureIds
         if (SurefireOldForm().Match(line) is { Success: true } surefire)
             return $"{surefire.Groups["class"].Value}.{surefire.Groups["method"].Value}";
 
-        foreach (var pattern in (Regex[])[XunitLive(), DotnetWithDuration(), DotnetBare(), GoTest(), GoPackageFailed(),
+        foreach (var pattern in (Regex[])[XunitLive(), DotnetWithDuration(), DotnetBare(), TestingPlatform(), GoTest(), GoPackageFailed(),
                      CargoTest(), Pytest(), Phpunit(), SurefireNewForm(), NodeTest(), Vitest(), VitestFileFailed(),
                      RspecRerun(), TapNotOk()])
         {
@@ -95,6 +95,10 @@ internal static partial class TestFailureIds
     // A bare "Failed Name" of one token; PHPUnit's "Failed asserting that ..." is a message, not a test.
     [GeneratedRegex(@"^\s*Failed (?<id>[^\s\[]+)\s*$")]
     private static partial Regex DotnetBare();
+
+    // Microsoft.Testing.Platform: "failed Ns.Class+Nested.Test(a: 2) (1s 204ms)"
+    [GeneratedRegex(@"^failed (?<id>.+?) \((?:\d+(?:\.\d+)?(?:ms|s|m|h) ?)+\)\s*$")]
+    private static partial Regex TestingPlatform();
 
     // go test: "--- FAIL: TestName (0.00s)", indented for subtests.
     [GeneratedRegex(@"^\s*--- FAIL: (?<id>\S+) \(")]

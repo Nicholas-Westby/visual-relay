@@ -24,6 +24,27 @@ public sealed partial class TestFailureIdsTests
         Assert.Equal(["Demo.Tests.Parse(input: \"a b\")"], Ids("  Failed Demo.Tests.Parse(input: \"a b\") [2 ms]\n"));
     }
 
+    /// <summary>
+    /// Microsoft.Testing.Platform, the runner .NET 10's dotnet test uses when global.json asks for it.
+    /// Real output from ThreeMammals/Ocelot on the Mac: its lower-case "failed" lines named nothing.
+    /// </summary>
+    [Fact]
+    public void Extract_MicrosoftTestingPlatform_NamesTheTestWithoutItsDurationOrTheAssemblyLine()
+    {
+        Assert.Equal(
+            ["Ocelot.UnitTests.VrProbeFailingTests+Nested.AlsoFails", "Ocelot.UnitTests.VrProbeFailingTests.AddsWrongly",
+             "Ocelot.UnitTests.VrProbeFailingTests.EachEquals(a: 2, b: 3)"],
+            Ids("Running tests from /Users/admin/Ocelot/unit/bin/Debug/net10.0/Ocelot.UnitTests.dll (net10.0|arm64)\n"
+                + "failed Ocelot.UnitTests.VrProbeFailingTests+Nested.AlsoFails (0ms)\n"
+                + "  from /Users/admin/Ocelot/unit/bin/Debug/net10.0/Ocelot.UnitTests.dll (net10.0|arm64)\n"
+                + "  Xunit.MicrosoftTestingPlatform.XunitException: System.InvalidOperationException : boom\n"
+                + "failed Ocelot.UnitTests.VrProbeFailingTests.EachEquals(a: 2, b: 3) (0ms)\n"
+                + "  Assert.Equal() Failure: Values differ\n"
+                + "failed Ocelot.UnitTests.VrProbeFailingTests.AddsWrongly (1s 204ms)\n"
+                + "/Users/admin/Ocelot/unit/bin/Debug/net10.0/Ocelot.UnitTests.dll (net10.0|arm64) failed with 3 error(s) (10s 481ms)\n"
+                + "Exit code: 2\n\nTest run summary: Failed!\n  total: 1926\n  failed: 3\n  succeeded: 1922\n  skipped: 1\n"));
+    }
+
     [Fact]
     public void Extract_ColouredOutput_ReadsThroughTheEscapes()
     {
