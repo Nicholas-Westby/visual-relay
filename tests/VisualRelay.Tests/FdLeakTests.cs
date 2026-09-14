@@ -7,12 +7,13 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Regression tests for file-descriptor leaks across subprocess spawns.
 ///
-/// Covers two leak vectors:
+/// Covers three leak vectors:
 /// 1. ProcessTreeCpuSampler kill-path pipe-FD leak (volume driver).
 /// 2. ProcessCapture detached-child leak (descendants survive normal exit).
+/// 3. ProcessCapture stop leak (descendants of a stopped command whose root quits on the interrupt).
 /// </summary>
 [Collection("Isolated")]
-public sealed class FdLeakTests
+public sealed partial class FdLeakTests
 {
     // ── Handle-count smoke test ────────────────────────────────────────
 

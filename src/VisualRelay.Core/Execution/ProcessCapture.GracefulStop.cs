@@ -46,19 +46,33 @@ internal static partial class ProcessCapture
             return;
         }
 
-        // Send SIGINT to the root process and its process group. Both are
-        // best-effort — the child may have already exited.
+        // The processes the command started, read before any signal. The setpgid below the launch
+        // loses the race with the child's exec, so the group sends reach no further than the root (see
+        // PosixProcessTree). Measured on the Mac: cargo quit on the interrupt inside the grace window,
+        // the hard kill was skipped, and a rustc it had started kept compiling after the stop returned.
+        var sinceSnapshot = Stopwatch.StartNew();
+        var started = stageGroupId is { } rootPid ? PosixProcessTree.Snapshot(rootPid) : [];
+
+        // Send SIGINT to the root process and its process group, and to each process the root
+        // started. All best-effort — any of them may have already exited.
         if (stageGroupId.HasValue)
         {
             try { kill(stageGroupId.Value, SIGINT); } catch { /* best-effort */ }
             try { kill(-stageGroupId.Value, SIGINT); } catch { /* best-effort */ }
         }
 
-        await WaitForVoluntaryExitAsync(() => SafeHasExited(process), tp);
+        foreach (var member in started)
+            try { kill(member.Pid, SIGINT); } catch { /* best-effort */ }
+
+        await WaitForVoluntaryExitAsync(
+            () => SafeHasExited(process) && started.All(member => kill(member.Pid, 0) != 0), tp);
 
         // Still alive after grace — hard kill.
         if (!SafeHasExited(process))
             KillLocal(process, stageGroupId);
+
+        foreach (var pid in PosixProcessTree.StillRunning(started, sinceSnapshot.Elapsed))
+            try { kill(pid, SIGKILL); } catch { /* best-effort */ }
     }
 
     /// <summary>
