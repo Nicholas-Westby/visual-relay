@@ -1,3 +1,5 @@
+using VisualRelay.Core.Execution;
+
 namespace VisualRelay.Tests;
 
 /// <summary>
@@ -29,14 +31,5 @@ internal static class SlowIntegration
     }
 
     /// <summary>True when <paramref name="name"/> resolves on PATH.</summary>
-    public static bool ToolAvailable(string name) => !string.IsNullOrEmpty(FindOnPath(name));
-
-    private static string? FindOnPath(string name)
-    {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        var sep = OperatingSystem.IsWindows() ? ';' : ':';
-        return pathEnv.Split(sep)
-            .Select(dir => Path.Combine(dir.Trim(), name))
-            .FirstOrDefault(File.Exists);
-    }
+    public static bool ToolAvailable(string name) => PathExecutables.OnPath(name);
 }

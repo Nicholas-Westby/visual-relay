@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
@@ -16,7 +17,7 @@ public sealed class NonoWhyOracleTests
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
     private static bool NonoAvailable =>
-        !string.IsNullOrEmpty(FindOnPath("nono"));
+        PathExecutables.OnPath("nono");
 
     private static string? _profilePath;
 
@@ -271,14 +272,5 @@ public sealed class NonoWhyOracleTests
         {
             return (false, $"nono why failed: {ex.Message}");
         }
-    }
-
-    private static string? FindOnPath(string name)
-    {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        var sep = OperatingSystem.IsWindows() ? ';' : ':';
-        return pathEnv.Split(sep)
-            .Select(dir => Path.Combine(dir.Trim(), name))
-            .FirstOrDefault(File.Exists);
     }
 }
