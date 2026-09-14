@@ -64,7 +64,13 @@ public static partial class TestCommandDetector
         // 1. .NET
         if (HasAnyFile(rootPath, "*.slnx", "*.sln", "*.csproj"))
         {
-            candidates.Add("dotnet test");
+            // A bare dotnet test refuses a folder with several solutions ("Specify which one to use"), as
+            // Ocelot's two .slnx files showed, so each solution is offered, the shortest name first.
+            string[] solutions = [.. new[] { "*.slnx", "*.sln" }
+                .SelectMany(pattern => Directory.EnumerateFiles(rootPath, pattern, SearchOption.TopDirectoryOnly))
+                .Select(Path.GetFileName).OfType<string>().Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name.Length).ThenBy(name => name, StringComparer.Ordinal)];
+            candidates.AddRange(solutions.Length > 1 ? solutions.Select(name => $"dotnet test {name}") : ["dotnet test"]);
         }
         Tag("dotnet");
 
