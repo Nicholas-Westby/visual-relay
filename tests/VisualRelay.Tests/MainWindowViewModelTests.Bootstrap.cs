@@ -82,6 +82,23 @@ public sealed partial class MainWindowViewModelTests
         Assert.Contains("Detected languages: none.", viewModel.StatusText, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Bootstrap validates one test command. When the repository holds another toolchain's, the
+    /// status names it, so the operator can see a suite Verify will not run.
+    /// </summary>
+    [Fact]
+    public void DescribeBootstrap_NamesTheTestCommandsItDidNotUse()
+    {
+        var result = new ProjectBootstrapResult(
+            GitInitialized: false, HookInstalled: true, HookWarning: null, UsedPlaceholderTestCommand: false,
+            TestCommand: "cargo test", ConfigPath: ".relay/config.json",
+            OtherTestCommands: ["node --test tests/tooling/*.test.js", "go test ./..."]);
+
+        Assert.Contains(
+            "testCmd: cargo test. Also detected, not used: \"node --test tests/tooling/*.test.js\", \"go test ./...\".",
+            MainWindowViewModel.DescribeBootstrap(result), StringComparison.Ordinal);
+    }
+
     private const string ConfigNote = "Config written to .relay/config.json and left uncommitted.";
 
     [Fact]

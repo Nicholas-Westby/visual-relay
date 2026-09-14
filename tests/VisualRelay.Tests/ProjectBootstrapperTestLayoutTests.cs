@@ -46,6 +46,30 @@ public sealed class ProjectBootstrapperTestLayoutTests
         Assert.Equal([".rs"], result.TestLayout?.InlineTestExtensions);
     }
 
+    /// <summary>
+    /// The tracked-file counts reach the test command too: zeroshot's package.json ran 4 tooling
+    /// tests beside a far larger Rust workspace and was validated first (see
+    /// TestCommandDetectorTests.LanguageShare), so they are read before a candidate is validated.
+    /// </summary>
+    [Fact]
+    public async Task A_tooling_script_beside_a_far_larger_rust_workspace_is_not_the_test_command()
+    {
+        using var repo = TestRepository.Create();
+        var sim = new GitSimEngine();
+        var tracked = new List<(string Path, string Content)>
+        {
+            ("Cargo.toml", "[workspace]\nresolver = \"2\"\n"),
+            ("package.json", "{ \"scripts\": { \"test\": \"node --test tests/tooling/*.test.js\" } }"),
+            ("tests/tooling/release.test.js", "import test from 'node:test';\n"),
+        };
+        tracked.AddRange(Enumerable.Range(0, 11).Select(i => ($"crates/core/src/module{i}.rs", "pub fn f() {}\n")));
+
+        var result = await BootstrapAsync(repo, sim, [.. tracked]);
+
+        Assert.Equal("cargo test", result.TestCommand);
+        Assert.Equal(["node --test tests/tooling/*.test.js"], result.OtherTestCommands);
+    }
+
     [Fact]
     public async Task A_go_repo_keeps_the_path_gate()
     {

@@ -41,15 +41,32 @@ public static partial class TestCommandDetector
     /// Returns every candidate in priority order so the caller can smoke-run
     /// each one and fall through to the next on rejection.
     /// </summary>
-    public static IReadOnlyList<string> DetectCandidates(string rootPath)
+    public static IReadOnlyList<string> DetectCandidates(string rootPath) =>
+        [.. DetectToolchainCandidates(rootPath).Select(candidate => candidate.Command)];
+
+    /// <summary>
+    /// Every candidate with the toolchain whose marker produced it, in priority order; with the
+    /// repository's tracked-file counts by extension, a toolchain kept for tooling ranks after the
+    /// project's own (see <see cref="RankByLanguageShare"/>).
+    /// </summary>
+    public static IReadOnlyList<TestCommandCandidate> DetectToolchainCandidates(
+        string rootPath, IReadOnlyDictionary<string, int>? filesByExtension = null)
     {
         var candidates = new List<string>();
+        var toolchainOf = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Each block's new commands belong to its toolchain; a command seen before keeps the first.
+        void Tag(string toolchain)
+        {
+            foreach (var command in candidates)
+                toolchainOf.TryAdd(command, toolchain);
+        }
 
         // 1. .NET
         if (HasAnyFile(rootPath, "*.slnx", "*.sln", "*.csproj"))
         {
             candidates.Add("dotnet test");
         }
+        Tag("dotnet");
 
         // 2. Node — parse scripts.test when available, otherwise fall back to "npm test"
         if (File.Exists(Path.Combine(rootPath, "package.json")))
@@ -57,6 +74,7 @@ public static partial class TestCommandDetector
             var script = ReadPackageJsonScriptsTest(rootPath);
             candidates.Add(script ?? "npm test");
         }
+        Tag("node");
 
         // 3. Bun
         if (File.Exists(Path.Combine(rootPath, "bun.lock"))
@@ -64,6 +82,7 @@ public static partial class TestCommandDetector
         {
             candidates.Add("bun test");
         }
+        Tag("bun");
 
         // 4. Python (strong signals — NOT tests/ directory)
         if (File.Exists(Path.Combine(rootPath, "pyproject.toml"))
@@ -72,18 +91,21 @@ public static partial class TestCommandDetector
         {
             AddPythonCandidates(rootPath, candidates);
         }
+        Tag("python");
 
         // 5. Rust
         if (File.Exists(Path.Combine(rootPath, "Cargo.toml")))
         {
             candidates.Add("cargo test");
         }
+        Tag("rust");
 
         // 6. Go
         if (File.Exists(Path.Combine(rootPath, "go.mod")))
         {
             candidates.Add("go test ./...");
         }
+        Tag("go");
 
         // 7. Swift (SwiftPM)
         if (File.Exists(Path.Combine(rootPath, "Package.swift")))
@@ -92,6 +114,7 @@ public static partial class TestCommandDetector
             // own sandbox ("sandbox_apply: Operation not permitted"): swift-format never built.
             candidates.Add("swift test --disable-sandbox");
         }
+        Tag("swift");
 
         // 8. Maven. `pom.xml` is REQUIRED by a Maven build, so it is the single
         //    unambiguous marker; Gradle files can additionally appear in a
@@ -104,6 +127,7 @@ public static partial class TestCommandDetector
         {
             candidates.Add($"{WrapperOrTool(rootPath, "mvnw", "mvn")} test");
         }
+        Tag("maven");
 
         // 9. Gradle. `test` rather than `check` or `build`: `check` also runs whichever
         //    static-analysis plugins the project applies (checkstyle/spotbugs/ktlint),
@@ -112,6 +136,7 @@ public static partial class TestCommandDetector
         {
             candidates.Add($"{WrapperOrTool(rootPath, "gradlew", "gradle")} test");
         }
+        Tag("gradle");
 
         // 10. Ruby. Either marker is enough: a Gemfile is what `bundle exec` needs, and a
         //     Rakefile is where the test task lives — most gems carry both, some only one.
@@ -127,9 +152,11 @@ public static partial class TestCommandDetector
             candidates.Add("bundle exec rake test");
             candidates.Add("bundle exec rake");
         }
+        Tag("ruby");
 
         // 10b. PHP (composer.json) — its test or phpunit script, then PHPUnit itself.
         AddPhpCandidates(rootPath, candidates);
+        Tag("php");
 
         // 11. CMake. `ctest` alone fails on a repo that has never been configured, so the
         //     candidate carries the whole three-step sequence — configure, build, test —
@@ -141,6 +168,7 @@ public static partial class TestCommandDetector
                 $"cmake -S . -B build{CMakeTestOptions(rootPath)} && cmake --build build "
                 + "&& ctest --test-dir build --output-on-failure");
         }
+        Tag("cmake");
 
         // 12. Python (weak) — tests/ or test/ directory is a last-resort signal
         if (Directory.Exists(Path.Combine(rootPath, "tests"))
@@ -148,8 +176,11 @@ public static partial class TestCommandDetector
         {
             AddPythonCandidates(rootPath, candidates);
         }
+        Tag(TestCommandCandidate.TestsFolderGuess);
 
-        return [.. candidates.Distinct(StringComparer.Ordinal)];
+        List<TestCommandCandidate> detected =
+            [.. candidates.Distinct(StringComparer.Ordinal).Select(command => new TestCommandCandidate(command, toolchainOf[command]))];
+        return filesByExtension is null ? detected : RankByLanguageShare(detected, filesByExtension);
     }
 
     // An interpreter the repository ships inside itself comes first: a virtualenv

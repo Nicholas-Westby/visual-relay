@@ -60,18 +60,25 @@ public partial class MainWindowViewModel
     /// the file was written into their tree and nobody committed it, and that is as
     /// true when a foreign pre-commit hook took the headline as when it did not.
     /// </summary>
-    private static string DescribeBootstrap(ProjectBootstrapResult result)
+    internal static string DescribeBootstrap(ProjectBootstrapResult result)
     {
         var gitNote = result.GitInitialized ? "initialized git repo; " : string.Empty;
         var headline = result.HookWarning
             ?? (result.UsedPlaceholderTestCommand
                 ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
                   + "scaffolds the project; the real test command is adopted automatically once a toolchain appears."
-                : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.");
+                : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.{DescribeOtherTestCommands(result)}");
         var notes = string.Concat(new[] { result.FormatNote, result.TasksDirNote }.OfType<string>().Select(note => " " + note));
         return headline + " " + DescribeTestLayout(result.TestLayout) + notes
                + " Config written to .relay/config.json and left uncommitted.";
     }
+
+    // Another toolchain's test command is a suite Verify will not run; naming it lets the operator
+    // notice when bootstrap validated the wrong one.
+    private static string DescribeOtherTestCommands(ProjectBootstrapResult result) =>
+        result.OtherTestCommands is { Count: > 0 } others
+            ? $" Also detected, not used: {string.Join(", ", others.Select(command => $"\"{command}\""))}."
+            : string.Empty;
 
     /// <summary>
     /// What init read off the tracked files. The languages decide how the

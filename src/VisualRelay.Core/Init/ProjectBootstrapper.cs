@@ -15,7 +15,8 @@ public sealed record ProjectBootstrapResult(
     SetupCheckDiagnostic? SetupCheck = null,
     TestLayoutDetection? TestLayout = null,
     string? FormatNote = null,
-    string? TasksDirNote = null);
+    string? TasksDirNote = null,
+    IReadOnlyList<string>? OtherTestCommands = null);
 
 /// <summary>
 /// One-shot "make this folder runnable by Visual Relay" routine. Detects (or
@@ -93,10 +94,14 @@ public static class ProjectBootstrapper
         var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
         var timeout = validationTimeoutMs is { } ms ? TimeSpan.FromMilliseconds(ms) : InitValidationTimeout;
 
-        // 1. Resolve a test command: detect + smoke-validate, else a green placeholder
-        //    so an empty/greenfield folder is runnable and the first task can scaffold.
-        var (command, usedPlaceholder, setupCheck) = await ResolveTestCommandAsync(
-            rootPath, validationRunner, timeout, cancellationToken);
+        // 1. Read the tracked files first: their counts rank the test command candidates, and
+        //    step 2c records the test layout they imply.
+        var layout = await TestLayoutDetector.DetectAsync(rootPath, gi, cancellationToken);
+
+        // 1a. Resolve a test command: detect + smoke-validate, else a green placeholder
+        //     so an empty/greenfield folder is runnable and the first task can scaffold.
+        var (command, usedPlaceholder, setupCheck, otherCommands) = await ResolveTestCommandAsync(
+            rootPath, layout, validationRunner, timeout, cancellationToken);
 
         // 2. Write .relay/config.json (also writes .relay/.gitignore; detects guard/format).
         var configPath = RelayConfigWriter.Write(rootPath, command);
@@ -109,10 +114,8 @@ public static class ProjectBootstrapper
         // 2b. A license audit that fails on visible unlicensed files gets a hidden tasks directory.
         var tasksDirNote = LicenseAuditTasksDir.Apply(rootPath);
 
-        // 2c. Detect the test layout from the tracked files and record the
-        //     author-test defaults it implies, so the operator can see (and edit)
-        //     why Stage 5 will gate their test files the way it does.
-        var layout = await TestLayoutDetector.DetectAsync(rootPath, gi, cancellationToken);
+        // 2c. Record the author-test defaults the tracked files imply, so the operator can
+        //     see (and edit) why Stage 5 will gate their test files the way it does.
         RelayConfigWriter.UpsertAuthorTests(rootPath, layout);
 
         // 3. Ensure a git repository with a HEAD commit (worktrees + commit stage need it).
@@ -127,7 +130,7 @@ public static class ProjectBootstrapper
         // is the operator's call.
         return new ProjectBootstrapResult(
             gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath,
-            setupCheck, layout, formatNote, tasksDirNote);
+            setupCheck, layout, formatNote, tasksDirNote, otherCommands);
     }
 
     /// <summary>
@@ -153,16 +156,15 @@ public static class ProjectBootstrapper
             return false;
         }
 
-        var (command, usedPlaceholder, _) = await ResolveTestCommandAsync(
-            rootPath, validationRunner, UpgradeValidationTimeout, cancellationToken);
+        var layout = await TestLayoutDetector.DetectAsync(rootPath, gitInvoker, cancellationToken);
+        var (command, usedPlaceholder, _, _) = await ResolveTestCommandAsync(
+            rootPath, layout, validationRunner, UpgradeValidationTimeout, cancellationToken);
         if (usedPlaceholder)
         {
             return false; // still no validatable toolchain — leave the placeholder in place
         }
 
         RelayConfigWriter.UpsertResolvedToolchain(rootPath, command);
-
-        var layout = await TestLayoutDetector.DetectAsync(rootPath, gitInvoker, cancellationToken);
         RelayConfigWriter.UpsertAuthorTests(rootPath, layout);
 
         return true;
@@ -171,10 +173,12 @@ public static class ProjectBootstrapper
     // Detect candidates and return the first that smoke-validates; otherwise the
     // placeholder. The runner/timeout are injectable so callers (init vs. upgrade)
     // pick their own timeout and tests pass a fake.
-    private static async Task<(string Command, bool UsedPlaceholder, SetupCheckDiagnostic? SetupCheck)> ResolveTestCommandAsync(
-        string rootPath, ITestRunner? validationRunner, TimeSpan validationTimeout, CancellationToken cancellationToken)
+    private static async Task<(string Command, bool UsedPlaceholder, SetupCheckDiagnostic? SetupCheck, IReadOnlyList<string> OtherCommands)> ResolveTestCommandAsync(
+        string rootPath, TestLayoutDetection layout, ITestRunner? validationRunner, TimeSpan validationTimeout,
+        CancellationToken cancellationToken)
     {
-        var candidates = TestCommandDetector.DetectCandidates(rootPath);
+        var detected = TestCommandDetector.DetectToolchainCandidates(rootPath, layout.CountsByExtension);
+        var candidates = detected.Select(candidate => candidate.Command).ToList();
         var timeoutMs = (int)validationTimeout.TotalMilliseconds;
         if (candidates.Count > 0)
         {
@@ -182,16 +186,22 @@ public static class ProjectBootstrapper
             var validator = new TestCommandValidator(runner);
             var rejections = new List<(string, string, int, bool, string)>();
 
-            foreach (var candidate in candidates)
+            foreach (var candidate in detected)
             {
-                var result = await validator.ValidateAsync(rootPath, candidate, cancellationToken);
+                var result = await validator.ValidateAsync(rootPath, candidate.Command, cancellationToken);
                 if (result.Accepted)
                 {
-                    return (candidate, false, null);
+                    // Another toolchain's command is a suite Verify will not run, so the operator hears of it.
+                    List<string> others =
+                    [
+                        .. detected.Where(other => other.Toolchain != candidate.Toolchain && !other.IsGuess)
+                            .Select(other => other.Command),
+                    ];
+                    return (candidate.Command, false, null, others);
                 }
 
                 rejections.Add((
-                    candidate,
+                    candidate.Command,
                     result.RejectionReason ?? "unknown",
                     result.RunResult.ExitCode,
                     result.RunResult.TimedOut,
@@ -202,9 +212,9 @@ public static class ProjectBootstrapper
             var last = rejections[^1];
             var diag = SetupCheckDiagnostic.FromFailedValidation(
                 rootPath, last.Item1, timeoutMs, last.Item3, last.Item4, last.Item5, rejections);
-            return (PlaceholderTestCommand, true, diag);
+            return (PlaceholderTestCommand, true, diag, []);
         }
 
-        return (PlaceholderTestCommand, true, null);
+        return (PlaceholderTestCommand, true, null, []);
     }
 }
