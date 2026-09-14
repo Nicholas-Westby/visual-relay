@@ -51,14 +51,15 @@ public sealed class NonoProfileEnsurerWslTests
     {
         var inside = 0;
         var mostInside = 0;
-        using var anotherArrived = new ManualResetEventSlim();
+        var mostInsideGate = new object();
+        var anotherArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task Write(string path, string content, CancellationToken ct)
         {
             var now = Interlocked.Increment(ref inside);
-            if (now > 1) anotherArrived.Set();
-            lock (anotherArrived) mostInside = Math.Max(mostInside, now);
+            if (now > 1) anotherArrived.TrySetResult();
+            lock (mostInsideGate) mostInside = Math.Max(mostInside, now);
             // Holds this write open long enough for an unserialized second call to reach it.
-            anotherArrived.Wait(TimeSpan.FromMilliseconds(500), ct);
+            SpinWait.SpinUntil(() => anotherArrived.Task.IsCompleted, TimeSpan.FromMilliseconds(500));
             Interlocked.Decrement(ref inside);
             return Task.CompletedTask;
         }

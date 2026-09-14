@@ -28,7 +28,7 @@ public sealed class ProcessCaptureCancelTests
                 "/bin/sh", ["-c", $"echo $$ > '{pidFile}'; exec tail -f /dev/null"], root,
                 TimeSpan.FromMinutes(5), cts.Token);
             Assert.True(SpinWait.SpinUntil(() => File.Exists(pidFile) && new FileInfo(pidFile).Length > 0, TimeSpan.FromSeconds(30)));
-            var pid = int.Parse((await File.ReadAllTextAsync(pidFile)).Trim());
+            var pid = int.Parse((await File.ReadAllTextAsync(pidFile, cts.Token)).Trim());
 
             await cts.CancelAsync();
             var thrown = await Record.ExceptionAsync(() => run);
