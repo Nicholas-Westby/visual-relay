@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
@@ -28,7 +29,42 @@ public sealed class TestCommandValidator(ITestRunner runner)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var runResult = await runner.RunAsync(rootPath, command, cancellationToken);
-        return Classify(runResult);
+        var result = Classify(runResult);
+        return !result.Accepted && runResult.TimedOut && RanTestsUntilTheLimit(command, runResult.Output)
+            ? ValidationResult.Accept(runResult)
+            : result;
+    }
+
+    /// <summary>A package manager running a JavaScript script, whose test runner may be in watch mode.</summary>
+    private static readonly Regex PackageScript = new(
+        @"^\s*(?:\S+=\S*\s+)*(?:npm|npx|yarn|pnpm|bunx?)\b", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A test count or progress line a runner prints while running: pytest, rspec and minitest counts,
+    /// pytest's percent progress, Maven's "Tests run:", go's package lines, cargo's result, dotnet's summary.
+    /// </summary>
+    private static readonly Regex TestRunProgress = new(
+        @"\b\d+ (?:passed|failed|errors?|skipped|tests?|examples?|runs?|specs?)\b|\[\s*\d+%\]|\bTests run: \d+"
+        + @"|^(?:ok|FAIL|---\s(?:PASS|FAIL):)\s|\btest result: |^\s*(?:Passed|Failed)!\s",
+        RegexOptions.CultureInvariant | RegexOptions.Multiline);
+
+    /// <summary>
+    /// Whether a command stopped at the check's time limit was running tests when it was stopped. A
+    /// suite longer than the check is not a broken command: measured with openai-agents-python,
+    /// pytest printed "1558 passed, 6 skipped in 59.19s" at the 60 s limit and was rejected, which
+    /// left bootstrap's placeholder. A JavaScript package script stays rejected, since a watch mode
+    /// prints results and then never exits, and so does output without a test count or progress line,
+    /// which a hung command can print too. The runner's own "timed out" line is not the command's output.
+    /// </summary>
+    private static bool RanTestsUntilTheLimit(string command, string output)
+    {
+        if (PackageScript.IsMatch(command))
+            return false;
+        var firstLineEnd = output.IndexOf('\n');
+        var printed = output.StartsWith("test command timed out", StringComparison.Ordinal)
+            ? firstLineEnd < 0 ? string.Empty : output[(firstLineEnd + 1)..]
+            : output;
+        return TestRunProgress.IsMatch(printed) && LooksLikeTestOutput(printed);
     }
 
     /// <summary>
