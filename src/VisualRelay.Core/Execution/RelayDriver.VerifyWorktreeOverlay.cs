@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -37,7 +38,17 @@ public sealed partial class RelayDriver
         // Cleanup unlinks the symlinks first so neither git nor the recursive delete
         // ever follows a link into the real tree; copies and clones are worktree-local
         // reals.
-        foreach (var (name, isDirectory) in await EnumerateOverlayIgnoredEntriesAsync(sourcePath, cancellationToken))
+        var entries = await EnumerateOverlayIgnoredEntriesAsync(sourcePath, cancellationToken);
+        // Inside the distro on the Windows arm: the app's copies there lose executable modes
+        // and its links point at Windows paths (WslTreeCopy says more).
+        if (await TryCopyInDistroAsync(sourcePath, worktreePath, worktreeId, runId,
+                (context, source, dest) => entries.Count == 0
+                    ? null
+                    : WslTreeCopy.IgnoredEntries(context, source, dest, thresholdBytes, entries.Select(e => e.Name).ToList()),
+                cancellationToken))
+            return;
+
+        foreach (var (name, isDirectory) in entries)
         {
             var src = Path.Combine(sourcePath, name);
             var dst = Path.Combine(worktreePath, name);

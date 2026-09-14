@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -103,13 +104,20 @@ public sealed partial class RelayDriver
         // every untracked-not-ignored file across, mirroring the agent's working tree. A
         // path `git diff` reports but that is gone from disk is a DELETION: skipped here
         // (this loop only writes existing content) and applied by step (2) below.
-        foreach (var relative in await EnumerateUncommittedAsync(sourcePath, cancellationToken))
+        var uncommitted = (await EnumerateUncommittedAsync(sourcePath, cancellationToken))
+            .Where(relative => File.Exists(Path.Combine(sourcePath, relative)))
+            .ToList();
+        // Inside the distro on the Windows arm, where an app-side copy loses the file's mode.
+        if (!await TryCopyInDistroAsync(sourcePath, worktreePath, worktreeId, runId,
+                (context, source, dest) => uncommitted.Count == 0 ? null : WslTreeCopy.Files(context, source, dest, uncommitted),
+                cancellationToken))
         {
-            var src = Path.Combine(sourcePath, relative);
-            if (!File.Exists(src)) continue;
-            var dst = Path.Combine(worktreePath, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-            File.Copy(src, dst, overwrite: true);
+            foreach (var relative in uncommitted)
+            {
+                var dst = Path.Combine(worktreePath, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+                File.Copy(Path.Combine(sourcePath, relative), dst, overwrite: true);
+            }
         }
 
         // (2) DELETE — the HEAD checkout resurrects every tracked file the agent removed,
