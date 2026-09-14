@@ -16,7 +16,8 @@ public sealed class DrainCircuitBreakerTests
         using var repo = TestRepository.Create();
         // The measured case: the first commit rejection, which on its own never halts.
         var outcome = new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null,
-            "commit rejected: (git exit 128): Author identity unknown") { WorkUncaptured = true };
+            "commit rejected: (git exit 128): Author identity unknown")
+        { WorkUncaptured = true };
 
         Assert.True(new DrainCircuitBreaker().ShouldHalt(repo.Root, outcome));
 

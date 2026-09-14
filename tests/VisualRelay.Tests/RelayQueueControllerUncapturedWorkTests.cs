@@ -105,7 +105,8 @@ public sealed class RelayQueueControllerUncapturedWorkTests
             File.WriteAllText(Path.Combine(rootPath, "src", "app.cs"), "verified work");
             File.WriteAllText(Path.Combine(rootPath, "src", "added.cs"), "new file");
             return Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null,
-                "commit rejected: (git exit 128): Author identity unknown") { WorkUncaptured = true });
+                "commit rejected: (git exit 128): Author identity unknown")
+            { WorkUncaptured = true });
         }
     }
 }

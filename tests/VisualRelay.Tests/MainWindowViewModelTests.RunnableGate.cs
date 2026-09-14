@@ -26,7 +26,9 @@ public sealed partial class MainWindowViewModelTests
         // The local host, stated: on a Windows box with WSL this machine's host has nono in the distro.
         var viewModel = new MainWindowViewModel
         {
-            RootPath = repo.Root, EnvironmentAccessor = env, SandboxHostResolver = () => Task.FromResult(SandboxHost.Local),
+            RootPath = repo.Root,
+            EnvironmentAccessor = env,
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Local),
         };
         await viewModel.LoadInitialAsync();
 
