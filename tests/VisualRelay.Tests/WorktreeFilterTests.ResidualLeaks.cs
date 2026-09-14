@@ -28,6 +28,7 @@ public sealed partial class WorktreeFilterTests
     [Fact]
     public async Task TabInTrackedPath_NonTestEditIsReverted()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "NTFS forbids a tab in a file name");
         using var repo = TestRepository.Create();
         var relPath = "src/tab\tfile.cs";        // literal TAB in the name
         var full = await InitRepoWithTrackedFile(repo.Root, relPath, "original");
@@ -60,6 +61,7 @@ public sealed partial class WorktreeFilterTests
     [Fact]
     public async Task NewlineInTrackedPath_NonTestEditIsReverted()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "NTFS forbids a newline in a file name");
         using var repo = TestRepository.Create();
         var relPath = "src/line\nbreak.cs";       // literal newline in the name
         var full = await InitRepoWithTrackedFile(repo.Root, relPath, "original");
@@ -90,6 +92,7 @@ public sealed partial class WorktreeFilterTests
     [Fact]
     public async Task TrailingSpaceInTrackedPath_NonTestEditIsReverted()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows strips a trailing space from a file name");
         using var repo = TestRepository.Create();
         // A true trailing space at the very end of the filename — the
         // old line.Trim() in the parser stripped this, mangling the path.
