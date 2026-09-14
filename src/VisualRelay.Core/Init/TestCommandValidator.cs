@@ -183,7 +183,9 @@ public sealed class TestCommandValidator(ITestRunner runner)
          "is not recognized as an internal or external command",
          "could not determine executable to run", "unknown command",
          "npm error", "no test specified", "don't know how to build task",
-         "no rule to make target", "not found in root project"])
+         "no rule to make target", "not found in root project",
+         // dotnet in a folder with several solutions or projects: "Specify" read as the "spec" marker.
+         "specify which"])
         .Any(refusal => output.Contains(refusal, StringComparison.OrdinalIgnoreCase));
 }
 

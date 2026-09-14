@@ -29,6 +29,9 @@ public sealed partial class TestCommandValidatorTests
     [InlineData("rake aborted!\nDon't know how to build task 'test' (See the list of available tasks with `rake --tasks`)")]
     [InlineData("make: *** No rule to make target 'test'.  Stop.")]
     [InlineData("FAILURE: Build failed with an exception.\n\n* What went wrong:\nTask 'test' not found in root project 'demo'.")]
+    // ThreeMammals/Ocelot on the Mac, two .slnx files at the root: "Specify" read as the "spec" marker.
+    [InlineData("Found more than one solution file in /Users/admin/Dev/vr-eval/Ocelot. Specify which one to use.")]
+    [InlineData("MSBUILD : error MSB1011: Specify which project or solution file to use because this folder contains more than one project or solution file.")]
     public void Classify_NonZeroExitWithARefusal_Rejects(string output)
     {
         var result = TestCommandValidator.Classify(new TestRunResult(1, output));
