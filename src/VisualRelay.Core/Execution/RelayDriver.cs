@@ -284,7 +284,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, stageToken, testDurationSeconds, skipStatusAndPublish: true);
             }
             // Fresh token like stage 12: a torn commit leaves neither state.
-            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, input.Markdown, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, CancellationToken.None);
+            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages.Count > 0 ? commitMessages : CommitMessagesFromLedger(ledger.ToString()), manifest, input.Markdown, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, CancellationToken.None);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
