@@ -11,7 +11,7 @@ namespace VisualRelay.Core.Execution;
 /// </summary>
 public static class GitIdentityGate
 {
-    /// <summary>How much of git's own explanation the refusal carries.</summary>
+    /// <summary>The longest stretch of git's own reason the refusal carries.</summary>
     private const int OutputTailChars = 300;
 
     /// <summary>
@@ -35,12 +35,15 @@ public static class GitIdentityGate
         var where = insideWsl ? " inside the WSL distro" : string.Empty;
         return "Git has no identity to commit with in this project, so each task would run every stage and then "
             + $"fail at its commit. Set one{where}: git config --global user.name \"Your Name\" and "
-            + $"git config --global user.email you@example.com. Git said: {Tail(output)}";
+            + $"git config --global user.email you@example.com. Git said: {Reason(output)}";
     }
 
-    private static string Tail(string output)
+    // git ends its explanation with the one line that names the cause ("fatal: empty ident
+    // name ... not allowed"); the advice above that line repeats what the refusal already says.
+    private static string Reason(string output)
     {
-        var text = output.Trim().ReplaceLineEndings(" ");
-        return text.Length <= OutputTailChars ? text : "…" + text[^OutputTailChars..];
+        var lines = output.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var reason = lines.LastOrDefault(l => l.StartsWith("fatal:", StringComparison.Ordinal)) ?? lines.LastOrDefault() ?? "";
+        return reason.Length <= OutputTailChars ? reason : reason[..OutputTailChars] + "…";
     }
 }

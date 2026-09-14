@@ -33,7 +33,9 @@ public sealed class GitIdentityGateTests
         Assert.NotNull(refusal);
         Assert.Contains("git config --global user.name", refusal);
         Assert.Contains("git config --global user.email", refusal);
-        Assert.Contains("empty ident name", refusal);
+        Assert.Contains("fatal: empty ident name", refusal);
+        // git's advice repeats the fix the refusal already gives; its fatal line is the reason.
+        Assert.DoesNotContain("Please tell me who you are", refusal);
         Assert.DoesNotContain("WSL", refusal);
     }
 
