@@ -64,13 +64,13 @@ public sealed class RealGitIntegrationDriverTests
         Assert.Equal("2", Git(repo.Root, "rev-list", "--count", $"{seedHash}..HEAD").Trim());
         var headFiles = Git(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
         Assert.Contains("src/b.cs", headFiles, StringComparison.Ordinal);
-        Assert.Contains(".relay/task-b/manifest.txt", headFiles, StringComparison.Ordinal);
         Assert.DoesNotContain("src/a.cs", headFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain(".relay/task-a/", headFiles, StringComparison.Ordinal);
         var parentFiles = Git(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD~1");
         Assert.Contains("src/a.cs", parentFiles, StringComparison.Ordinal);
-        Assert.Contains(".relay/task-a/manifest.txt", parentFiles, StringComparison.Ordinal);
         Assert.DoesNotContain("src/b.cs", parentFiles, StringComparison.Ordinal);
+        // VR's own bookkeeping under .relay/ (manifests, ledgers, seals) never enters a task commit.
+        Assert.DoesNotContain(".relay/", headFiles, StringComparison.Ordinal);
+        Assert.DoesNotContain(".relay/", parentFiles, StringComparison.Ordinal);
         Assert.DoesNotContain("src/shared.cs", headFiles, StringComparison.Ordinal);
         Assert.DoesNotContain("src/shared.cs", parentFiles, StringComparison.Ordinal);
     }
