@@ -208,10 +208,11 @@ public static class ProjectBootstrapper
                     result.RunResult.Output));
             }
 
-            // All candidates rejected — build a diagnostic from the LAST failure.
-            var last = rejections[^1];
+            // All candidates rejected — summarize the highest-ranked one; the artifact keeps them all.
+            // The last was often a guess from a tests folder: luxon's summary named pytest, not jest.
+            var first = rejections[0];
             var diag = SetupCheckDiagnostic.FromFailedValidation(
-                rootPath, last.Item1, timeoutMs, last.Item3, last.Item4, last.Item5, rejections);
+                rootPath, first.Item1, timeoutMs, first.Item3, first.Item4, first.Item5, rejections);
             return (PlaceholderTestCommand, true, diag, []);
         }
 

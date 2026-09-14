@@ -99,6 +99,29 @@ public sealed class SetupCheckResultsTests
         Assert.Contains("go timed out", artifact);
     }
 
+    /// <summary>
+    /// The summary /state carries names the highest-ranked candidate that failed, not the last one
+    /// tried. Measured on the Mac with moment/luxon: it said "pytest: command not found", a guess from
+    /// the test/ folder, while the failure that mattered, "jest: command not found", was only in the log.
+    /// </summary>
+    [Fact]
+    public async Task MultiCandidateFailure_TheSummaryNamesTheHighestRankedCandidate()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{\"scripts\":{\"test\":\"jest --coverage\"}}");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "test"));
+        var alwaysFails = new ScriptedTestRunner(
+            new TestRunResult(127, "sh: npm: command not found\n"),
+            new TestRunResult(127, "/bin/sh: pytest: command not found\n"));
+
+        var result = await ProjectBootstrapper.BootstrapAsync(
+            repo.Root, gitInvoker: new GitSimEngine(), validationRunner: alwaysFails);
+
+        Assert.NotNull(result.SetupCheck);
+        Assert.Equal("npm test", result.SetupCheck.Command);
+        Assert.Contains("npm: command not found", result.SetupCheck.OutputTail);
+    }
+
     // ── Control API /state test ─────────────────────────────────────────
 
     [Fact]

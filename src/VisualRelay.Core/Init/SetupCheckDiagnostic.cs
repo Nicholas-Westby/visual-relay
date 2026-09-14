@@ -102,7 +102,7 @@ public sealed record SetupCheckDiagnostic(
     /// persisting the artifact and capping the output tail for /state.
     /// The <paramref name="allRejections"/> list (if non-empty) is recorded as
     /// one section per candidate in the artifact; the diagnostic itself
-    /// represents the LAST (decisive) failure.
+    /// represents the failure the caller chose to summarize.
     /// </summary>
     public static SetupCheckDiagnostic FromFailedValidation(
         string rootPath,
