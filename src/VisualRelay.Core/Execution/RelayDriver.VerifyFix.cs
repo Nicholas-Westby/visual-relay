@@ -186,7 +186,7 @@ public sealed partial class RelayDriver
                 bootstrapDenials: bootstrapFailingResult?.Denials,
                 guardDenials: guardDenials);
             lastAttemptSetupChecks = attemptSetupChecks;
-            var (attemptVerifyOutputPath, _, attemptTreeHash, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
+            var (attemptVerifyOutputPath, _, attemptTreeHash, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, AttemptOf(invocation.ReportFile), config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
 
             // The environment broke under us mid-loop: the tests pass, only the guard is
             // red, and it is red on the untouched base too — no attempt can change that.

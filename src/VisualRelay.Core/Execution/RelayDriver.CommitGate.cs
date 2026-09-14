@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using VisualRelay.Core.Tasks;
+using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -42,8 +43,10 @@ public sealed partial class RelayDriver
 
             // Run the isolated verify gate (same mechanism as stages 10/11).
             var stage12 = RelayStages.All[11];
+            // Each resume's gate is its own attempt: attempt 1 every time overwrote the last gate's output.
+            var attempt = RelayAttempt.Next(taskDirectory, 12);
             var (testResult, verifyMutations) = await RunIsolatedVerifyAsync(
-                rootPath, config, stageNumber: 12, attempt: 1, runId, taskId, cancellationToken);
+                rootPath, config, stageNumber: 12, attempt, runId, taskId, cancellationToken);
             await EmitMutatedTreeAdvisoryAsync(rootPath, runId, taskId, stage12, verifyMutations, cancellationToken);
 
             bool gatePassed = testResult is { TimedOut: false, ExitCode: 0 };
@@ -51,7 +54,7 @@ public sealed partial class RelayDriver
             // Emit verify_result event + artifact so the resumed run's log is
             // indistinguishable from a normal pipeline run.
             var (_, _, _, reason) = await PublishVerifyResultAsync(
-                rootPath, runId, taskId, taskDirectory, stage12, attempt: 1, config,
+                rootPath, runId, taskId, taskDirectory, stage12, attempt, config,
                 testResult, currentManifest, cancellationToken);
 
             // Re-validate the recorded stage-11 tree hash against the current worktree.

@@ -211,7 +211,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         var stage10FullOutput = stage10Red
                             ? BuildFullFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput)
                             : null;
-                        var (stage10VerifyOutputPath, _, _, _) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage10TestResult!, manifest, cancellationToken, overrideCheck: stage10Red ? "red" : "green", combinedFailureOutput: stage10FullOutput, setupChecks: SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config));
+                        var (stage10VerifyOutputPath, _, _, _) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: AttemptOf(invocation.ReportFile), config, stage10TestResult!, manifest, cancellationToken, overrideCheck: stage10Red ? "red" : "green", combinedFailureOutput: stage10FullOutput, setupChecks: SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config));
                         check = stage10Red ? "red" : "green";
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)
