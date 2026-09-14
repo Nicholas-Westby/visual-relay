@@ -125,6 +125,12 @@ public sealed partial class RelayDriver
             rootPath, runId, taskId, stage, data, cancellationToken);
     }
 
+    /// <summary>Restore and dependency resolution failures: NuGet, Maven, Gradle, pip.</summary>
+    private static readonly Regex DependencyFetchFailure =
+        new(@"Failed to read NuGet\.Config|error NU1301:|Could not resolve dependencies for project"
+            + "|Could not resolve all (?:dependencies|files) for configuration|No matching distribution found for",
+            RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     /// <summary>
     /// Zero-tests pattern: "0 tests" / "0 tests collected" / "ran 0 tests"
     /// but NOT "10 tests" / "230 tests" / "Ran 100 tests".  The regex
@@ -155,6 +161,13 @@ public sealed partial class RelayDriver
         var output = result.Output;
         if (string.IsNullOrWhiteSpace(output))
             return false;
+
+        // A run that could not fetch its dependencies never reached the tests, so its exit
+        // code says nothing about them. Measured with LiteDB in WSL: the sandbox denied NuGet
+        // its user config and the gate took the restore failure for the new test's red. A
+        // compile error the new test causes is not among these: that is a legitimate red.
+        if (DependencyFetchFailure.IsMatch(output))
+            return true;
 
         return output.Contains("no tests found", StringComparison.OrdinalIgnoreCase)
             || output.Contains("no tests collected", StringComparison.OrdinalIgnoreCase)
