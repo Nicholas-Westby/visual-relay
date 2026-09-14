@@ -44,7 +44,19 @@ public static class XdgConfig
     /// (or the real process environment when null).
     /// </summary>
     public static string ResolveConfigDir(IEnvironmentAccessor? accessor = null) =>
+        ResolveConfigDir(accessor, OperatingSystem.IsWindows());
+
+    /// <summary>
+    /// <see cref="ResolveConfigDir(IEnvironmentAccessor?)"/> with the OS injected. An injected
+    /// environment answers the Windows <c>APPDATA</c> fallback too: reading the machine's real
+    /// one instead let a test's empty environment rewrite the user's real .env on Windows.
+    /// </summary>
+    internal static string ResolveConfigDir(IEnvironmentAccessor? accessor, bool isWindows) =>
         ResolveConfigDir(
             KeyEnvFile.GetEnv("XDG_CONFIG_HOME", accessor),
-            KeyEnvFile.GetEnv("HOME", accessor));
+            KeyEnvFile.GetEnv("HOME", accessor),
+            isWindows,
+            accessor is null
+                ? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
+                : accessor.GetEnvironmentVariable("APPDATA"));
 }

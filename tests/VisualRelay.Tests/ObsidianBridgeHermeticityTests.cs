@@ -132,9 +132,10 @@ public sealed class ObsidianBridgeHermeticityTests : IDisposable
         Assert.NotNull(xdg);
         Assert.NotEmpty(xdg);
 
-        // Should NOT start with the real home directory.
-        var realHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        Assert.False(xdg.StartsWith(realHome, StringComparison.OrdinalIgnoreCase));
+        // Should NOT be the real config directory. Not "outside the home directory": on
+        // Windows the temp directory itself lives under the user profile.
+        var realConfig = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        Assert.False(xdg.StartsWith(realConfig, StringComparison.OrdinalIgnoreCase));
 
         // Should contain something temp-ish.
         Assert.Contains(Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar),

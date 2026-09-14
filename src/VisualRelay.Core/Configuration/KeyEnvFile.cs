@@ -56,7 +56,7 @@ public static class KeyEnvFile
     /// <c>HOME</c> from <paramref name="accessor"/> (or the real process env).
     /// </summary>
     private static string ResolvePath(IEnvironmentAccessor? accessor = null) =>
-        ResolvePath(GetEnv("XDG_CONFIG_HOME", accessor), GetEnv("HOME", accessor));
+        Path.Combine(XdgConfig.ResolveConfigDir(accessor), DirName, FileName);
 
     /// <summary>
     /// Resolves the user-level dotenv path given explicit directory overrides
