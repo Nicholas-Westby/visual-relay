@@ -41,6 +41,59 @@ public sealed class NonoProfileEnsurerWslTests
         Assert.Equal(2, writes);
     }
 
+    /// <summary>
+    /// Parallel planning starts stages within milliseconds of each other (FreshRSS's two tasks
+    /// started 3 ms apart), and measured through the WSL share, two writers released together
+    /// on one file failed 100 times in 200 with "being used by another process".
+    /// </summary>
+    [Fact]
+    public async Task EnsureInDistro_StagesStartingTogether_WriteOneAtATime()
+    {
+        var inside = 0;
+        var mostInside = 0;
+        using var anotherArrived = new ManualResetEventSlim();
+        Task Write(string path, string content, CancellationToken ct)
+        {
+            var now = Interlocked.Increment(ref inside);
+            if (now > 1) anotherArrived.Set();
+            lock (anotherArrived) mostInside = Math.Max(mostInside, now);
+            // Holds this write open long enough for an unserialized second call to reach it.
+            anotherArrived.Wait(TimeSpan.FromMilliseconds(500), ct);
+            Interlocked.Decrement(ref inside);
+            return Task.CompletedTask;
+        }
+
+        await Task.WhenAll(
+            Task.Run(() => NonoProfileEnsurer.EnsureInDistroAsync(Context, Write, CancellationToken.None)),
+            Task.Run(() => NonoProfileEnsurer.EnsureInDistroAsync(Context, Write, CancellationToken.None)));
+
+        Assert.Equal(1, mostInside);
+    }
+
+    [Fact]
+    public async Task TheShareWriter_LeavesAMatchingProfileUntouched_AndReplacesADifferentOne()
+    {
+        var root = Directory.CreateTempSubdirectory("vr-share-").FullName;
+        try
+        {
+            var path = Path.Combine(root, "visual-relay", "vr-guard.json");
+            await NonoProfileEnsurer.WriteThroughShareAsync(path, "profile", CancellationToken.None);
+            var earlier = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(path, earlier);
+
+            await NonoProfileEnsurer.WriteThroughShareAsync(path, "profile", CancellationToken.None);
+            var untouched = File.GetLastWriteTimeUtc(path);
+            await NonoProfileEnsurer.WriteThroughShareAsync(path, "grown profile", CancellationToken.None);
+
+            Assert.Equal(earlier, untouched);
+            Assert.Equal("grown profile", await File.ReadAllTextAsync(path));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task EnsureInDistro_ShareUnreachable_NamesTheAutomountSettingAndThePath()
     {

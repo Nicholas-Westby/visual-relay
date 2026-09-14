@@ -38,6 +38,13 @@ public static class NonoProfileEnsurer
     private static string? _cachedContent;
 
     /// <summary>
+    /// One profile write at a time in this process. Parallel planning starts stages within
+    /// milliseconds of each other, and measured through the WSL share, two writers released
+    /// together on this file failed half their writes with "being used by another process".
+    /// </summary>
+    private static readonly SemaphoreSlim WriteGate = new(1, 1);
+
+    /// <summary>
     /// The embedded profile content (UTF-8 text, byte-for-byte equal to the
     /// repo's <c>packaging/nono/vr-guard.json</c>). Cached after first read.
     /// </summary>
@@ -110,6 +117,7 @@ public static class NonoProfileEnsurer
                 + "nor HOME is set. Set HOME so the always-on sandbox profile can be written.", ex);
         }
 
+        await WriteGate.WaitAsync(cancellationToken);
         try
         {
             var dir = Path.GetDirectoryName(path)!;
@@ -144,19 +152,24 @@ public static class NonoProfileEnsurer
                 + "VR will not run a sandboxed stage with a missing or stale profile. "
                 + $"Check filesystem permissions on that path. ({ex.Message})", ex);
         }
+        finally
+        {
+            WriteGate.Release();
+        }
     }
 
     /// <summary>
     /// The Windows arm: writes the embedded profile through the distro's UNC share
     /// (<see cref="WslProfilePlacement"/>) and returns the Linux path nono loads.
-    /// Overwrite-always, unconditionally: a share round trip just to compare bytes
-    /// is not worth the mtime it would save. The write is injected so the arm is
-    /// exercised without a share; the real writer is <see cref="WriteThroughShareAsync"/>.
+    /// Every call makes the file match, one call at a time; the real writer,
+    /// <see cref="WriteThroughShareAsync"/>, skips a file whose bytes already match.
+    /// The write is injected so the arm is exercised without a share.
     /// </summary>
     internal static async Task<string> EnsureInDistroAsync(
         WslContext context, Func<string, string, CancellationToken, Task> write, CancellationToken cancellationToken)
     {
         var (writePath, linuxPath) = WslProfilePlacement.For(context.Distro, context.DistroHome);
+        await WriteGate.WaitAsync(cancellationToken);
         try
         {
             await write(writePath, EmbeddedContent, cancellationToken);
@@ -174,12 +187,24 @@ public static class NonoProfileEnsurer
                 + "[automount] enabled=true (the default) in the distro's /etc/wsl.conf; after changing it run "
                 + $"`wsl --shutdown` and start the distro again. ({ex.Message})", ex);
         }
+        finally
+        {
+            WriteGate.Release();
+        }
 
         return linuxPath;
     }
 
-    private static async Task WriteThroughShareAsync(string path, string content, CancellationToken cancellationToken)
+    /// <summary>
+    /// Writes <paramref name="content"/> to <paramref name="path"/> through the share unless the
+    /// file already holds exactly that: a read costs far less than a stage, and a skipped write
+    /// cannot collide with another VR process writing, or with nono loading the file.
+    /// </summary>
+    internal static async Task WriteThroughShareAsync(string path, string content, CancellationToken cancellationToken)
     {
+        if (File.Exists(path)
+            && string.Equals(await File.ReadAllTextAsync(path, cancellationToken), content, StringComparison.Ordinal))
+            return;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllTextAsync(path, content, cancellationToken);
     }
