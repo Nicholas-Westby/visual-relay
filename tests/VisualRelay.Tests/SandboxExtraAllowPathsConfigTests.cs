@@ -215,6 +215,7 @@ public sealed class SandboxExtraAllowPathsConfigTests
     }
 
     // ── Builder integration: -a flags appear in both invocations ───────
+    // On the local host, which names a grant as itself; a Windows host would name its DrvFs mount.
 
     [Fact]
     public void ExtraAllowPaths_AppendedAsAFlags_InAgentPrefix()
@@ -226,7 +227,7 @@ public sealed class SandboxExtraAllowPathsConfigTests
             SandboxExtraAllowPaths = [extra]
         };
 
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, host: SandboxHost.Local);
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
@@ -245,7 +246,7 @@ public sealed class SandboxExtraAllowPathsConfigTests
             SandboxExtraAllowPaths = [extra]
         };
 
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false, host: SandboxHost.Local);
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);

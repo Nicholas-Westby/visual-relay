@@ -13,7 +13,8 @@ namespace VisualRelay.Tests;
 /// SandboxedTestRunner uses — the overload that adds each entry verbatim, so a
 /// merged <c>-c "cmd"</c> entry reaches <c>/bin/sh</c> as one unparseable
 /// argument (exit 2). This is the test that would have caught the
-/// "sandboxed verify always red" bug; it needs no nono.
+/// "sandboxed verify always red" bug; it needs no nono. Both state the local host:
+/// left to this machine, a Windows box would launch through its WSL distro instead.
 /// </summary>
 public sealed class SandboxedShellVerifyExecutionTests
 {
@@ -23,7 +24,7 @@ public sealed class SandboxedShellVerifyExecutionTests
         // The real incident command: spaces AND a flag. -c and the whole command
         // must be two distinct entries, with NO wrapping quotes added.
         var config = TestConfig();
-        var sut = new SandboxedTestRunner(new ShellTestRunner(), config);
+        var sut = new SandboxedTestRunner(new ShellTestRunner(), config, host: SandboxHost.Local);
 
         var (_, args) = sut.ResolveLaunch("bun test --timeout 15000");
 
@@ -42,7 +43,7 @@ public sealed class SandboxedShellVerifyExecutionTests
         // `-c`,`cmd` → exit 0. nono is not needed: we exercise only the /bin/sh
         // sub-launch, which is where the arg-merge bug actually bites.
         var config = TestConfig();
-        var sut = new SandboxedTestRunner(new ShellTestRunner(), config);
+        var sut = new SandboxedTestRunner(new ShellTestRunner(), config, host: SandboxHost.Local);
 
         var (_, args) = sut.ResolveLaunch("echo vr-sandbox-ok");
         var tail = args.Skip(args.ToList().IndexOf("--") + 1).ToList();

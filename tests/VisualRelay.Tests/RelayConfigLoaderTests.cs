@@ -158,7 +158,8 @@ public sealed partial class RelayConfigLoaderTests
         // PATH that lacks it, proving the stale opt-out does not make nono optional.
         var stubBin = Path.Combine(repo.Root, "bin");
         Directory.CreateDirectory(stubBin);
-        var missing = SandboxedStage.MissingRequiredTools(result.Config, pathValue: stubBin);
+        // On the local host: a Windows host asks its WSL distro, which no PATH stub can empty.
+        var missing = SandboxedStage.MissingRequiredTools(result.Config, pathValue: stubBin, host: SandboxHost.Local);
         Assert.Contains("nono", missing);
     }
 

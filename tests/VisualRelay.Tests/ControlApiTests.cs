@@ -20,12 +20,12 @@ namespace VisualRelay.Tests;
 [Collection("Headless")]
 public sealed partial class ControlApiTests
 {
-    private static ControlApi NewApi(out MainWindowViewModel viewModel)
+    private static ControlApi NewApi(out MainWindowViewModel viewModel, bool? isWindows = null)
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         viewModel = vm;
-        return new ControlApi(vm, window);
+        return new ControlApi(vm, window, isWindows: isWindows);
     }
 
     [AvaloniaFact]
@@ -135,7 +135,8 @@ public sealed partial class ControlApiTests
     [AvaloniaFact]
     public async Task InvokeCommand_OpenFolder_SetsRootPath_AndRejectsMissingFolder()
     {
-        var api = NewApi(out _);
+        // The local pick policy: on Windows it refuses this drive folder, which the Windows policy tests cover.
+        var api = NewApi(out _, isWindows: false);
         var dir = AppContext.BaseDirectory; // a real, stable directory
 
         var (status, json) = await api.InvokeCommandAsync(

@@ -10,9 +10,14 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class CliNonoGateTests
 {
+    // The CLI child probes the real WSL distro on Windows, and no PATH stub or seam can empty it.
+    private const string UnixPathGateOnly =
+        "Unix PATH gate (on Windows the gate is the real WSL probe; see CliGateDecisionTests)";
+
     [Fact]
     public async Task Launch_SandboxEnabled_NonoAbsent_ExitsNonZeroWithInstallMessage()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), UnixPathGateOnly);
         var (repo, stub) = CliHarness.NewSandboxRepo();
         var dotnetArgv = Path.Combine(repo, "dotnet-argv");
         try
@@ -42,6 +47,7 @@ public sealed class CliNonoGateTests
     [Fact]
     public async Task Launch_StaleBypassSandboxKey_StillRequiresNono()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), UnixPathGateOnly);
         var (repo, stub) = CliHarness.NewSandboxRepo();
         // Inject the stale opt-out key the loader/gate must now ignore.
         File.WriteAllText(Path.Combine(repo, ".relay", "config.json"),

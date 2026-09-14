@@ -1,6 +1,7 @@
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -54,7 +55,12 @@ public sealed class BaselineGuardGateTests
         {
             RootPath = repo.Root,
             BaselineGuardRunnerFactory = _ => new ScriptedTestRunner(new TestRunResult(1, "error: no toolchain")),
-            IsHuggingFaceConfigured = true
+            IsHuggingFaceConfigured = true,
+            // The gates before the guard are stated, not read off this machine: on Windows the tool
+            // gate reads the process-wide WSL context, which a parallel test may have replaced.
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(
+                new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u"))),
+            GitIdentityCheck = (_, _) => Task.FromResult<string?>(null),
         };
 
         var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);

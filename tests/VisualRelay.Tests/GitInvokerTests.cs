@@ -160,7 +160,8 @@ public sealed class GitInvokerTests
     public async Task RunAsync_WhenNoGitFound_ThrowsDescriptiveError()
     {
         var invoker = new GitInvoker("/nonexistent/path/git");
-        var repoPath = $"/tmp/git-invoker-nofound-{Guid.NewGuid():N}";
+        // The temp dir, not /tmp: on Windows a Linux root goes to the resolved WSL distro's git instead.
+        var repoPath = Path.Combine(Path.GetTempPath(), $"git-invoker-nofound-{Guid.NewGuid():N}");
         Directory.CreateDirectory(repoPath);
         try
         {

@@ -31,7 +31,9 @@ public sealed class TestDurationTests
     [Fact]
     public async Task ShellTestRunner_CapturesElapsed()
     {
-        var runner = new ShellTestRunner(TimeSpan.FromSeconds(5));
+        // This OS's own shell, with no distro: a resolved one refuses the drive-path cwd (DrvFs policy).
+        var host = OperatingSystem.IsWindows() ? SandboxHost.Windows(null) : SandboxHost.Local;
+        var runner = new ShellTestRunner(TimeSpan.FromSeconds(5), host: host);
         var result = await runner.RunAsync(Directory.GetCurrentDirectory(), "echo hi");
         Assert.True(result.ExitCode == 0, $"exit {result.ExitCode}: {result.Output}");
         Assert.True(result.Elapsed > TimeSpan.Zero, $"Elapsed was {result.Elapsed}");
