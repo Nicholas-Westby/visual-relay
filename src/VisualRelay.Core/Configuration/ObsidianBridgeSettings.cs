@@ -53,10 +53,15 @@ public static class ObsidianBridgeSettings
             VaultRoot: defaultVaultRoot,
             PollSeconds: 60);
 
-        // If HOME is unset, we can't resolve a config path → return defaults.
-        // This early return is also why no InvalidOperationException guard is
-        // needed below: with HOME set, path resolution can never throw.
-        if (string.IsNullOrWhiteSpace(home))
+        // Load wherever Save can write: with no resolvable config directory there is
+        // nothing to read, so the defaults stand. Not "HOME is unset": Windows has no
+        // HOME, its config directory comes from APPDATA, and gating on HOME dropped every
+        // saved setting there on the next start.
+        try
+        {
+            _ = XdgConfig.ResolveConfigDir(accessor);
+        }
+        catch (InvalidOperationException)
         {
             return defaults;
         }
