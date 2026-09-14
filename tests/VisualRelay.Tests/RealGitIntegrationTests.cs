@@ -134,6 +134,9 @@ public sealed partial class RealGitIntegrationTests
         Git(repo.Root, "init", "-q");
         Git(repo.Root, "config", "user.email", "visual-relay@example.test");
         Git(repo.Root, "config", "user.name", "Visual Relay Tests");
+        // RedGate runs the machine's own git, which reads Git for Windows' system autocrlf=true and
+        // would check the stripped file out as "old\r\n"; the repo's own setting outranks it.
+        Git(repo.Root, "config", "core.autocrlf", "false");
         Git(repo.Root, "add", ".");
         Git(repo.Root, "commit", "-q", "-m", "chore: seed repo");
         File.WriteAllText(Path.Combine(repo.Root, "src.txt"), "new\n");
