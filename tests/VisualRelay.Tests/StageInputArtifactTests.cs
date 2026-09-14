@@ -9,7 +9,8 @@ public sealed class StageInputArtifactTests
     {
         var result = StageInputArtifact.PathFor(
             "/tmp/.relay/task/stage3-attempt2.report.json");
-        Assert.Equal("/tmp/.relay/task/stage3-attempt2.input.json", result);
+        // Normalized: on Windows GetDirectoryName turns every '/' into '\'.
+        Assert.Equal(Path.GetFullPath("/tmp/.relay/task/stage3-attempt2.input.json"), Path.GetFullPath(result));
     }
 
     [Fact]

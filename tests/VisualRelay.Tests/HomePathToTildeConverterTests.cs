@@ -16,7 +16,7 @@ public sealed class HomePathToTildeConverterTests
     {
         var subPath = Path.Combine(Home, "Dev", "visual-relay");
         var result = ConvertPath(subPath);
-        Assert.Equal("~/Dev/visual-relay", result);
+        Assert.Equal(Path.Combine("~", "Dev", "visual-relay"), result);
     }
 
     [Fact]
@@ -69,7 +69,7 @@ public sealed class HomePathToTildeConverterTests
     {
         var subPath = Home + Path.DirectorySeparatorChar + "Documents" + Path.DirectorySeparatorChar;
         var result = ConvertPath(subPath);
-        Assert.Equal("~/Documents/", result);
+        Assert.Equal(Path.Combine("~", "Documents") + Path.DirectorySeparatorChar, result);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class HomePathToTildeConverterTests
     {
         var subPath = Path.Combine(Home, "Documents");
         var result = ConvertPath(subPath);
-        Assert.Equal("~/Documents", result);
+        Assert.Equal(Path.Combine("~", "Documents"), result);
     }
 
     [Fact]

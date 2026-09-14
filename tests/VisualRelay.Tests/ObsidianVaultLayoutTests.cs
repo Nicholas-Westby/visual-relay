@@ -19,7 +19,7 @@ public sealed class ObsidianVaultLayoutTests
         var vault = "/vault";
         var layout = new ObsidianVaultLayout(vault, "my-repo");
 
-        Assert.Equal("/vault/my-repo", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "my-repo"), layout.RepoDir);
     }
 
     [Fact]
@@ -92,7 +92,7 @@ public sealed class ObsidianVaultLayoutTests
         var vault = "/vault";
         var layout = new ObsidianVaultLayout(vault, "path/to/repo");
 
-        Assert.Equal("/vault/path-to-repo", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "path-to-repo"), layout.RepoDir);
     }
 
     [Fact]
@@ -101,8 +101,8 @@ public sealed class ObsidianVaultLayoutTests
         var vault = "/vault";
         var layout = new ObsidianVaultLayout(vault, "repo\\sub");
 
-        // Should not contain backslash in any path.
-        Assert.DoesNotContain("\\", layout.RepoDir);
+        // The name's backslash is stripped like a slash, never kept (on Windows '\' is the separator itself).
+        Assert.Equal(Path.Combine("/vault", "repo-sub"), layout.RepoDir);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public sealed class ObsidianVaultLayoutTests
         var vault = "/vault";
         var layout = new ObsidianVaultLayout(vault, "");
 
-        Assert.Equal("/vault/project", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class ObsidianVaultLayoutTests
         var vault = "/vault";
         var layout = new ObsidianVaultLayout(vault, "   ");
 
-        Assert.Equal("/vault/project", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     // ── Reserved file names ───────────────────────────────────────────

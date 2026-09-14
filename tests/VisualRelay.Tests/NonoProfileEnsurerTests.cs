@@ -52,7 +52,8 @@ public sealed class NonoProfileEnsurerTests
         var profile = NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local);
         var dotEnvDir = Path.Combine(XdgConfig.ResolveConfigDir(env), "visual-relay");
 
-        Assert.Equal(dotEnvDir, Path.GetDirectoryName(profile));
+        // Normalized: on Windows GetDirectoryName turns the leading '/' into '\'.
+        Assert.Equal(Path.GetFullPath(dotEnvDir), Path.GetFullPath(Path.GetDirectoryName(profile)!));
     }
 
     // ── EnsureAsync: write → exists → content parity ─────────────────────

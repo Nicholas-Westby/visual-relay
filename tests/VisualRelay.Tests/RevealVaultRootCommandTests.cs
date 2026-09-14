@@ -83,7 +83,8 @@ public sealed class RevealVaultRootCommandTests : IDisposable
         var (fileName, arguments) = FileReveal.BuildCommand(path, OSPlatform.Linux);
 
         Assert.Equal("xdg-open", fileName);
-        // xdg-open cannot select a file; BuildCommand opens the parent directory.
-        Assert.Equal(new[] { "/home/dev" }, arguments);
+        // xdg-open cannot select a file; BuildCommand opens the parent directory. Normalized:
+        // the Linux arm asserted on Windows gets GetDirectoryName's '\' separators.
+        Assert.Equal(Path.GetFullPath("/home/dev"), Path.GetFullPath(Assert.Single(arguments)));
     }
 }

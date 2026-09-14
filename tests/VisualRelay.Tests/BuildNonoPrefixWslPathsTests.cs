@@ -50,8 +50,8 @@ public sealed class BuildNonoPrefixWslPathsTests
 
             Assert.Equal("/home/alice/.config/visual-relay/vr-guard.json", prefix[2]);
             Assert.Equal(new[] { "-a", "/mnt/c/Users/alice/.cache/exotic-tool" }, prefix.Skip(4).Take(2));
-            // A directory that is already a Linux path is granted as itself.
-            Assert.Equal(new[] { "-a", templatesDir }, prefix.Skip(6).Take(2));
+            // The temp templates dir as the distro sees it: a Linux path as itself, a Windows one as its DrvFs mount.
+            Assert.Equal(new[] { "-a", Wsl.MapGrant(templatesDir)! }, prefix.Skip(6).Take(2));
             Assert.True(Directory.Exists(templatesDir));
         }
         finally

@@ -20,7 +20,7 @@ public sealed class ObsidianVaultLayoutTaskIdTests
         // configured vault root (Path.Combine(vault, "..")). Must be rejected.
         var layout = new ObsidianVaultLayout("/vault", "..");
 
-        Assert.Equal("/vault/project", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     [Fact]
@@ -28,7 +28,7 @@ public sealed class ObsidianVaultLayoutTaskIdTests
     {
         var layout = new ObsidianVaultLayout("/vault", ".");
 
-        Assert.Equal("/vault/project", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public sealed class ObsidianVaultLayoutTaskIdTests
         var layout = new ObsidianVaultLayout("/vault", "/../");
 
         Assert.DoesNotContain("..", layout.RepoDir, StringComparison.Ordinal);
-        Assert.StartsWith("/vault/", layout.RepoDir, StringComparison.Ordinal);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     [Fact]
@@ -48,7 +48,7 @@ public sealed class ObsidianVaultLayoutTaskIdTests
         // Only pure-dot residues are rejected; a normal name containing dots stays.
         var layout = new ObsidianVaultLayout("/vault", "my.repo.v2");
 
-        Assert.Equal("/vault/my.repo.v2", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "my.repo.v2"), layout.RepoDir);
     }
 
     // ── GUID-shape rejection (defense in depth) ──────────────────────
@@ -59,21 +59,21 @@ public sealed class ObsidianVaultLayoutTaskIdTests
         // A bare 32-hex-char Guid.ToString("N") is never a legitimate project
         // name — it comes from a temp/worktree checkout whose leaf is a GUID.
         var layout = new ObsidianVaultLayout("/vault", "ada5411c8ffa48d8bcf41340ad6f48af");
-        Assert.Equal("/vault/project", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     [Fact]
     public void SanitizeRepoName_RejectsUppercaseGuidN()
     {
         var layout = new ObsidianVaultLayout("/vault", "ADA5411C8FFA48D8BCF41340AD6F48AF");
-        Assert.Equal("/vault/project", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     [Fact]
     public void SanitizeRepoName_RejectsMixedCaseGuidN()
     {
         var layout = new ObsidianVaultLayout("/vault", "aDa5411c8FfA48d8BcF41340ad6F48aF");
-        Assert.Equal("/vault/project", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", "project"), layout.RepoDir);
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public sealed class ObsidianVaultLayoutTaskIdTests
         // 31 hex chars is not a full GUID — must pass through.
         var name = "ada5411c8ffa48d8bcf41340ad6f48a";
         var layout = new ObsidianVaultLayout("/vault", name);
-        Assert.Equal($"/vault/{name}", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", name), layout.RepoDir);
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public sealed class ObsidianVaultLayoutTaskIdTests
         // 33 hex chars is not a full GUID — must pass through.
         var name = "ada5411c8ffa48d8bcf41340ad6f48af0";
         var layout = new ObsidianVaultLayout("/vault", name);
-        Assert.Equal($"/vault/{name}", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", name), layout.RepoDir);
     }
 
     [Fact]
@@ -100,7 +100,7 @@ public sealed class ObsidianVaultLayoutTaskIdTests
         // 32 chars with a 'g' — not hex, not a GUID — must pass through.
         var name = "ada5411c8ffa48d8bcf41340ad6f48ag";
         var layout = new ObsidianVaultLayout("/vault", name);
-        Assert.Equal($"/vault/{name}", layout.RepoDir);
+        Assert.Equal(Path.Combine("/vault", name), layout.RepoDir);
     }
 
     // ── Task-id validation (FIX 1 egress guard) ───────────────────────
