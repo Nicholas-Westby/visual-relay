@@ -35,7 +35,8 @@ public sealed partial class RelayDriver
     /// <summary>
     /// Resolves manifest entries that match <paramref name="patterns"/> and pass
     /// path-containment under <c>tools/guards/</c>.  Entries that escape via
-    /// <c>..</c> traversal are dropped with a <c>warn</c> event.
+    /// <c>..</c> traversal are dropped with a <c>warn</c> event. Each candidate is its path
+    /// relative to the repository root, with forward slashes.
     /// </summary>
     private async Task<List<string>> ResolveGuardCandidatesAsync(
         IReadOnlyList<string> manifest,
@@ -70,7 +71,9 @@ public sealed partial class RelayDriver
                         { ["entry"] = entry, ["resolved"] = resolved, ["guardRoot"] = guardRoot }), ct);
                     continue;
                 }
-                candidates.Add(resolved);
+                // Run by its path in the repository: the runner's shell starts in the root, and on
+                // the Windows arm the host's absolute path is one /bin/sh in the distro cannot run.
+                candidates.Add(Path.GetRelativePath(rootPath, resolved).Replace('\\', '/'));
             }
         }
         return candidates;

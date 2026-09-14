@@ -66,6 +66,28 @@ public sealed class RelayDriverNewGuardProbeTests
         Assert.Single(testRunner.Calls, c => c.Command.Contains("tools/guards/new.sh"));
     }
 
+    /// <summary>
+    /// The probe runs a new guard by its path in the repository, which the test runner's shell
+    /// resolves from the repository root. The host's absolute path is not one the sandbox's
+    /// shell can run on the Windows arm: there it is a <c>\\wsl.localhost</c> or <c>C:\</c> path
+    /// handed to <c>/bin/sh</c> inside the distro, so every new-guard probe failed.
+    /// </summary>
+    [Fact]
+    public async Task Stage10_NewGuardProbe_RunsTheScriptByItsPathInTheRepository()
+    {
+        using var repo = await Setup("guard-relative", "# Guard runs by relative path\n", createGuardScript: true);
+        var testRunner = new RecordingDispatchTestRunner(
+            ("tools/guards/new.sh", [new TestRunResult(0, "guard clean")]),
+            ("dotnet test", [new TestRunResult(1, "red"), new TestRunResult(0, "all green")]));
+        var driver = new RelayDriver(
+            RelayDriverTestHelpers.DepsFor(repo, new CapturingGuardedManifestSubagentRunner(), testRunner, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        await driver.RunTaskAsync(repo.Root, "guard-relative");
+
+        Assert.Single(testRunner.Calls, c => c.Command == "tools/guards/new.sh");
+    }
+
     [Fact]
     public async Task Stage10_NewGuardFailsProbe_EntersFixVerifyLoop()
     {
