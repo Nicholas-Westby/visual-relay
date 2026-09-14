@@ -23,6 +23,15 @@ public sealed partial class RelayQueueController
         await RelayDriver.WriteNeedsReviewMarkerAsync(dir, reason, 0, CancellationToken.None);
     }
 
+    /// <summary>
+    /// Records that a planning flag left the main checkout as it was. Planning ran in its own
+    /// worktree and copied back only the task's .relay folder, so the checkout holds nothing of
+    /// the task to reset, and a reset would discard the user's uncommitted work.
+    /// </summary>
+    private void LogPlanningFlagLeftCheckout(string taskId, string drainRunId) =>
+        DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan",
+            "reset-skipped-planning", "planning ran in its own worktree; the main checkout is left as it was");
+
     private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, bool workUncaptured, CancellationToken ct)
     {
         // The driver could not capture this flag's work, so the tree holds the only

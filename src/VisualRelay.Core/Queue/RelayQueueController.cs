@@ -156,11 +156,7 @@ public sealed partial class RelayQueueController
 
                                     if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                                     {
-                                        // Planning ran in its own worktree and copied back only this
-                                        // task's .relay folder, so the main checkout holds nothing of it
-                                        // to reset, and a reset would discard the user's uncommitted work.
-                                        DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan",
-                                            "reset-skipped-planning", "planning ran in its own worktree; the main checkout is left as it was");
+                                        LogPlanningFlagLeftCheckout(taskId, drainRunId);
                                         try { await WriteNeedsReviewMarkerAsync(taskId, outcome.Reason ?? "Needs review"); }
                                         catch { DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "exception", "WriteNeedsReviewMarker failed"); }
                                         var idx = IndexOf(taskId);
