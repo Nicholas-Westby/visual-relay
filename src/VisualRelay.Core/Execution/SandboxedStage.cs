@@ -80,6 +80,16 @@ public static partial class SandboxedStage
 
         AddGrant(args, host, templatesDir);
 
+        // A linked worktree's objects and refs live in the main repository's git dir,
+        // outside --allow-cwd: without this, git inside the sandbox reports "not a git
+        // repository" wherever reads are not whole-filesystem (Linux, the WSL distro).
+        if (workspaceRoot is { Length: > 0 } && LinkedGitDir.For(workspaceRoot) is { } gitDir
+            && host.MapGrant(gitDir) is { } readableGitDir)
+        {
+            args.Add("--read");
+            args.Add(readableGitDir);
+        }
+
         // Auto-grant the workspace volume's .TemporaryItems directory when the
         // workspace root lives on an external macOS volume. Foundation atomic writes
         // stage temp files at the volume root — outside --allow-cwd — which causes
