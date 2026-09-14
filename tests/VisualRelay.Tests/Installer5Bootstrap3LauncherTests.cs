@@ -142,6 +142,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     [Fact]
     public async Task Tty_Yes_InstallerInvokedAndReexecs()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = TtyTest("y", nono: false, nix: false, dotnet: true,
  reentry: false, isBody: """
             echo ran > /tmp/.vr-b3-installer-ran
@@ -183,6 +184,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     [InlineData("n", false, @"echo ""$O"" | grep -q '\[y/N\]' && { echo FAIL: prompt in non-TTY >&2; exit 1; } || true")]
     public async Task Decline_NoInstaller(string stdin, bool tty, string extra)
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = tty
             ? TtyTest(stdin, false, false, true, false, NoInstallerStub, DeclineAssert(extra))
             : NonTtyTest(false, false, true, false, NoInstallerStub, DeclineAssert(extra));
@@ -194,6 +196,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     [Fact]
     public async Task NixPresent_NoPrompt_ReexecsDirectly()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = TtyTest("y", false, true, true, false, NoInstallerStub, assert: """
             O=$(cat /tmp/.vr-b3-out)
             echo "$O" | grep -q '\[y/N\]' && { echo FAIL: prompt with nix present >&2; echo "$O" >&2; exit 1; } || true
@@ -208,6 +211,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     [Fact]
     public async Task NixPresent_DotnetMissing_NoPrompt_ReexecsDirectly()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = """
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b3-dn-*' EXIT
             rm -f /tmp/.vr-b3-dn-*; mkdir -p "$S" "$T/.relay"
@@ -260,6 +264,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     [Fact]
     public async Task NoNix_NoReentry_ReachesToolMissingNotSilentExit()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = NonTtyTest(nono: false, nix: false, dotnet: false,
  reentry: false, isBody: null, assert: """
                 RC=$(cat /tmp/.vr-b3-rc); O=$(cat /tmp/.vr-b3-out /tmp/.vr-b3-err)

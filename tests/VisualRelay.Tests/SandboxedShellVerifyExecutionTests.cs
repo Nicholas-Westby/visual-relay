@@ -38,6 +38,7 @@ public sealed class SandboxedShellVerifyExecutionTests
     [Fact]
     public async Task ShellMode_SandboxEnabled_ResolvedShellArgsActuallyExecute()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "runs the local-host launch's /bin/sh tail, which Windows lacks");
         // Run the /bin/sh tail of the resolved launch through the exact overload
         // SandboxedTestRunner uses. Merged `-c "cmd"` → /bin/sh exits 2; separate
         // `-c`,`cmd` → exit 0. nono is not needed: we exercise only the /bin/sh

@@ -101,6 +101,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_NonoMissing_NixAvailable_ReexecsViaNixDevelop()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = SetupB2Test(stubNono: false, stubNix: true,
             marker: null, """
             if [[ ! -f /tmp/.vr-b2-nix-argv ]]; then
@@ -129,6 +130,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_NoReentryMarker_NixPresent_ReexecsViaNixDevelop()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = SetupB2Test(stubNono: false, stubNix: true,
             marker: null, """
             [[ -f /tmp/.vr-b2-nix-argv ]] || { echo "FAIL: nix not invoked" >&2; exit 1; }
@@ -152,6 +154,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_ReentryMarkerSet_DoesNotReenterNix_ExecsCli()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = SetupB2Test(stubNono: false, stubNix: true,
             marker: "1", """
             if [[ -f /tmp/.vr-b2-nix-argv ]]; then
@@ -169,6 +172,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_NonoMissing_NoNix_PrintsInstallHint()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = SetupB2Test(stubNono: false, stubNix: false,
             marker: null, """
             RC=$(cat /tmp/.vr-b2-rc); O=$(cat /tmp/.vr-b2-out /tmp/.vr-b2-err)
@@ -186,6 +190,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task RunTask_NonoMissing_NixAvailable_ReexecsViaNixDevelop()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = """
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b2-rt-*' EXIT
             rm -f /tmp/.vr-b2-rt-nix-argv; mkdir -p "$S" "$T/.relay"
@@ -224,6 +229,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_AllToolsPresent_StillReexecsViaNixDevelop()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var body = SetupB2Test(stubNono: true, stubNix: true,
             marker: null, """
             if [[ ! -f /tmp/.vr-b2-nix-argv ]]; then

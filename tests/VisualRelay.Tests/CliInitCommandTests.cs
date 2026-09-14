@@ -12,6 +12,7 @@ public sealed class CliInitCommandTests
     [Fact]
     public async Task Init_NoArgs_RunsInitToolWithOriginalCwd_AbsoluteProject()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the stub dotnet is a bash script, which Windows cannot start");
         var (repo, stub) = CliHarness.NewSandboxRepo();
         var argv = Path.Combine(repo, "dotnet-argv");
         try
@@ -35,6 +36,7 @@ public sealed class CliInitCommandTests
     [Fact]
     public async Task Init_ExplicitPath_TakesPrecedenceOverOriginalCwd()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the stub dotnet is a bash script, which Windows cannot start");
         var (repo, stub) = CliHarness.NewSandboxRepo();
         var argv = Path.Combine(repo, "dotnet-argv");
         const string explicitPath = "/explicit/test/path/for/vr";
@@ -54,6 +56,7 @@ public sealed class CliInitCommandTests
     [Fact]
     public async Task Init_PrefersPublishedBinary_OverDotnetRun()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the stub init binary is a bash script, which Windows cannot start");
         var (repo, stub) = CliHarness.NewSandboxRepo();
         var publishedRan = Path.Combine(repo, "published-ran");
         var dotnetRan = Path.Combine(repo, "dotnet-ran");

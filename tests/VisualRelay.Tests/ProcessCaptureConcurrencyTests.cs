@@ -44,6 +44,7 @@ public sealed class ProcessCaptureConcurrencyTests
     [InlineData(3)]
     public async Task ConcurrentStdoutStderr_DoesNotCorruptOutput(int run)
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the child is a /bin/sh loop, which Windows lacks");
         var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
             "/bin/sh",
             $"-c \"{ShellCommand}\"",

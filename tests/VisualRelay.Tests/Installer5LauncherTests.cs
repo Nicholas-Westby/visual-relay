@@ -60,6 +60,7 @@ public sealed partial class Installer5LauncherTests
     [Fact]
     public async Task NixReentry_PreservesSubcommandArguments()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var testBody = """
             NIX_LOG="/tmp/.vr-test-nix-argv"; STUB_DIR="/tmp/.vr-test-stub-bin"
             rm -rf "$NIX_LOG" "$STUB_DIR"; mkdir -p "$STUB_DIR"
@@ -171,6 +172,7 @@ public sealed partial class Installer5LauncherTests
     [Fact]
     public async Task Launcher_CapturesUserEnvSnapshot()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var testBody = """
             STUB_DIR="/tmp/.vr-test-snap-stub-bin"
             KNOWN_SNAP="/tmp/.vr-test-snap-known"
@@ -233,6 +235,7 @@ public sealed partial class Installer5LauncherTests
     [Fact]
     public async Task SelfEdit_StubDotnetAppendsGarbage_LauncherStillExitsZero()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var testBody = """
             TEST_DIR=$(mktemp -d); STUB_DIR="$TEST_DIR/bin"
             LAUNCHER_COPY="$TEST_DIR/visual-relay"

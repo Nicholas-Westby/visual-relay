@@ -25,6 +25,7 @@ public sealed class CliWatchdogTests
     [Fact]
     public async Task ReturnsChildExitCode_WhenChildFinishesInTime()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the child is /bin/sh, which Windows lacks");
         // The deadline is deliberately far larger than the child's lifetime, so a
         // watchdog that waited it out instead of returning when the child exited
         // would be caught by the hang guard rather than by a stopwatch assertion.
@@ -40,6 +41,7 @@ public sealed class CliWatchdogTests
     [Fact]
     public async Task Returns124_AndKillsTree_OnTimeout()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the child is /bin/sh, which Windows lacks");
         // 0-CPU, no-timer child that never exits on its own — the 500ms deadline
         // is the only thing that can end it, so rc 124 is by itself proof that
         // the deadline fired. Nothing else needs asserting: how long the fire
@@ -72,6 +74,7 @@ public sealed class CliWatchdogTests
     [Fact]
     public async Task Returns124_EvenWhenChildIgnoresSigterm()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the child is /bin/sh and SIGTERM is POSIX-only");
         // A child that traps SIGTERM and keeps running must still be force-killed
         // and reported as 124 — the bash watchdog escalated TERM→KILL for this.
         // trap '' TERM keeps the SIG_IGN(TERM) disposition (preserved across exec),

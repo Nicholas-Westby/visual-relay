@@ -152,14 +152,15 @@ public sealed class ProcessCaptureGracefulStopTests
         Directory.CreateDirectory(tempDir);
         try
         {
-            var script = "trap '' INT; exec tail -f /dev/null";
-
+            // One native process that runs ~60 s on its own, like the POSIX tests' exec'd
+            // tail: only the kill can end it early. Windows has no SIGINT to trap (the kill
+            // is a plain tree kill), and a POSIX shell child cannot start here at all.
             using var killCts = new CancellationTokenSource();
             killCts.CancelAfter(500);
 
             var sw = Stopwatch.StartNew();
             var (exitCode, _, timedOut) = await ProcessCapture.RunAsync(
-                "/bin/bash", $"-c \"{script}\"", tempDir, RunTimeout, CancellationToken.None,
+                "ping.exe", "-n 60 127.0.0.1", tempDir, RunTimeout, CancellationToken.None,
                 killToken: killCts.Token);
             sw.Stop();
 

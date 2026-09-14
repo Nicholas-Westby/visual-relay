@@ -16,6 +16,7 @@ public sealed class ProcessCaptureReapOptOutTests
     [Fact]
     public async Task ReapFalse_RunsTrivialCommand()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "runs /usr/bin/true in /tmp, which Windows lacks");
         var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
             "/usr/bin/true",
             "",
@@ -37,6 +38,7 @@ public sealed class ProcessCaptureReapOptOutTests
     [Fact]
     public async Task DefaultReap_RunsTrivialCommand()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "runs /usr/bin/true in /tmp, which Windows lacks");
         var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
             "/usr/bin/true",
             "",

@@ -182,7 +182,8 @@ public sealed class GitInvokerTests
     public async Task RunAsync_WithRealGit_ExecutesSuccessfully()
     {
         using var repo = TestRepository.Create();
-        await new GitInvoker("/usr/bin/git").RunAsync(repo.Root, ["init"], CancellationToken.None);
+        // The resolved git, not /usr/bin/git: Windows has no /usr/bin and resolves git.exe from PATH.
+        await new GitInvoker().RunAsync(repo.Root, ["init"], CancellationToken.None);
         File.WriteAllText(Path.Combine(repo.Root, "readme.md"), "hello");
         var invoker = new GitInvoker();
         var result = await invoker.RunAsync(

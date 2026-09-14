@@ -17,6 +17,7 @@ public sealed partial class Installer5LauncherTests
     [Fact]
     public async Task NixReentry_PreservesOriginalCwd()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var testBody = """
             TEST_DIR=$(mktemp -d); STUB_DIR="$TEST_DIR/bin"
             NIX_CWD_LOG="/tmp/.vr-test-nix-cwd"

@@ -121,6 +121,7 @@ public sealed partial class NixDevShellGcRootTests
     [Fact]
     public async Task StubNix_ReceivesProfileFlagInDevelopArgs()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var testBody = """
             STUB_DIR="/tmp/.vr-test-profile-stub-bin"
             NIX_ARGV_LOG="/tmp/.vr-test-profile-nix-argv"
@@ -176,6 +177,7 @@ public sealed partial class NixDevShellGcRootTests
     [Fact]
     public async Task StubNix_WipeHistoryFailure_DoesNotBlockLaunch()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "drives the bash launcher through /bin/bash, which Windows lacks");
         var testBody = """
             STUB_DIR="/tmp/.vr-test-wipefail-stub-bin"
             NIX_ARGV_LOG="/tmp/.vr-test-wipefail-nix-argv"
