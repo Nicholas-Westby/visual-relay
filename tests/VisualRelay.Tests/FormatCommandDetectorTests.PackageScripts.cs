@@ -11,7 +11,7 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed partial class FormatCommandDetectorTests
 {
-    private const string I18nextScripts = """
+    private const string I18NextScripts = """
         { "scripts": {
           "format": "prettier \"{,**/}*.{ts,tsx,mts,js,mjs,json,md}\" --check",
           "format:fix": "prettier \"{,**/}*.{ts,tsx,mts,js,mjs,json,md}\" --write"
@@ -26,7 +26,7 @@ public sealed partial class FormatCommandDetectorTests
         """;
 
     [Theory]
-    [InlineData(I18nextScripts, null, "npm run format:fix")]
+    [InlineData(I18NextScripts, null, "npm run format:fix")]
     [InlineData(LuxonScripts, null, "npm run format")]
     [InlineData(LuxonScripts, "bun.lock", "bun run format")]
     public void Detect_AWritingFormatScript_RunsThroughThePackageManager(string packageJson, string? lockfile, string expected)
