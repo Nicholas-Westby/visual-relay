@@ -21,6 +21,8 @@ namespace VisualRelay.Core.Init;
 //  10. Ruby          (Gemfile / Rakefile)         → "bundle exec rspec" (with .rspec or
 //                                                   spec/), "bundle exec rake test", then
 //                                                   "bundle exec rake"
+//  10b. PHP          (composer.json)              → "composer test", "composer run-script
+//                                                   phpunit", "vendor/bin/phpunit"
 //  11. CMake         (CMakeLists.txt)             → configure + build + ctest
 //  12. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
 //
@@ -123,6 +125,9 @@ public static partial class TestCommandDetector
             candidates.Add("bundle exec rake test");
             candidates.Add("bundle exec rake");
         }
+
+        // 10b. PHP (composer.json) — its test or phpunit script, then PHPUnit itself.
+        AddPhpCandidates(rootPath, candidates);
 
         // 11. CMake. `ctest` alone fails on a repo that has never been configured, so the
         //     candidate carries the whole three-step sequence — configure, build, test —
