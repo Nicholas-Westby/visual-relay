@@ -1,5 +1,6 @@
 using System.Text.Json;
 using VisualRelay.Core.Agent.Tools;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -14,13 +15,17 @@ internal static class CommandToolTestHarness
     /// <summary>The repository the tools are pointed at. Nothing is ever spawned in it.</summary>
     internal static string TargetRoot => Path.GetTempPath();
 
-    /// <summary>Builds an executor whose launches land in <paramref name="launcher"/>.</summary>
+    /// <summary>
+    /// Builds an executor whose launches land in <paramref name="launcher"/>, on the local host:
+    /// left to this machine, a Windows box would launch through its real WSL distro, or refuse
+    /// every launch without one.
+    /// </summary>
     /// <param name="launcher">The recording double.</param>
     /// <param name="timeProvider">Clock for the reported duration. Null uses system time.</param>
     /// <returns>The executor.</returns>
     internal static SandboxedCommandExecutor Executor(
         RecordingCommandLauncher launcher, TimeProvider? timeProvider = null) =>
-        new(Config(), launcher.Launcher, timeProvider: timeProvider);
+        new(Config(), launcher.Launcher, timeProvider: timeProvider, host: SandboxHost.Local);
 
     /// <summary>Parses a JSON literal into a tool's arguments.</summary>
     /// <param name="json">The arguments object.</param>
