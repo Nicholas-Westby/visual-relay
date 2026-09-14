@@ -11,11 +11,18 @@ namespace VisualRelay.Tests;
 /// <param name="inner">The invoker every recorded call is forwarded to.</param>
 public sealed class RecordingGitInvoker(IGitInvoker inner) : IGitInvoker
 {
-    private readonly List<string[]> _calls = [];
+    private readonly List<(string[] Args, IReadOnlyDictionary<string, string>? Environment)> _calls = [];
 
     /// <summary>True when any recorded call's argument vector contains every element of <paramref name="args"/>.</summary>
     public bool RecordedCall(string[] args) =>
-        _calls.Any(c => args.All(a => c.Contains(a, StringComparer.Ordinal)));
+        _calls.Any(c => args.All(a => c.Args.Contains(a, StringComparer.Ordinal)));
+
+    /// <summary>
+    /// The environment handed to the first call whose argument vector starts with
+    /// <paramref name="prefix"/>; null when there was no such call or it carried none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? EnvironmentOf(params string[] prefix) =>
+        _calls.FirstOrDefault(c => c.Args.Take(prefix.Length).SequenceEqual(prefix, StringComparer.Ordinal)).Environment;
 
     public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
         string rootPath,
@@ -31,7 +38,7 @@ public sealed class RecordingGitInvoker(IGitInvoker inner) : IGitInvoker
         // the inner invoker would repeat its side effects — or hand the inner
         // invoker an already-drained iterator and lose the git arguments entirely.
         var args = arguments.ToArray();
-        _calls.Add(args);
+        _calls.Add((args, environment is null ? null : new Dictionary<string, string>(environment)));
         return await inner.RunAsync(rootPath, args, cancellationToken,
             timeout, environment, killToken, onActivity);
     }

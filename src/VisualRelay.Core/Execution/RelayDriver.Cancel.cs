@@ -16,7 +16,8 @@ public sealed partial class RelayDriver
     /// Records the cancelled run and restores the tree it was editing: the reached
     /// stage is marked in status.json, the partial work is captured for a later
     /// resume, NEEDS-REVIEW names the cancel, a <c>cancelled</c> event lands in
-    /// run.log, and the worktree goes back to the run base.
+    /// run.log, and the worktree goes back to the run base — unless the capture could
+    /// not save the work, which then stays in the tree and marks the outcome.
     /// <para>
     /// Every step runs on <see cref="CancellationToken.None"/>. The run's own token
     /// is already cancelled, and a wind-down that honored it would tear instead of
@@ -56,17 +57,27 @@ public sealed partial class RelayDriver
 
         // Same order a flag uses: capture the partial work before the marker, so
         // the marker is never the only record that work existed.
-        await StepAsync("capture", () => FlaggedWorkStore.CaptureAsync(
-            rootPath, taskId, taskDirectory, stage,
-            _dependencies.GitInvoker, DateTimeOffset.UtcNow, CancellationToken.None));
+        var capture = FlaggedWorkStore.CaptureResult.NothingToCapture;
+        await StepAsync("capture", async () =>
+        {
+            capture = await FlaggedWorkStore.CaptureAsync(rootPath, taskId, taskDirectory, stage,
+                _dependencies.GitInvoker, DateTimeOffset.UtcNow, CancellationToken.None);
+            await PublishCaptureFailureAsync(rootPath, runId, taskId, stage, capture, CancellationToken.None);
+        });
         await StepAsync("marker", () => WriteNeedsReviewMarkerAsync(
             taskDirectory, CancelledReason, stage, CancellationToken.None));
         await StepAsync("event", () => _dependencies.EventSink.PublishAsync(new RelayEvent(
             DateTimeOffset.UtcNow, "warn", "cancelled", runId, rootPath, taskId, stage,
             Data: new Dictionary<string, string> { ["reason"] = CancelledReason }), CancellationToken.None));
-        await StepAsync("restore", () => RestoreRunBaseAsync(rootPath, taskId));
+        // Work the capture could not save exists only in the tree, and putting the tree
+        // back to the run base would erase it.
+        if (!capture.IsFailed)
+            await StepAsync("restore", () => RestoreRunBaseAsync(rootPath, taskId));
 
-        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, CancelledReason);
+        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, CancelledReason)
+        {
+            WorkUncaptured = capture.IsFailed
+        };
     }
 
     /// <summary>

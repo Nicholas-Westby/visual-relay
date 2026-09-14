@@ -43,6 +43,17 @@ public sealed class DrainCircuitBreaker
     public bool ShouldHalt(string rootPath, RelayTaskOutcome outcome)
     {
         HaltMessage = null;
+        // Ahead of every threshold: the flagged task's work exists only in the working
+        // tree, and the next task would run over it.
+        if (outcome is { Status: RelayTaskOutcomeStatus.Flagged, WorkUncaptured: true })
+        {
+            HaltMessage = $"the work of flagged task {outcome.TaskId} could not be saved, and the drain stopped "
+                + "so the next task does not overwrite it: the working tree holds the only copy. Resolve the git "
+                + $"error that flagged_work_capture_failed names in .relay/{outcome.TaskId}/run.log, then resume.";
+            WriteMarker(rootPath, outcome, HaltMessage);
+            return true;
+        }
+
         if (outcome.Status == RelayTaskOutcomeStatus.Flagged &&
             outcome.Reason?.StartsWith("commit rejected:", StringComparison.OrdinalIgnoreCase) == true)
         {

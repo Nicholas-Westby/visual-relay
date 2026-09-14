@@ -156,7 +156,7 @@ public sealed partial class RelayQueueController
 
                                     if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                                     {
-                                        await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, "plan", drainCts.Token);
+                                        await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, "plan", outcome.WorkUncaptured, drainCts.Token);
                                         try { await WriteNeedsReviewMarkerAsync(taskId, outcome.Reason ?? "Needs review"); }
                                         catch { DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "exception", "WriteNeedsReviewMarker failed"); }
                                         var idx = IndexOf(taskId);
@@ -252,7 +252,7 @@ public sealed partial class RelayQueueController
                         // token is spent, and a half-done reset is worse than none.
                         var tasksDir = configResult?.Config?.TasksDir
                             ?? (await RelayConfigLoader.TryLoadAsync(RootPath, CancellationToken.None)).Config.TasksDir;
-                        await ResetAndLogAsync(outcome.TaskId, tasksDir, drainRunId, "execute", CancellationToken.None);
+                        await ResetAndLogAsync(outcome.TaskId, tasksDir, drainRunId, "execute", outcome.WorkUncaptured, CancellationToken.None);
                         try { await WriteNeedsReviewMarkerAsync(outcome.TaskId, outcome.Reason ?? "Needs review"); }
                         catch { DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "exception", "WriteNeedsReviewMarker failed"); }
                         Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });

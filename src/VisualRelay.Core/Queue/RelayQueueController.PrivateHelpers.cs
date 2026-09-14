@@ -23,17 +23,26 @@ public sealed partial class RelayQueueController
         await RelayDriver.WriteNeedsReviewMarkerAsync(dir, reason, 0, CancellationToken.None);
     }
 
-    private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)
+    private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, bool workUncaptured, CancellationToken ct)
     {
-        // Fix 5: When stage 12 is Flagged, the commit already landed — a checkout
-        // reset would restore the sealed (Done) status.json, wiping the flag
-        // evidence.  Skip the reset and log a summary entry instead.
+        // The driver could not capture this flag's work, so the tree holds the only
+        // copy and a reset would erase it. The circuit breaker stops the drain next.
+        if (workUncaptured)
+        {
+            DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
+                "reset-skipped-work-uncaptured", "flagged work was not captured; skipping worktree reset so the tree keeps it");
+            return;
+        }
+
+        // Fix 5: When stage 12 is Flagged, the commit may have landed (a check after it
+        // flagged) or not (git rejected it, or a gate before it refused). The tree is the
+        // flag's evidence either way, so skip the reset and log a summary entry instead.
         var statusDir = Path.Combine(RootPath, ".relay", taskId);
         var status = StageStatusRecord.Read(statusDir);
         if (status.Count >= 12 && status[11].Status == "Flagged")
         {
             DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
-                "reset-skipped-commit-flagged", "commit sealed; skipping worktree reset to preserve flag evidence");
+                "reset-skipped-commit-flagged", "stage 12 flagged; skipping worktree reset to preserve flag evidence");
             return;
         }
 

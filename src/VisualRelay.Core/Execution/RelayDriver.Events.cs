@@ -114,6 +114,7 @@ public sealed partial class RelayDriver
         if (cancellationToken.IsCancellationRequested)
             return await WindDownCancelledRunAsync(rootPath, runId, taskId, taskDirectory, statusEntries);
 
+        var workUncaptured = false;
         try
         {
             var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
@@ -141,9 +142,12 @@ public sealed partial class RelayDriver
                         unknownCostStageCount, cancellationToken, status: "Flagged");
             }
 
-            // Capture flagged working tree for resume (best-effort).
-            await FlaggedWorkStore.CaptureAsync(rootPath, taskId, taskDirectory, flaggedStage,
+            // Capture flagged working tree for resume. A capture that fails leaves the
+            // tree as the only copy of the work, so it is reported, never swallowed.
+            var capture = await FlaggedWorkStore.CaptureAsync(rootPath, taskId, taskDirectory, flaggedStage,
                 _dependencies.GitInvoker, DateTimeOffset.UtcNow, cancellationToken);
+            workUncaptured = capture.IsFailed;
+            await PublishCaptureFailureAsync(rootPath, runId, taskId, flaggedStage, capture, cancellationToken);
 
             await WriteNeedsReviewMarkerAsync(taskDirectory, reason, flaggedStage, cancellationToken, details);
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
@@ -162,6 +166,29 @@ public sealed partial class RelayDriver
             // The NEEDS-REVIEW marker and event sink write are best-effort.
         }
 
-        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
+        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason)
+        {
+            WorkUncaptured = workUncaptured
+        };
+    }
+
+    /// <summary>
+    /// Puts a failed capture in run.log — the step, and what git said — so the flag's
+    /// work is not lost without a word. A capture that saved the work, or had none to
+    /// save, publishes nothing.
+    /// </summary>
+    private async Task PublishCaptureFailureAsync(
+        string rootPath, string runId, string taskId, int stage,
+        FlaggedWorkStore.CaptureResult capture, CancellationToken cancellationToken)
+    {
+        if (capture.FailedStep is not { } step)
+            return;
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "warn", "flagged_work_capture_failed", runId, rootPath, taskId, stage,
+            Data: new Dictionary<string, string>
+            {
+                ["step"] = step,
+                ["output"] = capture.Output ?? string.Empty
+            }), cancellationToken);
     }
 }
