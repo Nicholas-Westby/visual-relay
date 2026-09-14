@@ -8,11 +8,14 @@ namespace VisualRelay.Tests;
 /// profile: in VR's planning worktree under <c>~/.cache/visual-relay/wt</c> the research
 /// agent's <c>git log</c> and <c>git status</c> exited 128 ("not a git repository"), and
 /// both worked once that git dir was granted read. macOS's whole-filesystem read hid it.
+/// The grant is the main worktree itself, not only its <c>.git</c>: a verify snapshot on
+/// Linux links its large ignored dependencies (node_modules) to the main worktree, and
+/// reading through those links needs that directory granted.
 /// </summary>
 public sealed partial class SandboxedStageSandboxTests
 {
     [Fact]
-    public void BuildNonoPrefix_InALinkedWorktree_ReadsTheMainRepositorysGitDir()
+    public void BuildNonoPrefix_InALinkedWorktree_ReadsTheMainWorktree()
     {
         var root = Directory.CreateTempSubdirectory("vr-wt-").FullName;
         try
@@ -21,7 +24,7 @@ public sealed partial class SandboxedStageSandboxTests
 
             var prefix = ComposeFor(root);
 
-            Assert.Equal("/home/u/repo/.git", ReadGrantOf(prefix));
+            Assert.Equal("/home/u/repo", ReadGrantOf(prefix));
         }
         finally
         {
@@ -40,7 +43,7 @@ public sealed partial class SandboxedStageSandboxTests
 
             var prefix = ComposeFor(root);
 
-            Assert.Equal(Path.Combine(parent, "repo", ".git"), ReadGrantOf(prefix));
+            Assert.Equal(Path.Combine(parent, "repo"), ReadGrantOf(prefix));
         }
         finally
         {

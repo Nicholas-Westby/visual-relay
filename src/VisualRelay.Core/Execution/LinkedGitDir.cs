@@ -1,7 +1,9 @@
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
-/// The git directory a workspace whose <c>.git</c> is a file reads its objects and refs from.
+/// What a workspace whose <c>.git</c> is a file must be able to read outside itself: the main
+/// worktree of a linked worktree (its git dir, and the dependencies a verify snapshot links to),
+/// or a submodule's own git dir.
 /// A linked worktree (VR's planning, verify and rewrite worktrees) points at
 /// <c>&lt;repo&gt;/.git/worktrees/&lt;name&gt;</c>, which shares the main repository's git dir;
 /// a submodule points at its own git dir. Both lie outside the workspace, so a sandbox that
@@ -40,9 +42,14 @@ internal static class LinkedGitDir
         if (!gitDir.StartsWith('/') && !Path.IsPathRooted(gitDir))
             gitDir = Path.GetFullPath(Path.Combine(workspaceRoot, gitDir));
 
-        // <common>/worktrees/<name> shares <common>; anything else is its own git dir.
+        // <common>/worktrees/<name> shares <common>, and a common dir named .git sits in the
+        // main worktree, which is granted whole: a verify snapshot links its large ignored
+        // dependencies there. Anything else (a submodule) is its own git dir.
         var name = ParentOf(gitDir);
-        return name is not null && LastSegment(name) == "worktrees" ? ParentOf(name) : gitDir;
+        if (name is null || LastSegment(name) != "worktrees")
+            return gitDir;
+        var common = ParentOf(name);
+        return common is not null && LastSegment(common) == ".git" ? ParentOf(common) ?? common : common;
     }
 
     // Separator-agnostic, so a Linux path handled on Windows keeps its forward slashes.
