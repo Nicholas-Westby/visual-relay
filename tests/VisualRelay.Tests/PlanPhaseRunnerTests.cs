@@ -47,7 +47,8 @@ public sealed partial class PlanPhaseRunnerTests
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         // All tasks should complete planning.
         Assert.Equal(taskCount, results.Count);
@@ -91,7 +92,8 @@ public sealed partial class PlanPhaseRunnerTests
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         Assert.Equal(3, results.Count);
         Assert.All(results, r => Assert.Equal(RelayTaskOutcomeStatus.Planned, r.Outcome.Status));
@@ -146,7 +148,8 @@ public sealed partial class PlanPhaseRunnerTests
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("stray-writer", _ => strayWriter)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);
@@ -199,7 +202,8 @@ public sealed partial class PlanPhaseRunnerTests
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         Assert.Equal(taskCount, results.Count);
         // No task should have Failed with "another task is already active".
@@ -225,7 +229,8 @@ public sealed partial class PlanPhaseRunnerTests
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("copy-back", _ => runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);
@@ -276,7 +281,8 @@ public sealed partial class PlanPhaseRunnerTests
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         Assert.Single(results);
         // Must NOT flag — the real spec was provisioned into the worktree.

@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -30,7 +31,8 @@ public sealed class RelayQueueControllerPlanningFlagResetTests
             planSubagentRunnerFactory: (_, _) => new FlagAtStageSubagentRunner(flagAtStage: 3),
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();

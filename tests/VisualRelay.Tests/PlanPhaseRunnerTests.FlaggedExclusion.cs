@@ -21,7 +21,8 @@ public sealed partial class PlanPhaseRunnerTests
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("flag-in-plan", _ => flagAt3)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, results[0].Outcome.Status);

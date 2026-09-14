@@ -46,7 +46,8 @@ public sealed class RealGitIntegrationDriverTests
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("task-a", _ => runnerA), ("task-b", _ => runnerB)], config: config,
             testRunner: new ScriptedTestRunner(), gitInvoker: new GitInvoker(), cancellationToken: CancellationToken.None,
-            environmentAccessor: new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.Combine(repo.Root, ".xdg") });
+            environmentAccessor: new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.Combine(repo.Root, ".xdg") },
+            sandboxHost: SandboxHost.Local);
         Assert.All(planResults, r => Assert.Equal(RelayTaskOutcomeStatus.Planned, r.Outcome.Status));
 
         var executeOptions = new RelayDriverOptions(CreateGitCommit: true, Resume: true);

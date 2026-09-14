@@ -37,7 +37,8 @@ public sealed class RelayQueueControllerDrainTests
             planSubagentRunnerFactory: (taskId, _) => taskId == "alpha" ? flagAt3 : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -97,7 +98,8 @@ public sealed class RelayQueueControllerDrainTests
             planSubagentRunnerFactory: (taskId, _) => taskId == "alpha" ? flagAt3 : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -185,7 +187,8 @@ public sealed class RelayQueueControllerDrainTests
             planSubagentRunnerFactory: (taskId, _) => taskId == "alpha" ? poisoner : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();

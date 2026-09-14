@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 using VisualRelay.DrainQueue;
@@ -114,7 +115,8 @@ public sealed partial class DrainQueueToolTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            sandboxHost: SandboxHost.Local);
         await controller.RefreshAsync();
 
         var results = await controller.DrainAsync();
@@ -149,7 +151,8 @@ public sealed partial class DrainQueueToolTests
             planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
         await controller.RefreshAsync();
 
         // Select only alpha and gamma, in that order.
@@ -189,7 +192,8 @@ public sealed partial class DrainQueueToolTests
             planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
         await controller.RefreshAsync();
 
         controller.Tasks.Clear();

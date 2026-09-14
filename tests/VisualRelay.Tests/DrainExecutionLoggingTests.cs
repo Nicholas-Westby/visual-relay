@@ -46,7 +46,8 @@ public sealed partial class DrainExecutionLoggingTests
 
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: (_, _) => planRunner, planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -87,7 +88,8 @@ public sealed partial class DrainExecutionLoggingTests
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: (id, _) => id == "bad-plan" ? badRunner : goodRunner,
             planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -124,7 +126,8 @@ public sealed partial class DrainExecutionLoggingTests
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: (_, _) => runner,
             planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -170,7 +173,8 @@ public sealed partial class DrainExecutionLoggingTests
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("full-run", _ => runner)],
             config: config, testRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
         Assert.Single(planResults);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, planResults[0].Outcome.Status);
 
@@ -218,7 +222,8 @@ public sealed partial class DrainExecutionLoggingTests
         await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("correct", _ => inner)],
             config: config, testRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         var runLogPath = Path.Combine(repo.Root, ".relay", "correct", "run.log");
         Assert.True(File.Exists(runLogPath));

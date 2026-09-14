@@ -90,7 +90,8 @@ public sealed partial class NoCommitContaminationTests
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         switch (testCase)
         {

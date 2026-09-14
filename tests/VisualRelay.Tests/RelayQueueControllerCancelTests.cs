@@ -12,6 +12,9 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class RelayQueueControllerCancelTests
 {
+    // A runner that never starts (a stage flagged before it) must fail the test, not hang the run.
+    private static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(60);
+
     [Fact]
     public async Task DrainAsync_CancelledMidTask_ResetsThatTaskAndLeavesTheRestPending()
     {
@@ -30,7 +33,7 @@ public sealed class RelayQueueControllerCancelTests
         var controller = new RelayQueueController(repo.Root, runner, gitInvoker: git);
         await controller.RefreshAsync(CancellationToken.None);
         var drain = controller.DrainAsync(cts.Token);
-        await runner.FirstStarted;
+        await runner.FirstStarted.WaitAsync(HangGuard);
         await cts.CancelAsync();
         var results = await drain;
 
@@ -69,11 +72,12 @@ public sealed class RelayQueueControllerCancelTests
             planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync(CancellationToken.None);
         var drain = controller.DrainAsync(cts.Token);
-        await planRunner.FirstStarted;
+        await planRunner.FirstStarted.WaitAsync(HangGuard);
         await cts.CancelAsync();
         var results = await drain;
 

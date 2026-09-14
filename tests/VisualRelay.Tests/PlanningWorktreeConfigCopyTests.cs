@@ -169,7 +169,8 @@ public sealed class PlanningWorktreeConfigCopyTests
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("ignored-cfg", _ => runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         Assert.Single(results);
         // PRE-FIX: Flagged with "config not found". POST-FIX: Planned.

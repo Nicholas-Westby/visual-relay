@@ -27,7 +27,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -61,7 +62,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             planSubagentRunnerFactory: (taskId, _) => taskId == "bad-plan" ? flagAt3 : goodRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -104,7 +106,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             planSubagentRunnerFactory: (_, _) => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -135,7 +138,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             planSubagentRunnerFactory: (_, _) => flagAt2,
             planTestRunner: new ScriptedTestRunner(),
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -185,7 +189,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             planTestRunner: new ScriptedTestRunner(),
             lifecycle: lifecycle,
             environmentAccessor: PlanPhaseTestHelpers.TempXdg,
-            gitInvoker: sim);
+            gitInvoker: sim,
+            sandboxHost: SandboxHost.Local);
 
         await controller.RefreshAsync();
         await controller.DrainAsync();
