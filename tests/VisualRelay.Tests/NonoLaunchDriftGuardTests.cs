@@ -18,11 +18,11 @@ public sealed class NonoLaunchDriftGuardTests
         // Everything else (profile, --allow-cwd, extra allow paths) must be identical.
         var config = TestConfig();
 
-        var agentPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: true).ToList();
-        var verifyPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: false).ToList();
+        var agentPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, host: SandboxHost.Local).ToList();
+        var verifyPrefix = SandboxedStage.BuildNonoPrefix(config, rollback: false, host: SandboxHost.Local).ToList();
 
         // Both must start with: run --profile <abs> --allow-cwd
-        var head = new[] { "run", "--profile", NonoProfileEnsurer.ResolveProfilePath(), "--allow-cwd" };
+        var head = new[] { "run", "--profile", NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local), "--allow-cwd" };
         Assert.Equal(head, agentPrefix.Take(4));
         Assert.Equal(head, verifyPrefix.Take(4));
 

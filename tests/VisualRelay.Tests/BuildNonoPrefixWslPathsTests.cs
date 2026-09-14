@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
@@ -84,7 +85,7 @@ public sealed class BuildNonoPrefixWslPathsTests
     {
         Assert.Equal(@"C:\anything", SandboxHost.Local.MapGrant(@"C:\anything"));
         Assert.Equal("/Volumes/Tera/.TemporaryItems", SandboxHost.Local.MapGrant("/Volumes/Tera/.TemporaryItems"));
-        Assert.Equal(NonoProfileEnsurer.ResolveProfilePath(), SandboxHost.Local.ProfilePath);
+        Assert.Equal(Path.Combine(XdgConfig.ResolveConfigDir(), "visual-relay", "vr-guard.json"), SandboxHost.Local.ProfilePath);
         Assert.False(SandboxHost.Local.IsWindows);
     }
 

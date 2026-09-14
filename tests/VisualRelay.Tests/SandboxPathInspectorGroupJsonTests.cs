@@ -70,13 +70,15 @@ public sealed partial class SandboxPathInspectorTests
     [Fact]
     public async Task InspectAsync_ReturnsUnavailableWhenNonoAbsent()
     {
-        // A path that definitely does not exist on the filesystem.
+        // A path that definitely does not exist on the filesystem, on the local host:
+        // left to this machine, a Windows box would ask the nono inside its WSL distro.
         var fakeBinary = Path.Combine(Path.GetTempPath(),
             "nono-does-not-exist-" + Guid.NewGuid().ToString("N"));
 
         var result = await SandboxPathInspector.InspectAsync(
             workspaceRoot: "/tmp/ws",
-            nonoBinary: fakeBinary);
+            nonoBinary: fakeBinary,
+            host: SandboxHost.Local);
 
         Assert.False(result.IsAvailable);
         Assert.Empty(result.ReadablePaths);

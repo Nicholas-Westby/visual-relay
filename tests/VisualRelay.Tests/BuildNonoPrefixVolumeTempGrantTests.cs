@@ -20,7 +20,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         var config = TestConfig();
 
         var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
-            workspaceRoot: "/Volumes/Tera/dev/x");
+            workspaceRoot: "/Volumes/Tera/dev/x", host: SandboxHost.Local);
 
         // run --profile <abs> --allow-cwd -a <templatesDir> -a /Volumes/Tera/.TemporaryItems --silent --
         Assert.Equal("run", prefix[0]);
@@ -42,7 +42,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         var config = TestConfig();
 
         var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
-            workspaceRoot: "/Users/nick/dev/x");
+            workspaceRoot: "/Users/nick/dev/x", host: SandboxHost.Local);
 
         // Prefix must be identical to the null-workspaceRoot case: no volume grant.
         Assert.Equal(
@@ -57,7 +57,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         var config = TestConfig();
 
         var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
-            workspaceRoot: "/Volumes/Tera/dev/x");
+            workspaceRoot: "/Volumes/Tera/dev/x", host: SandboxHost.Local);
 
         var dashDashIndex = ((IList<string>)prefix).IndexOf("--");
         Assert.True(dashDashIndex > 0);
@@ -75,7 +75,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         var config = TestConfig();
 
         var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false,
-            workspaceRoot: "/Volumes/Tera/dev/x");
+            workspaceRoot: "/Volumes/Tera/dev/x", host: SandboxHost.Local);
 
         var templatesIdx = ((IList<string>)prefix).IndexOf(TemplatesDir);
         var volumeIdx = ((IList<string>)prefix).IndexOf("/Volumes/Tera/.TemporaryItems");
@@ -93,7 +93,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
         var config = TestConfig();
 
         var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true,
-            workspaceRoot: "/Volumes/Tera/dev/x");
+            workspaceRoot: "/Volumes/Tera/dev/x", host: SandboxHost.Local);
 
         // run --profile <abs> --allow-cwd -a <templatesDir> -a /Volumes/Tera/.TemporaryItems
         //   --rollback --no-rollback-prompt --silent --
@@ -114,7 +114,7 @@ public sealed class BuildNonoPrefixVolumeTempGrantTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
+    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local);
     private static string TemplatesDir => TaskTemplates.ResolveUserTemplatesDir();
 
     private static RelayConfig TestConfig() =>

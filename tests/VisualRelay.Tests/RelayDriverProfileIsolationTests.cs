@@ -13,6 +13,8 @@ namespace VisualRelay.Tests;
 /// nono sandbox, fails to write) the user's real
 /// <c>~/.config/visual-relay/vr-guard.json</c>. Production (the real accessor)
 /// must still resolve the canonical <c>${XDG_CONFIG_HOME:-$HOME/.config}</c> path.
+/// Every fact states the host it means: on a Windows box with a usable WSL distro
+/// this machine's host would place the profile inside that distro instead.
 /// </summary>
 public sealed class RelayDriverProfileIsolationTests
 {
@@ -26,7 +28,8 @@ public sealed class RelayDriverProfileIsolationTests
 
         var deps = RelayDriverDependencies.ForTests(
             new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(), new NullGitInvoker());
-        var isolated = NonoProfileEnsurer.ResolveProfilePath(deps.EnvironmentAccessor);
+        // Exactly what the driver hands its profile self-heal: the accessor and the host.
+        var isolated = NonoProfileEnsurer.ResolveProfilePath(deps.EnvironmentAccessor, deps.SandboxHost);
 
         // Lands under the process temp dir, in a visual-relay/vr-guard.json leaf …
         Assert.StartsWith(Path.GetTempPath(), isolated, StringComparison.Ordinal);
@@ -36,15 +39,24 @@ public sealed class RelayDriverProfileIsolationTests
     }
 
     [Fact]
+    public void ForTests_DefaultsTheHostToLocal()
+    {
+        var deps = RelayDriverDependencies.ForTests(
+            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(), new NullGitInvoker());
+
+        Assert.Same(SandboxHost.Local, deps.SandboxHost);
+    }
+
+    [Fact]
     public void ProductionAccessor_ResolvesVrGuardProfile_UnderRealXdgOrHomeConfig()
     {
         // Acceptance: with the real accessor — which is exactly what RelayDriver
         // passes in production (a null accessor falls through to the real process
-        // env via KeyEnvFile.GetEnv) — ResolveProfilePath still returns
+        // env via KeyEnvFile.GetEnv) — ResolveProfilePath on the local host still returns
         // ${XDG_CONFIG_HOME:-$HOME/.config}/visual-relay/vr-guard.json, byte-for-byte.
         var realEnv = new ProcessEnvironmentAccessor();
-        var viaProcessAccessor = NonoProfileEnsurer.ResolveProfilePath(realEnv);
-        var viaNullDefault = NonoProfileEnsurer.ResolveProfilePath();
+        var viaProcessAccessor = NonoProfileEnsurer.ResolveProfilePath(realEnv, SandboxHost.Local);
+        var viaNullDefault = NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local);
 
         Assert.Equal(viaNullDefault, viaProcessAccessor);
         Assert.Equal(
@@ -54,7 +66,7 @@ public sealed class RelayDriverProfileIsolationTests
 
     /// <summary>
     /// End-to-end guard for the production wiring
-    /// <c>EnsureAsync(_dependencies.EnvironmentAccessor, …)</c> in
+    /// <c>EnsureAsync(_dependencies.EnvironmentAccessor, _dependencies.SandboxHost, …)</c> in
     /// <see cref="RelayDriver.RunTaskAsync"/>: a driver built via
     /// <see cref="RelayDriverDependencies.ForTests"/> with an injected temp XDG
     /// accessor must self-heal the vr-guard profile INTO that temp dir and leave the
@@ -75,11 +87,11 @@ public sealed class RelayDriverProfileIsolationTests
         // stays revert-sensitive. Cleaned up below regardless of outcome.
         var xdgDir = Path.Combine(Path.GetTempPath(), "vr-iso-e2e", Guid.NewGuid().ToString("N"));
         var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = xdgDir };
-        var isolatedProfile = NonoProfileEnsurer.ResolveProfilePath(env);
+        var isolatedProfile = NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local);
 
         // Snapshot the REAL ~/.config profile target before the run (it may or may
         // not pre-exist on the host); the run must not create or alter it.
-        var realProfile = NonoProfileEnsurer.ResolveProfilePath();
+        var realProfile = NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local);
         var realExistedBefore = File.Exists(realProfile);
         var realBytesBefore = realExistedBefore ? await File.ReadAllTextAsync(realProfile) : null;
 
@@ -93,7 +105,8 @@ public sealed class RelayDriverProfileIsolationTests
                     new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
                     new InMemoryRelayEventSink(),
                     new NullGitInvoker(),
-                    environmentAccessor: env),
+                    environmentAccessor: env,
+                    sandboxHost: SandboxHost.Local),
                 RelayDriverOptions.NoGitCommit);
 
             var outcome = await driver.RunTaskAsync(repo.Root, "profile-isolation-e2e");
@@ -109,6 +122,42 @@ public sealed class RelayDriverProfileIsolationTests
             Assert.Equal(realExistedBefore, File.Exists(realProfile));
             if (realExistedBefore)
                 Assert.Equal(realBytesBefore, await File.ReadAllTextAsync(realProfile));
+        }
+        finally
+        {
+            TestFileSystem.DeleteDirectoryResilient(xdgDir);
+        }
+    }
+
+    /// <summary>
+    /// The host half of the same wiring, visible on any OS: a Windows host with no
+    /// resolved distro has nowhere to place the profile, so the run flags before any
+    /// stage instead of falling back to the local placement. Reverting the driver to
+    /// <c>EnsureAsync(accessor, host: null, …)</c> resolves this machine's host, which
+    /// off Windows writes the local profile and fails the reason and placement assertions.
+    /// </summary>
+    [Fact]
+    public async Task RunTaskAsync_HandsItsHostToTheSelfHeal_AWindowsHostWithoutADistroFlagsTheRun()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("profile-host", "# Profile host\n");
+        var xdgDir = Path.Combine(Path.GetTempPath(), "vr-iso-host", Guid.NewGuid().ToString("N"));
+        var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = xdgDir };
+        try
+        {
+            var driver = new RelayDriver(
+                RelayDriverDependencies.ForTests(
+                    new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(),
+                    new NullGitInvoker(), environmentAccessor: env, sandboxHost: SandboxHost.Windows(null)),
+                RelayDriverOptions.NoGitCommit);
+
+            var outcome = await driver.RunTaskAsync(repo.Root, "profile-host");
+
+            Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+            Assert.Contains("no usable WSL2 distro", outcome.Reason, StringComparison.Ordinal);
+            Assert.False(File.Exists(NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local)),
+                "a Windows host must never fall back to the local profile placement");
         }
         finally
         {

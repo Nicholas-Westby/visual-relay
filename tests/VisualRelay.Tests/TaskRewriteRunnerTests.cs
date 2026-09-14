@@ -5,7 +5,12 @@ using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
-public sealed class TaskRewriteRunnerTests
+/// <summary>
+/// <see cref="TaskRewriteRunner"/>: copy-back, error and isolation facts. The guard
+/// profile self-heal lives in the <c>.Profile</c> partial. Each run here states the
+/// local host, so its self-heal lands in the per-test XDG dir on any OS.
+/// </summary>
+public sealed partial class TaskRewriteRunnerTests
 {
     private const string OriginalSpec = "# Original\n\nDo the thing.\n";
     private const string RewrittenSpec = "# Rewritten\n\nBetter spec.\n";
@@ -82,7 +87,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root), host: SandboxHost.Local);
 
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
             Assert.True(outcome.Changed);
@@ -114,7 +119,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root), host: SandboxHost.Local);
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
@@ -137,7 +142,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = OriginalSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root), host: SandboxHost.Local);
 
             Assert.False(outcome.Changed, "unchanged spec must report Changed=false");
             Assert.Equal(OriginalSpec, ReadSpec(root, task.Id));
@@ -165,7 +170,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root), host: SandboxHost.Local);
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -197,7 +202,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteDiagnosticFailureRunner();
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root), host: SandboxHost.Local);
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -223,42 +228,6 @@ public sealed class TaskRewriteRunnerTests
         }
     }
 
-    // ── Sandbox profile self-heal (FIX 1) ──────────────────────────────────
-
-    [Fact]
-    public async Task RunAsync_EnsuresSandboxProfileExists_OnAFreshMachine()
-    {
-        // On a fresh machine no task has ever run, so the VR-owned nono profile
-        // at $XDG_CONFIG_HOME/visual-relay/vr-guard.json does not exist yet. The
-        // rewrite path invokes nono --profile <that path>; without an EnsureAsync
-        // up front (mirroring RelayDriver.RunTaskAsync) nono fails. The rewrite
-        // run must self-heal the profile before launching the sandboxed model.
-        var (root, task, config, sim) = SetupRepo();
-        var xdgRoot = Path.Combine(Path.GetTempPath(), "vr-rwr-xdg-" + Guid.NewGuid().ToString("N"));
-        var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = xdgRoot };
-        var profilePath = NonoProfileEnsurer.ResolveProfilePath(env);
-        try
-        {
-            Assert.False(File.Exists(profilePath),
-                "pre-condition: a fresh machine has no vr-guard profile yet");
-
-            var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
-
-            var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, sim, CancellationToken.None, environment: env);
-
-            Assert.True(outcome.Changed);
-            Assert.True(File.Exists(profilePath),
-                "the rewrite run must ensure the sandbox profile exists before launching nono");
-            Assert.Equal(NonoProfileEnsurer.EmbeddedContent, await File.ReadAllTextAsync(profilePath));
-        }
-        finally
-        {
-            TestFileSystem.DeleteDirectoryResilient(xdgRoot);
-            TestFileSystem.DeleteDirectoryResilient(root);
-        }
-    }
-
     // ── Isolation ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -280,7 +249,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root), host: SandboxHost.Local);
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, "task-a"));

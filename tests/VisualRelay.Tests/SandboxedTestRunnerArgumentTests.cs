@@ -59,7 +59,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     public void BuildNonoPrefix_WithRollback_EmitsRollbackFlags()
     {
         var config = TestConfig();
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, host: SandboxHost.Local);
         // --silent is the quiet default (output-only); it sits after the rollback flags, before --.
         Assert.Equal(
             new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
@@ -70,7 +70,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     public void BuildNonoPrefix_WithoutRollback_OmitsRollbackFlags()
     {
         var config = TestConfig();
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false, host: SandboxHost.Local);
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" }, prefix);
     }
 
@@ -78,8 +78,8 @@ public sealed class SandboxedTestRunnerArgumentTests
     public void BuildNonoPrefix_TwoCallersDifferOnlyInRollbackFlagPair()
     {
         var config = TestConfig();
-        var swi = SandboxedStage.BuildNonoPrefix(config, rollback: true);
-        var ver = SandboxedStage.BuildNonoPrefix(config, rollback: false);
+        var swi = SandboxedStage.BuildNonoPrefix(config, rollback: true, host: SandboxHost.Local);
+        var ver = SandboxedStage.BuildNonoPrefix(config, rollback: false, host: SandboxHost.Local);
 
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir }, swi.Take(6));
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir }, ver.Take(6));
@@ -112,7 +112,7 @@ public sealed class SandboxedTestRunnerArgumentTests
             SandboxExtraAllowPaths = [extra]
         };
 
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: false, host: SandboxHost.Local);
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
@@ -253,9 +253,9 @@ public sealed class SandboxedTestRunnerArgumentTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    // The VR-owned profile abs path the prefix now carries (--profile <abs>),
-    // resolved from the real process env exactly as production does.
-    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
+    // The VR-owned profile abs path the prefix now carries (--profile <abs>), on the
+    // local host, resolved from the real process env exactly as production does there.
+    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local);
     private static string TemplatesDir => TaskTemplates.ResolveUserTemplatesDir();
 
     private static RelayConfig TestConfig() =>

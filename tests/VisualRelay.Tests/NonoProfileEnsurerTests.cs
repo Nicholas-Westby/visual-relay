@@ -8,7 +8,9 @@ namespace VisualRelay.Tests;
 /// Tests for <see cref="NonoProfileEnsurer"/> — VR owning + self-healing the
 /// nono vr-guard profile at <c>$XDG_CONFIG_HOME/visual-relay/vr-guard.json</c>.
 /// These FAIL against the pre-change code (the type does not exist; the profile
-/// was installed only-if-absent under the global nono profiles dir).
+/// was installed only-if-absent under the global nono profiles dir). Every fact
+/// states the local host: left to this machine, a Windows box with a usable WSL
+/// distro would place the profile inside that distro instead.
 /// </summary>
 public sealed class NonoProfileEnsurerTests
 {
@@ -23,7 +25,7 @@ public sealed class NonoProfileEnsurerTests
             ["HOME"] = "/home/ignored"
         };
 
-        var path = NonoProfileEnsurer.ResolveProfilePath(env);
+        var path = NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local);
 
         Assert.Equal(Path.Combine("/xdg/conf", "visual-relay", "vr-guard.json"), path);
         Assert.True(Path.IsPathRooted(path), "profile path must be absolute");
@@ -34,7 +36,7 @@ public sealed class NonoProfileEnsurerTests
     {
         var env = new DictionaryEnvironmentAccessor { ["HOME"] = "/home/alice" };
 
-        var path = NonoProfileEnsurer.ResolveProfilePath(env);
+        var path = NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local);
 
         Assert.Equal(
             Path.Combine("/home/alice", ".config", "visual-relay", "vr-guard.json"),
@@ -47,7 +49,7 @@ public sealed class NonoProfileEnsurerTests
         // VR's .env and the owned profile must share the same visual-relay dir.
         var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = "/c" };
 
-        var profile = NonoProfileEnsurer.ResolveProfilePath(env);
+        var profile = NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local);
         var dotEnvDir = Path.Combine(XdgConfig.ResolveConfigDir(env), "visual-relay");
 
         Assert.Equal(dotEnvDir, Path.GetDirectoryName(profile));
@@ -60,7 +62,7 @@ public sealed class NonoProfileEnsurerTests
     {
         using var tmp = new TempXdg();
 
-        var written = await NonoProfileEnsurer.EnsureAsync(tmp.Env);
+        var written = await NonoProfileEnsurer.EnsureAsync(tmp.Env, SandboxHost.Local);
 
         Assert.Equal(tmp.ExpectedProfilePath, written);
         Assert.True(File.Exists(written), "profile must be created");
@@ -78,7 +80,7 @@ public sealed class NonoProfileEnsurerTests
         await File.WriteAllTextAsync(tmp.ExpectedProfilePath,
             "{ \"extends\": \"default\", \"stale\": true }");
 
-        var written = await NonoProfileEnsurer.EnsureAsync(tmp.Env);
+        var written = await NonoProfileEnsurer.EnsureAsync(tmp.Env, SandboxHost.Local);
 
         Assert.Equal(NonoProfileEnsurer.EmbeddedContent, await File.ReadAllTextAsync(written));
         Assert.DoesNotContain("stale", await File.ReadAllTextAsync(written));
@@ -88,12 +90,12 @@ public sealed class NonoProfileEnsurerTests
     public async Task EnsureAsync_IdenticalFile_IsNotRewritten_NoMtimeChurn()
     {
         using var tmp = new TempXdg();
-        var first = await NonoProfileEnsurer.EnsureAsync(tmp.Env);
+        var first = await NonoProfileEnsurer.EnsureAsync(tmp.Env, SandboxHost.Local);
         var stampBefore = File.GetLastWriteTimeUtc(first);
         File.SetLastWriteTimeUtc(first, stampBefore.AddDays(-1)); // age it
         var aged = File.GetLastWriteTimeUtc(first);
 
-        var second = await NonoProfileEnsurer.EnsureAsync(tmp.Env);
+        var second = await NonoProfileEnsurer.EnsureAsync(tmp.Env, SandboxHost.Local);
 
         Assert.Equal(first, second);
         // Bytes already match → no write → mtime unchanged from the aged value.
@@ -116,7 +118,7 @@ public sealed class NonoProfileEnsurerTests
             tmp.Env["XDG_CONFIG_HOME"] = blocker;
 
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => NonoProfileEnsurer.EnsureAsync(tmp.Env));
+                () => NonoProfileEnsurer.EnsureAsync(tmp.Env, SandboxHost.Local));
             Assert.Contains("vr-guard", ex.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally

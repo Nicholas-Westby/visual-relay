@@ -45,8 +45,9 @@ public sealed class SandboxInspectionResult
 public static partial class SandboxPathInspector
 {
     /// <summary>
-    /// Resolves the effective sandbox policy. On macOS and Linux nono is the binary
-    /// on PATH (<paramref name="nonoBinary"/> overrides it for tests); on Windows it
+    /// Resolves the effective sandbox policy of nono on <paramref name="host"/> (null:
+    /// this machine). On the local host nono is the binary on PATH
+    /// (<paramref name="nonoBinary"/> overrides it for tests); on a Windows host it
     /// is the one inside the resolved WSL distro, asked through wsl.exe
     /// (<see cref="InspectThroughWslAsync"/>), and without a resolved distro the
     /// policy is unavailable. <paramref name="workspaceRoot"/> is the active
@@ -63,20 +64,19 @@ public static partial class SandboxPathInspector
         string? workspaceRoot,
         IReadOnlyList<string>? extraAllowPaths = null,
         string? nonoBinary = null,
+        SandboxHost? host = null,
         CancellationToken cancellationToken = default)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            // Awaited, never waited on: the first caller is the desktop app's
-            // background inspection, which starts on the UI thread. Blocking there
-            // on a probe whose own continuations come back to that same thread is a
-            // deadlock, not a delay.
-            return await WslContextResolver.TryGetCurrentAsync(cancellationToken) is { } context
-                ? await InspectThroughWslAsync(
-                    context, RunWslJsonAsync, ct => NonoProfileEnsurer.EnsureAsync(cancellationToken: ct),
-                    workspaceRoot, extraAllowPaths, cancellationToken)
-                : SandboxInspectionResult.Unavailable;
-        }
+        // Awaited, never waited on: the first caller is the desktop app's background
+        // inspection, which starts on the UI thread. Blocking there on a probe whose
+        // own continuations come back to that same thread is a deadlock, not a delay.
+        var resolved = host ?? await SandboxHost.CurrentAsync(cancellationToken);
+        if (resolved.Wsl is { } context)
+            return await InspectThroughWslAsync(
+                context, RunWslJsonAsync, ct => NonoProfileEnsurer.EnsureAsync(host: resolved, cancellationToken: ct),
+                workspaceRoot, extraAllowPaths, cancellationToken);
+        if (resolved.IsWindows)
+            return SandboxInspectionResult.Unavailable;
 
         var resolvedBinary = nonoBinary ?? PathExecutables.Find("nono");
         if (string.IsNullOrEmpty(resolvedBinary) || !File.Exists(resolvedBinary))

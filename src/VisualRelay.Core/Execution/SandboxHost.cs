@@ -47,11 +47,12 @@ public sealed record SandboxHost(bool IsWindows, WslContext? Wsl)
             ? Windows(await WslContextResolver.TryGetCurrentAsync(cancellationToken).ConfigureAwait(false))
             : Local;
 
-    /// <summary>The absolute path nono loads the guard profile from, as nono sees it.</summary>
-    public string ProfilePath =>
-        Wsl is { } context
-            ? WslProfilePlacement.For(context.Distro, context.DistroHome).LinuxPath
-            : NonoProfileEnsurer.ResolveProfilePath();
+    /// <summary>
+    /// The absolute path nono loads the guard profile from, as nono sees it from this
+    /// host: the Linux placement inside the distro, or on the local host the XDG path,
+    /// never another host's placement this machine happens to resolve.
+    /// </summary>
+    public string ProfilePath => NonoProfileEnsurer.ResolveProfilePath(host: this);
 
     /// <summary>
     /// A directory VR grants (<c>-a</c>), as nono sees it: itself on the local host;

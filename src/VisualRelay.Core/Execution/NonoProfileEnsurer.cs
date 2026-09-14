@@ -22,7 +22,9 @@ namespace VisualRelay.Core.Execution;
 ///
 /// <para>On Windows nono runs inside the WSL distro, so the profile is placed
 /// there (<see cref="WslProfilePlacement"/>): written from this side through the
-/// distro's UNC share, loaded by nono through its Linux path.</para>
+/// distro's UNC share, loaded by nono through its Linux path. Which placement a call
+/// means is decided by the <see cref="SandboxHost"/> it is handed, and only a call
+/// handed none asks what this machine is.</para>
 /// </summary>
 public static class NonoProfileEnsurer
 {
@@ -42,17 +44,19 @@ public static class NonoProfileEnsurer
     public static string EmbeddedContent => _cachedContent ??= ReadEmbedded();
 
     /// <summary>
-    /// Resolves the absolute path nono loads the profile from. On macOS and Linux
-    /// that is VR's owned <c>$XDG_CONFIG_HOME/visual-relay/vr-guard.json</c>
+    /// Resolves the absolute path nono loads the profile from, as nono on
+    /// <paramref name="host"/> sees it (null: this machine, <see cref="SandboxHost.Current"/>).
+    /// On the local host that is VR's owned <c>$XDG_CONFIG_HOME/visual-relay/vr-guard.json</c>
     /// (default <c>$HOME/.config/visual-relay/vr-guard.json</c>), beside VR's
     /// <c>.env</c>, reusing <see cref="XdgConfig"/>'s XDG/HOME resolution and its
     /// injectable accessor; throws when neither <c>XDG_CONFIG_HOME</c> nor
-    /// <c>HOME</c> is set. On Windows with a resolved WSL context it is the Linux
-    /// path of the copy placed inside the distro.
+    /// <c>HOME</c> is set. On a host with a WSL context it is the Linux path of the
+    /// copy placed inside the distro. Never reads <see cref="SandboxHost.ProfilePath"/>,
+    /// which is answered here.
     /// </summary>
-    public static string ResolveProfilePath(IEnvironmentAccessor? accessor = null)
+    public static string ResolveProfilePath(IEnvironmentAccessor? accessor = null, SandboxHost? host = null)
     {
-        if (OperatingSystem.IsWindows() && WslContextResolver.TryGetCurrent() is { } context)
+        if ((host ?? SandboxHost.Current).Wsl is { } context)
             return WslProfilePlacement.For(context.Distro, context.DistroHome).LinuxPath;
 
         var configDir = XdgConfig.ResolveConfigDir(accessor);
@@ -60,32 +64,43 @@ public static class NonoProfileEnsurer
     }
 
     /// <summary>
-    /// Writes the embedded profile to the resolved XDG path, creating the parent
-    /// directory if needed. <b>Overwrite-always</b>: the file is made to match the
-    /// embedded content even if it was hand-edited; the actual write is skipped
-    /// only when the on-disk bytes already match (avoids mtime churn). Returns the
-    /// resolved absolute path on success. Throws an actionable
+    /// Writes the embedded profile where nono on <paramref name="host"/> loads it
+    /// (null: this machine, resolved without blocking). On the local host that is the
+    /// resolved XDG path, creating the parent directory if needed. <b>Overwrite-always</b>:
+    /// the file is made to match the embedded content even if it was hand-edited; the
+    /// actual write is skipped only when the on-disk bytes already match (avoids mtime
+    /// churn). Returns the resolved absolute path on success. Throws an actionable
     /// <see cref="InvalidOperationException"/> when the path cannot be resolved or
     /// the write fails — the run must NOT proceed to a sandboxed stage with a
-    /// missing or stale profile. On Windows the profile goes inside the WSL
-    /// distro instead (<see cref="EnsureInDistroAsync"/>) and the Linux path is returned.
+    /// missing or stale profile. On a host with a WSL context the profile goes inside
+    /// the distro instead (<see cref="EnsureInDistroAsync"/>) and the Linux path is
+    /// returned; a Windows host with no resolved distro has nowhere to put it and throws.
     /// </summary>
-    public static async Task<string> EnsureAsync(
-        IEnvironmentAccessor? accessor = null, CancellationToken cancellationToken = default)
+    public static Task<string> EnsureAsync(
+        IEnvironmentAccessor? accessor = null, SandboxHost? host = null, CancellationToken cancellationToken = default) =>
+        EnsureAsync(accessor, host, WriteThroughShareAsync, cancellationToken);
+
+    /// <summary>
+    /// <see cref="EnsureAsync(IEnvironmentAccessor?, SandboxHost?, CancellationToken)"/> with the
+    /// share write injected, so which arm a host selects is exercised on any OS without a share.
+    /// </summary>
+    internal static async Task<string> EnsureAsync(
+        IEnvironmentAccessor? accessor, SandboxHost? host,
+        Func<string, string, CancellationToken, Task> writeThroughShare, CancellationToken cancellationToken)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            var context = WslContextResolver.TryGetCurrent() ?? throw new InvalidOperationException(
+        var resolved = host ?? await SandboxHost.CurrentAsync(cancellationToken);
+        if (resolved.Wsl is { } context)
+            return await EnsureInDistroAsync(context, writeThroughShare, cancellationToken);
+        if (resolved.IsWindows)
+            throw new InvalidOperationException(
                 "The vr-guard sandbox profile is placed inside the WSL distro, but no usable WSL2 distro was "
                 + "resolved. Run `visual-relay launch`: its gate names what is missing (WSL, a WSL2 distro, nono "
                 + "inside it, Landlock).");
-            return await EnsureInDistroAsync(context, WriteThroughShareAsync, cancellationToken);
-        }
 
         string path;
         try
         {
-            path = ResolveProfilePath(accessor);
+            path = ResolveProfilePath(accessor, resolved);
         }
         catch (Exception ex)
         {
@@ -102,8 +117,10 @@ public static class NonoProfileEnsurer
             if (!dirExisted)
             {
                 Directory.CreateDirectory(dir);
-                File.SetUnixFileMode(dir,
-                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                // A local host on Windows is one a test stated, and Windows has no Unix mode.
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(dir,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
 
             var desired = EmbeddedContent;

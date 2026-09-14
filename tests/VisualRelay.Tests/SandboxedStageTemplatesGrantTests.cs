@@ -15,7 +15,7 @@ public sealed partial class SandboxedStageSandboxTests
         {
             var config = TestConfig();
             var prefix = SandboxedStage.BuildNonoPrefix(
-                config, rollback: false, userTemplatesDirOverride: templatesSubdir);
+                config, rollback: false, userTemplatesDirOverride: templatesSubdir, host: SandboxHost.Local);
 
             // The templates -a pair must appear after any SandboxExtraAllowPaths pairs.
             // With no extra paths, the pair is at indices 4,5 (after run, --profile, <abs>, --allow-cwd).

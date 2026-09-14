@@ -134,6 +134,19 @@ public sealed partial class SandboxPathInspectorTests
         Assert.False(result.IsAvailable);
     }
 
+    /// <summary>
+    /// The host decides the arm, not the OS the inspector runs on: a Windows host with
+    /// no resolved distro has no nono to ask, even on a machine with nono on PATH.
+    /// </summary>
+    [Fact]
+    public async Task InspectAsync_OnAWindowsHostWithoutADistro_IsUnavailable()
+    {
+        var result = await SandboxPathInspector.InspectAsync(UncWorkspace, host: SandboxHost.Windows(null));
+
+        Assert.False(result.IsAvailable);
+        Assert.Null(result.ReadsSummary);
+    }
+
     [Fact]
     public async Task InspectThroughWsl_Cancellation_Propagates()
     {

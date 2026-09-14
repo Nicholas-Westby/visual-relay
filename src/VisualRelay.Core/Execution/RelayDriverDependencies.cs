@@ -5,12 +5,13 @@ namespace VisualRelay.Core.Execution;
 
 /// <summary>
 /// Collaborators a <see cref="RelayDriver"/> needs. <see cref="EnvironmentAccessor"/>
-/// is threaded into <see cref="NonoProfileEnsurer.EnsureAsync"/> (the once-per-run
-/// vr-guard profile self-heal) so the profile path resolves through an injectable
-/// environment. Production leaves it <c>null</c> — real process env, real
-/// <c>~/.config</c> — while <see cref="ForTests"/> defaults it to a hermetic temp
-/// XDG accessor so the integration suite never writes the user's real profile (and
-/// runs cleanly under the always-on vr-guard nono sandbox, which denies that write).
+/// and <see cref="SandboxHost"/> are threaded into <see cref="NonoProfileEnsurer.EnsureAsync"/>
+/// (the once-per-run vr-guard profile self-heal) so the profile path resolves through an
+/// injectable environment on an injectable host. Production leaves both <c>null</c> — real
+/// process env, real <c>~/.config</c>, and on Windows the resolved WSL distro — while
+/// <see cref="ForTests"/> defaults them to a hermetic temp XDG accessor on the local host,
+/// so the integration suite never writes the user's real profile on any OS, a distro's
+/// included (and runs cleanly under the always-on vr-guard nono sandbox, which denies that write).
 /// </summary>
 public sealed record RelayDriverDependencies(
     ISubagentRunner SubagentRunner,
@@ -18,7 +19,8 @@ public sealed record RelayDriverDependencies(
     IRelayEventSink EventSink,
     IGitInvoker GitInvoker,
     IEnvironmentAccessor? EnvironmentAccessor = null,
-    TimeProvider? TimeProvider = null)
+    TimeProvider? TimeProvider = null,
+    SandboxHost? SandboxHost = null)
 {
     public static RelayDriverDependencies ForTests(
         ISubagentRunner subagentRunner,
@@ -26,10 +28,12 @@ public sealed record RelayDriverDependencies(
         IRelayEventSink eventSink,
         IGitInvoker gitInvoker,
         IEnvironmentAccessor? environmentAccessor = null,
-        TimeProvider? timeProvider = null) =>
+        TimeProvider? timeProvider = null,
+        SandboxHost? sandboxHost = null) =>
         new(subagentRunner, testRunner, eventSink, gitInvoker,
             environmentAccessor ?? new TempXdgEnvironmentAccessor(),
-            timeProvider);
+            timeProvider,
+            sandboxHost ?? SandboxHost.Local);
 }
 
 /// <summary>
@@ -74,10 +78,12 @@ internal sealed class TempXdgEnvironmentAccessor : IEnvironmentAccessor
     // Creates the shared dir and writes the canonical vr-guard profile exactly once,
     // before any test's EnsureAsync inspects it, so the on-disk bytes already match
     // and every EnsureAsync skips its (non-atomic) write — no concurrent first write.
+    // The local host's placement, stated: on Windows this machine's would be the distro's.
     private static string SeedSharedProfile()
     {
         var configHome = Path.Combine(Path.GetTempPath(), "vr-test-xdg");
-        var profilePath = NonoProfileEnsurer.ResolveProfilePath(new FixedConfigHomeAccessor(configHome));
+        var profilePath = NonoProfileEnsurer.ResolveProfilePath(
+            new FixedConfigHomeAccessor(configHome), SandboxHost.Local);
         Directory.CreateDirectory(Path.GetDirectoryName(profilePath)!);
         File.WriteAllText(profilePath, NonoProfileEnsurer.EmbeddedContent);
         return configHome;

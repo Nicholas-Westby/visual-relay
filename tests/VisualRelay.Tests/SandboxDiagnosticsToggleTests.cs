@@ -50,8 +50,8 @@ public sealed class SandboxDiagnosticsToggleTests
         // never-block-network invariant are identical with or without --silent.
         var config = TestConfig();
 
-        var quiet = SandboxedStage.BuildNonoPrefix(config, rollback: false);
-        var verbose = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true);
+        var quiet = SandboxedStage.BuildNonoPrefix(config, rollback: false, host: SandboxHost.Local);
+        var verbose = SandboxedStage.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true, host: SandboxHost.Local);
 
         foreach (var prefix in new[] { quiet, verbose })
         {
@@ -131,7 +131,8 @@ public sealed class SandboxDiagnosticsToggleTests
 
     // ── Helpers ─────────────────────────────────────────────────────────
 
-    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
+    // The local host's profile, as the prefixes compared against it are built for that host.
+    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local);
 
     private static RelayConfig TestConfig() =>
         new("llm-tasks", "true", "true", [],

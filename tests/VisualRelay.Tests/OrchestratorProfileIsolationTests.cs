@@ -23,6 +23,10 @@ namespace VisualRelay.Tests;
 /// real <c>~/.config</c> copy is created/changed (assertion a fails). Under the
 /// always-on vr-guard nono sandbox that real-<c>~/.config</c> write is denied, which
 /// is exactly the stage-1 failure this seam removes.</para>
+///
+/// <para>The host travels the same way and is stated, not left to the machine: on a
+/// Windows box with a usable WSL distro the planning driver would otherwise place the
+/// profile inside that distro.</para>
 /// </summary>
 public sealed class OrchestratorProfileIsolationTests
 {
@@ -39,11 +43,11 @@ public sealed class OrchestratorProfileIsolationTests
         // and stays revert-sensitive. Cleaned up below regardless of outcome.
         var xdgDir = Path.Combine(Path.GetTempPath(), "vr-orch-iso", Guid.NewGuid().ToString("N"));
         var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = xdgDir };
-        var isolatedProfile = NonoProfileEnsurer.ResolveProfilePath(env);
+        var isolatedProfile = NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local);
 
         // Snapshot the REAL ~/.config profile target before the run (it may or may not
         // pre-exist on the host); the planning phase must not create or alter it.
-        var realProfile = NonoProfileEnsurer.ResolveProfilePath();
+        var realProfile = NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local);
         var realExistedBefore = File.Exists(realProfile);
         var realBytesBefore = realExistedBefore ? await File.ReadAllTextAsync(realProfile) : null;
 
@@ -61,7 +65,8 @@ public sealed class OrchestratorProfileIsolationTests
                 planSubagentRunnerFactory: (_, _) => planRunner,
                 planTestRunner: new ScriptedTestRunner(),
                 environmentAccessor: env,
-                gitInvoker: sim);
+                gitInvoker: sim,
+                sandboxHost: SandboxHost.Local);
 
             await controller.RefreshAsync();
             var results = await controller.DrainAsync();
@@ -82,6 +87,49 @@ public sealed class OrchestratorProfileIsolationTests
             Assert.Equal(realExistedBefore, File.Exists(realProfile));
             if (realExistedBefore)
                 Assert.Equal(realBytesBefore, await File.ReadAllTextAsync(realProfile));
+        }
+        finally
+        {
+            TestFileSystem.DeleteDirectoryResilient(xdgDir);
+        }
+    }
+
+    /// <summary>
+    /// The host threading, visible on any OS: handed a Windows host with no resolved
+    /// distro, the planning driver has nowhere to place the profile and flags the task
+    /// instead of placing it locally. Dropping the host anywhere between the controller
+    /// and the driver resolves this machine's host, which off Windows plans normally.
+    /// </summary>
+    [Fact]
+    public async Task RelayQueueControllerTwoPhase_HandsItsHostToEveryPlanningDriver()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("orchestrator-host", "# Orchestrator host\n");
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var xdgDir = Path.Combine(Path.GetTempPath(), "vr-orch-host", Guid.NewGuid().ToString("N"));
+        var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = xdgDir };
+        try
+        {
+            var planRunner = new ScriptedSubagentRunner();
+            planRunner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+            var controller = new RelayQueueController(
+                repo.Root,
+                new RecordingTaskRunner(),
+                planSubagentRunnerFactory: (_, _) => planRunner,
+                planTestRunner: new ScriptedTestRunner(),
+                environmentAccessor: env,
+                gitInvoker: sim,
+                sandboxHost: SandboxHost.Windows(null));
+
+            await controller.RefreshAsync();
+            var results = await controller.DrainAsync();
+
+            var result = Assert.Single(results);
+            Assert.Equal(RelayTaskOutcomeStatus.Flagged, result.Status);
+            Assert.Contains("no usable WSL2 distro", result.Reason, StringComparison.Ordinal);
+            Assert.False(File.Exists(NonoProfileEnsurer.ResolveProfilePath(env, SandboxHost.Local)),
+                "a Windows host must never fall back to the local profile placement");
         }
         finally
         {

@@ -45,7 +45,7 @@ public sealed partial class SandboxedStageSandboxTests
         // No skipDirs argument → identical to the historical rollback prefix.
         var config = TestConfig();
 
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, skipDirs: null);
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, skipDirs: null, host: SandboxHost.Local);
 
         Assert.Equal(
             new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
@@ -58,7 +58,7 @@ public sealed partial class SandboxedStageSandboxTests
     {
         var config = TestConfig();
 
-        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, skipDirs: Array.Empty<string>());
+        var prefix = SandboxedStage.BuildNonoPrefix(config, rollback: true, skipDirs: Array.Empty<string>(), host: SandboxHost.Local);
 
         Assert.Equal(
             new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },

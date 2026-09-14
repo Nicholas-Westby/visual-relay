@@ -11,9 +11,9 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed partial class SandboxedStageSandboxTests
 {
-    // The VR-owned profile abs path the prefix carries (--profile <abs>),
-    // resolved from the real process env exactly as production does.
-    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
+    // The VR-owned profile abs path the prefix carries (--profile <abs>), on the local
+    // host, resolved from the real process env exactly as production does there.
+    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath(host: SandboxHost.Local);
 
     private static string TemplatesDir => TaskTemplates.ResolveUserTemplatesDir();
 

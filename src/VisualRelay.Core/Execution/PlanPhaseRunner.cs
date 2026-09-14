@@ -48,6 +48,11 @@ public static class PlanPhaseRunner
     /// Production leaves it <c>null</c> (real <see cref="GitInvoker"/>); tests inject a
     /// repo-bound in-memory sim so the whole plan phase runs without the real git binary.
     /// </param>
+    /// <param name="sandboxHost">
+    /// Optional host threaded beside <paramref name="environmentAccessor"/>, deciding where
+    /// that self-heal places the profile. Production leaves it <c>null</c> (this machine, a
+    /// WSL distro on Windows); tests state the local host so planning never writes a distro's.
+    /// </param>
     public static async Task<List<(string TaskId, RelayTaskOutcome Outcome)>> RunPlanPhaseAsync(
         string mainRootPath,
         IEnumerable<(string TaskId, Func<IRelayEventSink, ISubagentRunner> RunnerFactory)> tasks,
@@ -56,7 +61,8 @@ public static class PlanPhaseRunner
         IGitInvoker gitInvoker,
         CancellationToken cancellationToken = default,
         Func<string, IRelayEventSink>? eventSinkFactory = null,
-        IEnvironmentAccessor? environmentAccessor = null)
+        IEnvironmentAccessor? environmentAccessor = null,
+        SandboxHost? sandboxHost = null)
     {
         var taskList = tasks.ToList();
         if (taskList.Count == 0)
@@ -73,7 +79,7 @@ public static class PlanPhaseRunner
         // Fire all planning tasks concurrently, gated by the semaphore.
         await Task.WhenAll(taskList.Select(t => PlanOneAsync(
             mainRootPath, t.TaskId, t.RunnerFactory, testRunner, runId,
-            semaphore, results, eventSinkFactory, environmentAccessor, gitInvoker, cancellationToken)));
+            semaphore, results, eventSinkFactory, environmentAccessor, sandboxHost, gitInvoker, cancellationToken)));
 
         // Return in input order.
         return results
@@ -91,6 +97,7 @@ public static class PlanPhaseRunner
         List<(string TaskId, RelayTaskOutcome Outcome)> results,
         Func<string, IRelayEventSink>? eventSinkFactory,
         IEnvironmentAccessor? environmentAccessor,
+        SandboxHost? sandboxHost,
         IGitInvoker gitInvoker,
         CancellationToken ct)
     {
@@ -99,7 +106,7 @@ public static class PlanPhaseRunner
         {
             var outcome = await PlanOneTaskAsync(
                 mainRootPath, taskId, runnerFactory, testRunner, runId,
-                eventSinkFactory, environmentAccessor, gitInvoker, ct);
+                eventSinkFactory, environmentAccessor, sandboxHost, gitInvoker, ct);
             lock (results)
                 results.Add((taskId, outcome));
         }
@@ -134,6 +141,7 @@ public static class PlanPhaseRunner
         string runId,
         Func<string, IRelayEventSink>? eventSinkFactory,
         IEnvironmentAccessor? environmentAccessor,
+        SandboxHost? sandboxHost,
         IGitInvoker gitInvoker,
         CancellationToken ct)
     {
@@ -161,7 +169,7 @@ public static class PlanPhaseRunner
             // The agent is built from THIS sink, so its trace stream lands in the same
             // run.log the driver writes rather than in the GUI alone.
             var dependencies = new RelayDriverDependencies(
-                runnerFactory(sink), testRunner, sink, gitInvoker, environmentAccessor);
+                runnerFactory(sink), testRunner, sink, gitInvoker, environmentAccessor, SandboxHost: sandboxHost);
             var options = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
             var driver = new RelayDriver(dependencies, options);
 

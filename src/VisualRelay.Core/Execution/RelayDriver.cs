@@ -32,7 +32,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             await using var activeLock = await ActiveTaskLock.AcquireAsync(rootPath, taskId, cancellationToken);
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
-            await NonoProfileEnsurer.EnsureAsync(_dependencies.EnvironmentAccessor, cancellationToken);
+            await NonoProfileEnsurer.EnsureAsync(_dependencies.EnvironmentAccessor, _dependencies.SandboxHost, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);
             var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);

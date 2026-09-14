@@ -16,17 +16,15 @@ public sealed partial class RelayQueueController
     private readonly Func<string, IRelayEventSink>? _planEventSinkFactory;
     private readonly DrainLifecycleCallbacks? _lifecycle;
     private readonly IEnvironmentAccessor? _environmentAccessor;
+    private readonly SandboxHost? _sandboxHost;
     private readonly IGitInvoker? _gitInvoker;
     private Func<IReadOnlyList<RelayTaskItem>>? _externalTaskSource;
     private bool _pauseRequested;
     private HashSet<string>? _drainSeenIds;
-    /// <summary>Two-phase constructor: when plan factories are non-null,
-    /// DrainAsync runs planning in parallel worktrees before serial execute.
-    /// <paramref name="environmentAccessor"/> is forwarded to planning so each
-    /// driver's vr-guard profile self-heal resolves through it; null in production
-    /// (real env) and a hermetic temp-XDG accessor in tests.
-    /// <paramref name="gitInvoker"/> is threaded into planning and flagged-task
-    /// worktree reset — null in production, repo-bound sim in tests.</summary>
+    /// <summary>Two-phase constructor: when plan factories are non-null, DrainAsync runs planning in
+    /// parallel worktrees before serial execute. <paramref name="environmentAccessor"/> and <paramref name="sandboxHost"/>
+    /// reach each planning driver's vr-guard profile self-heal, <paramref name="gitInvoker"/> planning and flagged-task
+    /// worktree reset: null in production (real env, this machine, real git); temp XDG, local host and a sim in tests.</summary>
     public RelayQueueController(
         string rootPath,
         IRelayTaskRunner runner,
@@ -35,7 +33,8 @@ public sealed partial class RelayQueueController
         Func<string, IRelayEventSink>? planEventSinkFactory = null,
         DrainLifecycleCallbacks? lifecycle = null,
         IEnvironmentAccessor? environmentAccessor = null,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker? gitInvoker = null,
+        SandboxHost? sandboxHost = null)
     {
         RootPath = rootPath;
         _runner = runner;
@@ -45,6 +44,7 @@ public sealed partial class RelayQueueController
         _planEventSinkFactory = planEventSinkFactory;
         _lifecycle = lifecycle;
         _environmentAccessor = environmentAccessor;
+        _sandboxHost = sandboxHost;
         _gitInvoker = gitInvoker;
     }
 
@@ -129,7 +129,7 @@ public sealed partial class RelayQueueController
 
                             var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
                                 RootPath, needsPlan, configResult.Config, _planTestRunner, _gitInvoker ?? new GitInvoker(), drainCts.Token,
-                                _planEventSinkFactory, _environmentAccessor);
+                                _planEventSinkFactory, _environmentAccessor, _sandboxHost);
 
                             // Cancelled planning reached no verdict and copied nothing
                             // back, so every task stays pending, unmarked and unqueued.

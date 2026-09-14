@@ -20,7 +20,9 @@ public static class TaskRewriteRunner
     /// <summary>
     /// Runs a sandboxed, frontier-model rewrite of <paramref name="task"/>'s spec
     /// inside an ephemeral git worktree. Returns <see cref="RewriteOutcome"/>
-    /// indicating whether the spec on disk actually changed.
+    /// indicating whether the spec on disk actually changed. The guard profile is
+    /// placed through <paramref name="environment"/> for nono on <paramref name="host"/>;
+    /// null for either means the real one of this machine.
     /// </summary>
     public static async Task<RewriteOutcome> RunAsync(
         string rootPath,
@@ -29,7 +31,8 @@ public static class TaskRewriteRunner
         ISubagentRunner runner,
         IGitInvoker git,
         CancellationToken ct,
-        IEnvironmentAccessor? environment = null)
+        IEnvironmentAccessor? environment = null,
+        SandboxHost? host = null)
     {
         var runId = "rewrite-" + DateTimeOffset.UtcNow.Ticks;
         var taskDir = task.TaskDirectory;
@@ -50,7 +53,7 @@ public static class TaskRewriteRunner
             // on; on a fresh machine the profile does not exist yet, so without
             // this the nono --profile invocation inside the runner would fail. A
             // write failure throws — the run must not proceed unsandboxed/stale.
-            await NonoProfileEnsurer.EnsureAsync(environment, ct);
+            await NonoProfileEnsurer.EnsureAsync(environment, host, ct);
 
             // Read the current spec before any worktree operations.
             originalSpec = await File.ReadAllTextAsync(specPath, ct);
