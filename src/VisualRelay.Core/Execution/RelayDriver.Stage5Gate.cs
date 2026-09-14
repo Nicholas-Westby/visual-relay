@@ -131,6 +131,10 @@ public sealed partial class RelayDriver
             + "|Could not resolve all (?:dependencies|files) for configuration|No matching distribution found for",
             RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    /// <summary>A build tool that stopped while setting itself up, before any task or test ran.</summary>
+    private static readonly Regex BuildToolStartFailure =
+        new(@"Gradle could not start your build\.", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     /// <summary>
     /// Zero-tests pattern: "0 tests" / "0 tests collected" / "ran 0 tests"
     /// but NOT "10 tests" / "230 tests" / "Ran 100 tests".  The regex
@@ -167,6 +171,11 @@ public sealed partial class RelayDriver
         // its user config and the gate took the restore failure for the new test's red. A
         // compile error the new test causes is not among these: that is a legitimate red.
         if (DependencyFetchFailure.IsMatch(output))
+            return true;
+
+        // Nor did a build tool that could not start. Measured with Unciv in WSL: gradle could not open
+        // its own file hash lock, stopped in 556 ms with nothing compiled, and the gate took it for red.
+        if (BuildToolStartFailure.IsMatch(output))
             return true;
 
         return output.Contains("no tests found", StringComparison.OrdinalIgnoreCase)

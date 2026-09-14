@@ -8,7 +8,9 @@ namespace VisualRelay.Tests;
 /// Windows arm with litedb-org/LiteDB: the sandbox denied NuGet its user config, restore failed
 /// before anything compiled, and the gate accepted that exit 1 as the new test's red, so
 /// Author-tests passed in 25 s with a test that had never built. A compile error the new test
-/// itself causes is still a red: that is how a test for a missing method fails.
+/// itself causes is still a red: that is how a test for a missing method fails. The same holds for
+/// a build tool that never started: on the Windows arm, Unciv's gradle could not open its own file
+/// hash lock and stopped in 556 ms, and the gate took that for the new test's red.
 /// </summary>
 public sealed class RelayDriverStage5GateEnvironmentTests
 {
@@ -31,6 +33,33 @@ public sealed class RelayDriverStage5GateEnvironmentTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.Contains(events.Events, e => e is { EventName: "author_test_gate_unusable", Level: "warn" });
         Assert.Equal("unproven", RelayDriverStage5GateTests.Stage5Status(repo, "restore-denied").Check);
+    }
+
+    // Unciv's red gate output on the Windows arm, as saved (nono's trailing JSON block left out).
+    private const string GradleCouldNotStart =
+        "\n\nFAILURE: Build failed with an exception.\n\n"
+        + "* What went wrong:\n"
+        + "Gradle could not start your build.\n"
+        + "> Could not create service of type BuildLifecycleController using BuildScopeServices.createBuildLifecycleController().\n"
+        + "   > Could not create service of type BuildModelController using VintageBuildControllerProvider.createBuildModelController().\n"
+        + "      > Could not create service of type FileHasher using BuildSessionServices.createFileHasher().\n"
+        + "         > java.io.FileNotFoundException: /home/enjay/vr-eval/Unciv/.gradle/9.4.1/fileHashes/fileHashes.lock (Permission denied)\n\n"
+        + "* Try:\n"
+        + "> Run with --stacktrace option to get the stack trace.\n"
+        + "> Run with --info or --debug option to get more log output.\n"
+        + "> Run with --scan to get full insights from a Build Scan (powered by Develocity).\n"
+        + "> Get more help at https://help.gradle.org.\n\n"
+        + "BUILD FAILED in 556ms\n";
+
+    [Fact]
+    public async Task ABuildToolThatCouldNotStart_IsAnUnusableGate()
+    {
+        using var repo = TestRepository.Create();
+        var (outcome, events) = await RunWithRedGateOutputAsync(repo, "gradle-start", GradleCouldNotStart);
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.Contains(events.Events, e => e is { EventName: "author_test_gate_unusable", Level: "warn" });
+        Assert.Equal("unproven", RelayDriverStage5GateTests.Stage5Status(repo, "gradle-start").Check);
     }
 
     [Fact]
