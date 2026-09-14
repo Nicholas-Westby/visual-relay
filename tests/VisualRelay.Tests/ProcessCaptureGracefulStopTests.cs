@@ -16,7 +16,7 @@ namespace VisualRelay.Tests;
 /// These tests assert the TARGET behaviour; they must FAIL before the
 /// implementation exists.
 /// </summary>
-[Collection("Watchdog")]
+[Collection("Isolated")]
 public sealed class ProcessCaptureGracefulStopTests
 {
     // ── ProcessCapture.RunAsync timeouts ───────────────────────────

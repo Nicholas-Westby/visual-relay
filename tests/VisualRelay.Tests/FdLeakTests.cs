@@ -11,6 +11,7 @@ namespace VisualRelay.Tests;
 /// 1. ProcessTreeCpuSampler kill-path pipe-FD leak (volume driver).
 /// 2. ProcessCapture detached-child leak (descendants survive normal exit).
 /// </summary>
+[Collection("Isolated")]
 public sealed class FdLeakTests
 {
     // ── Handle-count smoke test ────────────────────────────────────────
