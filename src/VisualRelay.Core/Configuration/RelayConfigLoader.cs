@@ -1,4 +1,5 @@
 using System.Text.Json;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 namespace VisualRelay.Core.Configuration;
 
@@ -17,7 +18,15 @@ public static partial class RelayConfigLoader
         };
     }
 
-    public static async Task<RelayConfigResult> TryLoadAsync(string rootPath, CancellationToken cancellationToken = default)
+    public static Task<RelayConfigResult> TryLoadAsync(string rootPath, CancellationToken cancellationToken = default) =>
+        TryLoadAsync(rootPath, SandboxHostForAsync, cancellationToken);
+
+    /// <summary>
+    /// <see cref="TryLoadAsync(string, CancellationToken)"/> with the sandbox host a workspace's
+    /// allow-path entries are checked against given, so the WSL arm is exercised on any OS.
+    /// </summary>
+    internal static async Task<RelayConfigResult> TryLoadAsync(
+        string rootPath, Func<string, CancellationToken, Task<SandboxHost>> sandboxHostFor, CancellationToken cancellationToken)
     {
         var configPath = Path.Combine(rootPath, ".relay", "config.json");
         if (!File.Exists(configPath))
@@ -88,74 +97,10 @@ public static partial class RelayConfigLoader
             var inactivityTiers = ParseTierDict(root, "inactivityTimeoutMsByTier", defaults.InactivityTimeoutMsByTier);
             var outputSilenceTiers = ParseTierDict(root, "outputSilenceTimeoutMsByTier", defaults.OutputSilenceTimeoutMsByTier);
 
-            // Read and validate sandboxExtraAllowPaths.
-            IReadOnlyList<string>? sandboxExtraAllowPaths = null;
-            if (root.TryGetProperty("sandboxExtraAllowPaths", out var extraPathsElement))
-            {
-                if (extraPathsElement.ValueKind == JsonValueKind.Array)
-                {
-                    var rawPaths = extraPathsElement.EnumerateArray()
-                        .Select(e => e.GetString())
-                        .Where(s => !string.IsNullOrWhiteSpace(s))
-                        .Select(s => s!.Trim())
-                        .ToList();
-
-                    var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                    var validated = new List<string>(rawPaths.Count);
-                    foreach (var raw in rawPaths)
-                    {
-                        // Expand ~ and $HOME.
-                        var expanded = raw.StartsWith("~/") || raw == "~"
-                            ? Path.Combine(home, raw.Length > 2 ? raw[2..].TrimStart('/') : string.Empty)
-                            : raw.Replace("$HOME", home, StringComparison.Ordinal);
-
-                        // Reject .. traversal.
-                        if (expanded.Contains(".."))
-                        {
-                            return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
-                                $"relay config: sandboxExtraAllowPaths entry contains '..' (path traversal rejected): \"{raw}\" in {configPath}");
-                        }
-
-                        // Normalize to absolute path.
-                        var normalized = Path.GetFullPath(expanded);
-
-                        // Require resolution under $HOME or workspace root.
-                        var normalizedHome = Path.GetFullPath(home);
-                        var normalizedRoot = Path.GetFullPath(rootPath);
-                        var underHome = normalized.StartsWith(normalizedHome + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                                        || normalized == normalizedHome;
-                        var underRoot = normalized.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                                        || normalized == normalizedRoot;
-
-                        if (!underHome && !underRoot)
-                        {
-                            return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
-                                $"relay config: sandboxExtraAllowPaths entry must resolve under $HOME or workspace root, got: \"{raw}\" → \"{normalized}\" in {configPath}");
-                        }
-                        // Reject entries that resolve into known-sensitive subtrees.
-                        var sensitiveSubtrees = new[] {
-                            Path.Combine(normalizedHome, ".ssh"), Path.Combine(normalizedHome, ".gnupg"),
-                            Path.Combine(normalizedHome, ".aws"), Path.Combine(normalizedHome, ".config", "gh"),
-                            Path.Combine(normalizedHome, "Library", "Keychains"),
-                            Path.Combine(normalizedHome, ".bashrc"), Path.Combine(normalizedHome, ".zshrc"),
-                            Path.Combine(normalizedHome, ".profile"), Path.Combine(normalizedHome, ".bash_profile"),
-                            Path.Combine(normalizedHome, ".zprofile") };
-                        foreach (var subtree in sensitiveSubtrees)
-                            if (normalized == subtree || normalized.StartsWith(subtree + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                                return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
-                                    $"relay config: sandboxExtraAllowPaths entry resolves into sensitive subtree \"{subtree}\": \"{raw}\" → \"{normalized}\" in {configPath}");
-
-                        validated.Add(normalized);
-                    }
-
-                    sandboxExtraAllowPaths = validated;
-                }
-                else
-                {
-                    return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
-                        $"relay config: sandboxExtraAllowPaths must be an array in {configPath}");
-                }
-            }
+            var (sandboxExtraAllowPaths, allowPathError) =
+                await ReadExtraAllowPathsAsync(root, rootPath, configPath, sandboxHostFor, cancellationToken);
+            if (allowPathError is not null)
+                return new RelayConfigResult(defaults, RelayConfigStatus.Malformed, allowPathError);
 
             IReadOnlyDictionary<string, string>? tierModelOverrides =
                 root.TryGetProperty("tierModelOverrides", out var tmo)
