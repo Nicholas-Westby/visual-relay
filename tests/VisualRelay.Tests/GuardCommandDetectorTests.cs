@@ -200,7 +200,7 @@ public sealed class GuardCommandDetectorTests
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
 
-        Assert.Equal("swift build", GuardCommandDetector.Detect(repo.Root));
+        Assert.Equal("swift build --disable-sandbox", GuardCommandDetector.Detect(repo.Root));
     }
 
     /// <summary>
@@ -216,7 +216,7 @@ public sealed class GuardCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "");
 
         Assert.Equal(
-            "tools/guards/guard-one.sh && dotnet format MyApp.slnx --verify-no-changes && swift build",
+            "tools/guards/guard-one.sh && dotnet format MyApp.slnx --verify-no-changes && swift build --disable-sandbox",
             GuardCommandDetector.Detect(repo.Root));
     }
 

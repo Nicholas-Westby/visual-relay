@@ -135,12 +135,17 @@ public sealed partial class TestCommandDetectorTests
 
     // ── New marker: Swift / SwiftPM ─────────────────────────────────────
 
+    /// <summary>
+    /// With SwiftPM's own sandbox off: SwiftPM compiles the manifest under sandbox-exec, which
+    /// macOS refuses inside VR's sandbox ("sandbox_apply: Operation not permitted"). Measured
+    /// with swiftlang/swift-format on the Mac: every build and test exited 1 before compiling.
+    /// </summary>
     [Fact]
-    public void Detect_SwiftPackage_ReturnsSwiftTest()
+    public void Detect_SwiftPackage_ReturnsSwiftTestWithoutSwiftPmsSandbox()
     {
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
-        Assert.Equal("swift test", TestCommandDetector.Detect(repo.Root));
+        Assert.Equal("swift test --disable-sandbox", TestCommandDetector.Detect(repo.Root));
     }
 
     // ── DetectCandidates (priority-ordered list) ───────────────────────
@@ -181,7 +186,7 @@ public sealed partial class TestCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
         File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{}");
         var candidates = TestCommandDetector.DetectCandidates(repo.Root);
-        Assert.Equal(["npm test", "swift test"], candidates);
+        Assert.Equal(["npm test", "swift test --disable-sandbox"], candidates);
     }
 
     [Fact]
@@ -208,7 +213,7 @@ public sealed partial class TestCommandDetectorTests
             "pytest",
             "cargo test",
             "go test ./...",
-            "swift test",
+            "swift test --disable-sandbox",
             "mvn test",
             "gradle test"
             // The weak tests/ signal repeats "pytest", which the list de-duplicates:

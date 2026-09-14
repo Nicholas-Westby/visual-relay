@@ -16,6 +16,7 @@ public sealed class NonoRealBuildTests
     public async Task RealBuild_DotNet_RestoreBuildTest_InSandbox()
     {
         SkipIfNotOptedIn();
+        await EnsureProfileAsync();
         if (!NonoIntegration.ToolAvailable("dotnet")) Assert.Skip("dotnet is not on PATH");
 
         using var repo = CreateScratchRepo("dotnet-sandbox-test");
@@ -34,6 +35,7 @@ public sealed class NonoRealBuildTests
     public async Task RealBuild_Swift_BuildTest_InSandbox()
     {
         SkipIfNotOptedIn();
+        await EnsureProfileAsync();
         if (!NonoIntegration.ToolAvailable("swift")) Assert.Skip("swift is not on PATH");
 
         using var repo = CreateScratchRepo("swift-sandbox-test");
@@ -43,14 +45,18 @@ public sealed class NonoRealBuildTests
         var sut = new SandboxedTestRunner(
             new ShellTestRunner(TimeSpan.FromMinutes(3)), config);
 
-        Assert.Equal(0, (await sut.RunAsync(repo.Root, "swift build", CancellationToken.None)).ExitCode);
-        Assert.Equal(0, (await sut.RunAsync(repo.Root, "swift test", CancellationToken.None)).ExitCode);
+        // SwiftPM's manifest sandbox cannot nest inside nono's: "sandbox_apply: Operation not permitted".
+        var build = await sut.RunAsync(repo.Root, "swift build --disable-sandbox", CancellationToken.None);
+        Assert.True(build.ExitCode == 0, build.Output);
+        var test = await sut.RunAsync(repo.Root, "swift test --disable-sandbox", CancellationToken.None);
+        Assert.True(test.ExitCode == 0, test.Output);
     }
 
     [Fact]
     public async Task RealBuild_Node_NpmInstallTest_InSandbox()
     {
         SkipIfNotOptedIn();
+        await EnsureProfileAsync();
         if (!NonoIntegration.ToolAvailable("node") || !NonoIntegration.ToolAvailable("npm"))
             Assert.Skip("node/npm is not on PATH");
 
@@ -69,6 +75,7 @@ public sealed class NonoRealBuildTests
     public async Task RealVerify_ShellCommandWithSpaces_RunsThroughNonoSandbox()
     {
         SkipIfNotOptedIn();
+        await EnsureProfileAsync();
 
         using var repo = CreateScratchRepo("shell-verify-sandbox");
         var config = TestConfig();
@@ -97,6 +104,10 @@ public sealed class NonoRealBuildTests
         if (!NonoIntegration.ToolAvailable("nono"))
             Assert.Skip("nono is not on PATH.");
     }
+
+    // The suite points XDG_CONFIG_HOME at a fresh temp directory, where no run has written the
+    // vr-guard profile yet; without it nono refuses every command ("profile file not found").
+    private static Task<string> EnsureProfileAsync() => NonoProfileEnsurer.EnsureAsync(host: SandboxHost.Local);
 
     private static ScratchRepo CreateScratchRepo(string name)
     {

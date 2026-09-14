@@ -70,7 +70,7 @@ public sealed partial class TestCommandDetectorTests
     [InlineData("cargo test", null)]
     [InlineData("go test ./...", null)]
     [InlineData("dotnet test", null)]
-    [InlineData("swift test", null)]
+    [InlineData("swift test --disable-sandbox", null)]
     [InlineData("./gradlew test", null)]
     [InlineData("bundle exec rake test", null)]
     [InlineData("npm test", null)]

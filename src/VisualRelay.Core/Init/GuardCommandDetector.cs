@@ -11,7 +11,7 @@ namespace VisualRelay.Core.Init;
 /// (<c>*.slnx</c> or <c>*.sln</c>) exists in the repo root, appends
 /// <c>dotnet format &lt;solution&gt; --verify-no-changes</c>. When a
 /// SwiftPM manifest (<c>Package.swift</c>) exists, appends
-/// <c>swift build</c>. Toolchain checks are appended even when no guard
+/// <c>swift build --disable-sandbox</c>. Toolchain checks are appended even when no guard
 /// scripts exist. Returns <c>null</c> when neither guards nor a recognized
 /// toolchain marker is found — guard detection never blocks init.
 /// <para>
@@ -63,10 +63,11 @@ public static partial class GuardCommandDetector
             parts.Add($"dotnet format {Path.GetFileName(solution)} --verify-no-changes");
         }
 
-        // Append "swift build" when a SwiftPM manifest exists.
+        // Append "swift build" when a SwiftPM manifest exists, with SwiftPM's own manifest
+        // sandbox off: it cannot nest inside VR's sandbox on macOS.
         if (File.Exists(Path.Combine(rootPath, "Package.swift")))
         {
-            parts.Add("swift build");
+            parts.Add("swift build --disable-sandbox");
         }
 
         if (parts.Count == 0)

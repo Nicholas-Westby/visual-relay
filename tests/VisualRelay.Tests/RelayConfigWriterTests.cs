@@ -124,12 +124,12 @@ public sealed partial class RelayConfigWriterTests
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
 
-        RelayConfigWriter.Write(repo.Root, "swift test");
+        RelayConfigWriter.Write(repo.Root, "swift test --disable-sandbox");
 
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
-        Assert.Equal("swift test", result.Config.TestCommand);
-        Assert.Equal("swift build", result.Config.GuardCommand);
+        Assert.Equal("swift test --disable-sandbox", result.Config.TestCommand);
+        Assert.Equal("swift build --disable-sandbox", result.Config.GuardCommand);
     }
 
     [Fact]

@@ -14,7 +14,7 @@ namespace VisualRelay.Core.Init;
 //   4. Python        (pyproject.toml / setup.py / pytest.ini) → "pytest"
 //   5. Rust          (Cargo.toml)                 → "cargo test"
 //   6. Go            (go.mod)                     → "go test ./..."
-//   7. Swift         (Package.swift)              → "swift test"
+//   7. Swift         (Package.swift)              → "swift test --disable-sandbox"
 //   8. Maven         (pom.xml)                    → "./mvnw test" | "mvn test"
 //   9. Gradle        (build.gradle[.kts] / settings.gradle[.kts])
 //                                                 → "./gradlew test" | "gradle test"
@@ -88,7 +88,9 @@ public static partial class TestCommandDetector
         // 7. Swift (SwiftPM)
         if (File.Exists(Path.Combine(rootPath, "Package.swift")))
         {
-            candidates.Add("swift test");
+            // SwiftPM compiles the manifest under sandbox-exec, which macOS refuses inside VR's
+            // own sandbox ("sandbox_apply: Operation not permitted"): swift-format never built.
+            candidates.Add("swift test --disable-sandbox");
         }
 
         // 8. Maven. `pom.xml` is REQUIRED by a Maven build, so it is the single
