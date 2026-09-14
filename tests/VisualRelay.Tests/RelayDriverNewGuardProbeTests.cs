@@ -126,6 +126,8 @@ public sealed class RelayDriverNewGuardProbeTests
         var outcome = await driver.RunTaskAsync(repo.Root, "guard-timeout");
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
         Assert.NotNull(outcome.Reason);
-        Assert.Contains("timeout", outcome.Reason, StringComparison.OrdinalIgnoreCase);
+        // The reason is the failure's first line, so the header itself says it timed out.
+        Assert.DoesNotContain('\n', outcome.Reason);
+        Assert.Contains("timed out", outcome.Reason, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -114,6 +114,7 @@ public sealed partial class RelayDriver
         if (cancellationToken.IsCancellationRequested)
             return await WindDownCancelledRunAsync(rootPath, runId, taskId, taskDirectory, statusEntries);
 
+        (reason, details) = FlagReason.Split(reason, details);
         var workUncaptured = false;
         try
         {

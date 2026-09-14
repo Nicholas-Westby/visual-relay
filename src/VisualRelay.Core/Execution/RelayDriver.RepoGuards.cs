@@ -202,8 +202,9 @@ public sealed partial class RelayDriver
             var result = await _dependencies.TestRunner.RunAsync(rootPath, scriptPath, ct);
             if (result.TimedOut)
             {
+                // The header is the first line, which is all a flag's reason keeps.
                 anyTimedOut = true;
-                failures.Add($"--- New guard failed: {scriptPath} (exit {result.ExitCode}) ---\n{result.Output}");
+                failures.Add($"--- New guard timed out: {scriptPath} (exit {result.ExitCode}) ---\n{result.Output}");
             }
             else if (result.ExitCode != 0)
             {

@@ -27,8 +27,9 @@ public static class DrainSummaryLog
 
         var line = $"{DateTimeOffset.UtcNow:O} {phase,-7} {taskId} {milestone}";
         line += $" version={Domain.VersionHelper.ReadInformationalVersion()}";
+        // One line per milestone: a flag reason once brought a whole 80 KB test log along.
         if (!string.IsNullOrWhiteSpace(detail))
-            line += $" ({detail})";
+            line += $" ({Execution.FlagReason.OneLine(detail)})";
         line += Environment.NewLine;
 
         lock (Gate)
