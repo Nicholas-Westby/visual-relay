@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace VisualRelay.Core.Init;
 
@@ -21,7 +22,7 @@ namespace VisualRelay.Core.Init;
 /// runs the full check gate at Verify.
 /// </para>
 /// </summary>
-public static class GuardCommandDetector
+public static partial class GuardCommandDetector
 {
     /// <summary>
     /// Detects the guard command or returns <c>null</c> when no guards or
@@ -76,7 +77,9 @@ public static class GuardCommandDetector
 
     /// <summary>
     /// The name of the policy script <c>package.json</c> declares — <c>check</c> first,
-    /// then <c>lint</c> — or <c>null</c> when it declares neither (or cannot be read).
+    /// then <c>lint</c> — or <c>null</c> when it declares neither (or cannot be read). A script
+    /// that rewrites files is passed over: a guard runs after review, and markedjs/marked's
+    /// <c>eslint --fix</c> would have edited the task's files there and never failed on a fixable problem.
     /// </summary>
     private static string? ReadPackageJsonPolicyScript(string rootPath)
     {
@@ -93,7 +96,8 @@ public static class GuardCommandDetector
             {
                 if (scripts.TryGetProperty(name, out var script)
                     && script.ValueKind == JsonValueKind.String
-                    && !string.IsNullOrWhiteSpace(script.GetString()))
+                    && !string.IsNullOrWhiteSpace(script.GetString())
+                    && !RewritesFiles().IsMatch(script.GetString()!))
                     return name;
             }
         }
@@ -104,4 +108,8 @@ public static class GuardCommandDetector
 
         return null;
     }
+
+    // eslint's --fix, prettier's and biome's --write; not --fix-dry-run, which only reports.
+    [GeneratedRegex(@"(?<![\w-])--(?:fix|write)(?![\w-])")]
+    private static partial Regex RewritesFiles();
 }

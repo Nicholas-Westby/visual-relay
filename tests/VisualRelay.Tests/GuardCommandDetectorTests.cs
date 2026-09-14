@@ -149,6 +149,35 @@ public sealed class GuardCommandDetectorTests
         Assert.Null(GuardCommandDetector.Detect(repo.Root));
     }
 
+    /// <summary>
+    /// A guard checks; it must not rewrite what it checks. Measured bootstrapping markedjs/marked on
+    /// the Mac: its lint script is <c>eslint --fix</c>, so the guard would have edited the task's files
+    /// after review and could never fail on a problem it knows how to fix.
+    /// </summary>
+    /// <param name="lint">A lint script that rewrites files.</param>
+    [Theory]
+    [InlineData("eslint --fix")]
+    [InlineData("prettier --write . && eslint .")]
+    [InlineData("biome check --write=true ./src")]
+    public void Detect_LintScriptThatRewritesFiles_IsNotAGuard(string lint)
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"),
+            $$"""{ "scripts": { "test": "mocha", "lint": "{{lint}}" } }""");
+
+        Assert.Null(GuardCommandDetector.Detect(repo.Root));
+    }
+
+    [Fact]
+    public void Detect_CheckScriptThatRewritesFiles_FallsBackToAReadOnlyLint()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"),
+            """{ "scripts": { "check": "biome check --write", "lint": "eslint --fix-dry-run ." } }""");
+
+        Assert.Equal("npm run lint", GuardCommandDetector.Detect(repo.Root));
+    }
+
     /// <summary>The repo's own script chains after its guard scripts, before .NET.</summary>
     [Fact]
     public void Detect_GuardsAndNodeAndSolution_ChainsNodeScriptInTheMiddle()
