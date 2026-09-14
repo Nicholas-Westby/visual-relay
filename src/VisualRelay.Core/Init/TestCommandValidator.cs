@@ -187,7 +187,9 @@ public sealed class TestCommandValidator(ITestRunner runner)
          // dotnet in a folder with several solutions or projects: "Specify" read as the "spec" marker.
          "specify which",
          // dotnet test refusing a solution that mixes test runners, whose message says "test runner".
-         "all projects must use that test runner"])
+         "all projects must use that test runner",
+         // dotnet test on a solution without a test project: Ocelot's samples solution was kept as its suite.
+         "no test projects were found"])
         .Any(refusal => output.Contains(refusal, StringComparison.OrdinalIgnoreCase));
 }
 
