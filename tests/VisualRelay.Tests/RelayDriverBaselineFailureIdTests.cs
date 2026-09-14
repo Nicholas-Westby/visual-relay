@@ -42,6 +42,22 @@ public sealed class RelayDriverBaselineFailureIdTests
         Assert.Equal("new test failures: LibRssTest::testNewlyBroken", outcome.Reason);
     }
 
+    /// <summary>Real go output: package b stopped compiling while a's old failure stayed.</summary>
+    [Fact]
+    public async Task BaselineVerify_APackageThatNoLongerBuilds_IsNewThoughTheOldFailureRemains()
+    {
+        using var repo = TestRepository.Create();
+        var (outcome, _) = await RunAsync(repo,
+            "# example.com/vrids/b [example.com/vrids/b.test]\nb/b_test.go:6:18: undefined: nope\n"
+            + "--- FAIL: TestAddWrongly (0.00s)\n    a_test.go:7: got 3\nFAIL\n"
+            + "FAIL\texample.com/vrids/a\t0.004s\nFAIL\texample.com/vrids/b [build failed]\nFAIL\n",
+            "--- FAIL: TestAddWrongly (0.00s)\n    a_test.go:7: got 3\nFAIL\n"
+            + "FAIL\texample.com/vrids/a\t0.004s\nok  \texample.com/vrids/b\t0.004s\nFAIL\n");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.Equal("new test failures: example.com/vrids/b [build failed]", outcome.Reason);
+    }
+
     [Fact]
     public async Task BaselineVerify_PytestFailureTheBaseAlsoHas_IsPreExisting()
     {

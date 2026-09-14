@@ -6,9 +6,9 @@ namespace VisualRelay.Tests;
 /// <see cref="TestFailureIds"/> names each failing test the same way in any run of the suite. Every
 /// sample is a runner's real output: dotnet, go, PHPUnit and Surefire from the Windows arm's eval
 /// repositories (LiteDB, gorilla/mux, FreshRSS, commons-lang), unittest from its distro, and pytest,
-/// cargo, node:test and rspec from small suites run on the Mac.
+/// cargo, node:test, rspec, jest, vitest and node-tap from small suites run on the Mac.
 /// </summary>
-public sealed class TestFailureIdsTests
+public sealed partial class TestFailureIdsTests
 {
     private static string[] Ids(string output) => [.. TestFailureIds.Extract(output).Order(StringComparer.Ordinal)];
 
@@ -44,11 +44,12 @@ public sealed class TestFailureIdsTests
     }
 
     [Fact]
-    public void Extract_Go_NamesTestsAndSubtestsButNotThePackageLine()
+    public void Extract_Go_NamesTestsSubtestsAndTheFailingPackage()
     {
         Assert.Equal(
             ["TestMethodsKeepsCallerSlice", "TestMethodsKeepsCallerSlice/caller_slice_is_left_as_passed",
-             "TestMethodsKeepsCallerSlice/caller_slice_with_spare_capacity_is_left_as_passed", "TestSchemesKeepsCallerSlice"],
+             "TestMethodsKeepsCallerSlice/caller_slice_with_spare_capacity_is_left_as_passed", "TestSchemesKeepsCallerSlice",
+             "github.com/gorilla/mux"],
             Ids("--- FAIL: TestMethodsKeepsCallerSlice (0.00s)\n"
                 + "    --- FAIL: TestMethodsKeepsCallerSlice/caller_slice_is_left_as_passed (0.00s)\n"
                 + "    --- FAIL: TestMethodsKeepsCallerSlice/caller_slice_with_spare_capacity_is_left_as_passed (0.00s)\n"
@@ -91,7 +92,7 @@ public sealed class TestFailureIdsTests
     }
 
     [Fact]
-    public void Extract_CargoNodeRspecJestVitestAndTap_NameTheirTests()
+    public void Extract_CargoNodeRspecVitestAndTap_NameTheirTests()
     {
         Assert.Equal(["tests::adds_wrongly_on_purpose", "tests::nested::deep_fail"], Ids(
             "test tests::adds ... ok\ntest tests::nested::deep_fail ... FAILED\n"
@@ -102,9 +103,10 @@ public sealed class TestFailureIdsTests
             + "✖ group (3.539167ms)\n\n✖ failing tests:\n\ntest at sample.test.mjs:4:1\n✖ fails on purpose (0.559333ms)\n"));
         Assert.Equal(["Sample fails on purpose", "Sample nested raises"], Ids(
             "rspec ./spec/sample_spec.rb:5 # Sample fails on purpose\nrspec ./spec/sample_spec.rb:9 # Sample nested raises\n"));
-        Assert.Equal(["sum › adds wrongly"], Ids(" FAIL  src/sum.test.js\n  ● sum › adds wrongly\n"));
-        Assert.Equal(["src/sum.test.ts > sum > adds wrongly"], Ids(" FAIL  src/sum.test.ts > sum > adds wrongly\n"));
-        Assert.Equal(["adds wrongly"], Ids("ok 1 - adds\nnot ok 2 - adds wrongly # time=1.2ms\n"));
+        Assert.Equal(["a.test.ts > sum > adds wrongly"], Ids(" FAIL  a.test.ts > sum > adds wrongly\n"));
+        Assert.Equal(["adds wrongly", "sum"], Ids(
+            "        ok 1 - adds\n        not ok 2 - adds wrongly\n          ---\n          compare: ===\n"
+            + "        1..2\n    not ok 1 - sum # time=9.345ms\n"));
     }
 
     [Fact]
