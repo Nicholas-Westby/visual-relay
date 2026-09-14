@@ -71,13 +71,14 @@ public sealed class FirstPartySubagentRunnerTests
     }
 
     /// <summary>
-    /// An answer missing a contract key is invalid, and the reason names the key,
-    /// so the driver's corrective retry has something to say.
+    /// An answer still missing a contract key after its one re-ask is invalid, and the reason names
+    /// the key, so the driver's corrective retry has something to say.
     /// </summary>
     [Fact]
     public async Task AnAnswerMissingAContractKey_IsInvalidAndSaysWhich()
     {
-        var transport = new ScriptedModelTransport().Answer("""{"summary":"no options here"}""");
+        var transport = new ScriptedModelTransport()
+            .Answer("""{"summary":"no options here"}""").Answer("""{"summary":"still no options"}""");
         var sink = new Sink();
 
         var result = await Build(transport, Keys("DEEPSEEK_API_KEY", "HF_TOKEN"), sink)

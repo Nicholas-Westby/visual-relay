@@ -19,10 +19,17 @@ public sealed record StageContractResult(string? Json, string? Error)
 
     /// <summary>
     /// True when nothing in the answer was JSON at all, even after repair. A
-    /// shape mismatch is NOT this: there the model wrote valid JSON and simply
-    /// left a key out, which one more turn is unlikely to change.
+    /// shape mismatch is NOT this: there the model wrote valid JSON and left a
+    /// key out, which <see cref="MissingKey"/> names.
     /// </summary>
     public bool Unparseable { get; init; }
+
+    /// <summary>
+    /// The first required key the best parsed object lacks, or <c>null</c>. Worth one more turn
+    /// too: on the Windows arm, Plan wrote a valid block with no "manifest" while its plan named
+    /// both files it would change, and ten minutes of planning were flagged away.
+    /// </summary>
+    public string? MissingKey { get; init; }
 }
 
 /// <summary>
@@ -117,6 +124,7 @@ public static class StageContractReader
                 : $"the contract is missing the required key \"{missing}\"")
         {
             Repairs = parsedRepairs,
+            MissingKey = missing,
         };
     }
 

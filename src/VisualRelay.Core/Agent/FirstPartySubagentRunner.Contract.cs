@@ -9,8 +9,8 @@ public sealed partial class FirstPartySubagentRunner
 {
     /// <summary>
     /// Reads the stage's contract, and when the answer holds no readable JSON at
-    /// all, spends ONE follow-up turn on the same session asking for a corrected
-    /// block.
+    /// all or lacks a required key, spends ONE follow-up turn on the same session
+    /// asking for a corrected block.
     /// <para>
     /// Across a 27-task run, five stages were discarded on a first read whose
     /// reasoning and code were both correct and already self-verified, and not
@@ -35,11 +35,11 @@ public sealed partial class FirstPartySubagentRunner
     {
         var contract = StageContractReader.Read(result.Answer, invocation.Stage.OutputContract);
         AnnounceRepairs(invocation, contract.Repairs);
-        if (!contract.Unparseable) return (result, contract);
+        if (contract is { Unparseable: false, MissingKey: null }) return (result, contract);
 
         AnnounceReAsk(invocation, contract.Error);
         var retry = await ReAskAsync(
-            route, conversation, invocation, result.Answer, contract.Error, events,
+            route, conversation, invocation, result.Answer, contract.Error, contract.MissingKey, events,
             cancellationToken).ConfigureAwait(false);
 
         // The turn was spent either way, so it counts toward the stage either
@@ -65,6 +65,7 @@ public sealed partial class FirstPartySubagentRunner
         StageInvocation invocation,
         string answer,
         string? error,
+        string? missingKey,
         IAgentEventSink events,
         CancellationToken cancellationToken)
     {
@@ -90,7 +91,7 @@ public sealed partial class FirstPartySubagentRunner
         var messages = new List<ChatMessage>(conversation)
         {
             new("assistant", answer),
-            new("user", ReAskPrompt(error, invocation.Stage.OutputContract)),
+            new("user", ReAskPrompt(error, missingKey, invocation.Stage.OutputContract)),
         };
 
         return await loop.RunAsync(
@@ -101,10 +102,22 @@ public sealed partial class FirstPartySubagentRunner
     /// <summary>
     /// The follow-up turn's instruction. It names the parser's own complaint and
     /// asks for the block alone: repeating the reasoning would spend the turn's
-    /// output budget on text nothing reads.
+    /// output budget on text nothing reads. A missing key is filled from what the
+    /// answer already says, never from new work.
     /// </summary>
-    private static string ReAskPrompt(string? error, string contract) =>
-        $"""
+    private static string ReAskPrompt(string? error, string? missingKey, string contract) =>
+        missingKey is not null
+            ? $"""
+              Your reply's contract block could not be read: {error}.
+
+              Reply with ONLY the corrected fenced json block and nothing else — no
+              preamble, no explanation, no second block. Keep every key it already has
+              exactly as it is, and add "{missingKey}" with the value your reply already
+              describes. Do not do any new work to fill it in.
+
+              {contract}
+              """
+            : $"""
         Your reply's contract block could not be read: {error}.
 
         Reply with ONLY the corrected fenced json block and nothing else — no

@@ -135,19 +135,39 @@ public sealed class FirstPartySubagentRunnerContractTests
     }
 
     /// <summary>
-    /// A missing key is not a parse failure: the model wrote valid JSON, just not
-    /// the asked-for shape. Only one answer is scripted, so a re-ask here would
-    /// run the transport off the end of its script and say so.
+    /// A missing key is worth the same one turn. Measured on the Windows arm with
+    /// apache/commons-lang: Plan's answer held valid JSON with "plan" and no "manifest",
+    /// although the plan named both files it would change, and ten minutes of planning were
+    /// flagged away without a second read.
     /// </summary>
     [Fact]
-    public async Task AMissingContractKey_IsNotReAsked()
+    public async Task AMissingContractKey_IsReAskedOnceNamingTheKey()
     {
-        var transport = new ScriptedModelTransport().Answer("""{"summary":"no options here"}""");
+        var transport = new ScriptedModelTransport()
+            .Answer("""{"summary":"no options here"}""").Answer(Corrected);
+        var relayEvents = new InMemoryRelayEventSink();
+
+        var result = await Build(transport, relayEvents).RunAsync(Invocation());
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.Equal(2, transport.Requests.Count);
+        Assert.Matches(@"add (\\u0022|\\"")options(\\u0022|\\"") with the value your reply already", transport.Requests[1]);
+        var reask = Assert.Single(relayEvents.Events, e => e.EventName == "contract_reask");
+        Assert.Contains("missing the required key \"options\"", reask.Data!["error"], StringComparison.Ordinal);
+    }
+
+    /// <summary>A re-ask that still leaves the key out flags with the first complaint, and asks no more.</summary>
+    [Fact]
+    public async Task AContractStillMissingTheKeyAfterTheReAsk_FlagsWithoutAnotherTurn()
+    {
+        var transport = new ScriptedModelTransport()
+            .Answer("""{"summary":"no options here"}""").Answer("""{"summary":"still none"}""");
 
         var result = await Build(transport, new InMemoryRelayEventSink()).RunAsync(Invocation());
 
         Assert.False(result.IsValid);
-        Assert.Single(transport.Requests);
+        Assert.Contains("missing the required key \"options\"", result.Error!, StringComparison.Ordinal);
+        Assert.Equal(2, transport.Requests.Count);
     }
 
     /// <summary>
