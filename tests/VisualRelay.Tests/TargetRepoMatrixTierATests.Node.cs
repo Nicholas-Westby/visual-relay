@@ -1,14 +1,13 @@
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// TypeScript/Node row of the Tier A matrix: the verbatim <c>scripts.test</c>
-/// copy, and the shell mismatch the spec names — init smoke-validates a
-/// candidate with a direct exec while the pipeline later runs the persisted
-/// command through <c>/bin/sh -lc</c>, so the two disagree about <c>&amp;&amp;</c>.
+/// TypeScript/Node row of the Tier A matrix: a <c>scripts.test</c> runs through npm,
+/// and the shell mismatch the spec names — init smoke-validates a candidate with a
+/// direct exec while the pipeline later runs the persisted command through
+/// <c>/bin/sh -lc</c>, so the two disagree about <c>&amp;&amp;</c>.
 /// </summary>
 public sealed partial class TargetRepoMatrixTierATests
 {
@@ -16,17 +15,12 @@ public sealed partial class TargetRepoMatrixTierATests
     private const string ChainedScript = "vitest run && tsc --noEmit";
 
     /// <summary>
-    /// The declared script is copied verbatim — including a <c>&amp;&amp;</c>
-    /// chain — into the candidate list and then into the persisted config, for
-    /// both <c>testCmd</c> and <c>testFileCmd</c>. In the config BYTES the
-    /// ampersands come out as <c>\u0026</c>: the writer uses the default
-    /// <c>System.Text.Json</c> encoder, which escapes <c>&amp;</c>, <c>&lt;</c>
-    /// and <c>&gt;</c> for HTML safety. It round-trips exactly, so nothing
-    /// breaks, but the file a human is invited to hand-edit does not read back
-    /// the way they wrote it.
+    /// The declared script, chain and all, runs through npm the way the project runs it, so the
+    /// config names <c>npm test</c> rather than a copy of the script. A chained script has no
+    /// trailing argument list, so no per-file form is seeded.
     /// </summary>
     [Fact]
-    public async Task Row_Node_ScriptsTestIsCopiedVerbatimIncludingAndChain()
+    public async Task Row_Node_ChainedTestScriptRunsThroughNpm()
     {
         var root = NewRepo("node");
         try
@@ -35,22 +29,39 @@ public sealed partial class TargetRepoMatrixTierATests
             Write(root, "src/index.ts", "export const answer = 42;\n");
             Write(root, "src/index.test.ts");
 
-            Assert.Equal([ChainedScript], TestCommandDetector.DetectCandidates(root));
+            Assert.Equal(["npm test"], TestCommandDetector.DetectCandidates(root));
 
             var (result, config) = await BootstrapAsync(root);
 
-            Assert.Equal(ChainedScript, result.TestCommand);
-            Assert.Contains("\"testCmd\": \"vitest run \\u0026\\u0026 tsc --noEmit\"",
-                config, StringComparison.Ordinal);
-            // A chained script has no trailing argument list, so no per-file form is seeded.
+            Assert.Equal("npm test", result.TestCommand);
             Assert.Contains("\"testFileCmd\": null", config, StringComparison.Ordinal);
             // No format script and no prettier config → no formatter is inferred, so the
             // repo is never reformatted by a tool it did not ask for.
             Assert.DoesNotContain("\"formatCmd\"", config, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TestFileSystem.DeleteDirectoryResilient(root);
+        }
+    }
 
-            // The escaping is lossless: the loader hands the pipeline the chain back.
-            var loaded = await RelayConfigLoader.TryLoadAsync(root);
-            Assert.Equal(ChainedScript, loaded.Config.TestCommand);
+    /// <summary>
+    /// A script whose runner is jest keeps jest's targeted form beside <c>npm test</c>.
+    /// moment/luxon's script is "jest --coverage".
+    /// </summary>
+    [Fact]
+    public async Task Row_Node_JestScriptKeepsItsTargetedForm()
+    {
+        var root = NewRepo("node-jest");
+        try
+        {
+            Write(root, "package.json", """{ "scripts": { "test": "jest --coverage" } }""");
+            Write(root, "src/index.js", "module.exports = 42;\n");
+
+            var (result, config) = await BootstrapAsync(root);
+
+            Assert.Equal("npm test", result.TestCommand);
+            Assert.Contains("\"testFileCmd\": \"npx jest {files}\"", config, StringComparison.Ordinal);
         }
         finally
         {

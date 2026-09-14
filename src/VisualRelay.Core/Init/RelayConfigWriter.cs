@@ -35,7 +35,7 @@ public static partial class RelayConfigWriter
         // deliberate "Incomplete" exhaustion signal and must not gain one.
         if (testCommand is not null)
         {
-            var perFile = TestCommandDetector.PerFileForm(testCommand);
+            var perFile = TestCommandDetector.PerFileForm(testCommand, rootPath);
             json["testFileCmd"] = perFile is not null ? JsonValue.Create(perFile) : null;
         }
 
@@ -76,7 +76,7 @@ public static partial class RelayConfigWriter
         // Re-derive testFileCmd from the now-real testCmd, so the upgraded config
         // carries no placeholder targeted command. Mirrors Write: the toolchain's
         // real per-file form, or null when it has none.
-        var perFile = TestCommandDetector.PerFileForm(testCommand);
+        var perFile = TestCommandDetector.PerFileForm(testCommand, rootPath);
         json["testFileCmd"] = perFile is not null ? JsonValue.Create(perFile) : null;
 
         // Now that a real toolchain exists, fill in the format/guard commands —

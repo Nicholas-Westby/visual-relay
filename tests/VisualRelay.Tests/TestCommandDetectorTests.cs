@@ -70,12 +70,12 @@ public sealed partial class TestCommandDetectorTests
     // ── New markers: package.json scripts.test ─────────────────────────
 
     [Fact]
-    public void Detect_PackageJsonWithScriptsTest_ReturnsScriptValue()
+    public void Detect_PackageJsonWithScriptsTest_RunsItThroughNpm()
     {
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "package.json"),
             """{ "scripts": { "test": "vitest run" } }""");
-        Assert.Equal("vitest run", TestCommandDetector.Detect(repo.Root));
+        Assert.Equal("npm test", TestCommandDetector.Detect(repo.Root));
     }
 
     [Fact]
@@ -160,8 +160,8 @@ public sealed partial class TestCommandDetectorTests
 
         var candidates = TestCommandDetector.DetectCandidates(repo.Root);
 
-        // package.json (scripts.test) outranks bun.lock now.
-        Assert.Equal(["vitest run", "bun test"], candidates);
+        // package.json (scripts.test, through bun's script runner) outranks bun's own test runner.
+        Assert.Equal(["bun run test", "bun test"], candidates);
     }
 
     [Fact]

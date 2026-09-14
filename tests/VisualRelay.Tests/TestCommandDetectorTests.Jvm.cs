@@ -133,7 +133,7 @@ public sealed partial class TestCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "pom.xml"), "<project/>");
         File.WriteAllText(Path.Combine(repo.Root, "package.json"),
             """{ "scripts": { "test": "vitest run" } }""");
-        Assert.Equal(["vitest run", "mvn test"], TestCommandDetector.DetectCandidates(repo.Root));
+        Assert.Equal(["npm test", "mvn test"], TestCommandDetector.DetectCandidates(repo.Root));
     }
 
     /// <summary>

@@ -29,7 +29,7 @@ public sealed partial class TestCommandDetectorTests
         var candidates = TestCommandDetector.DetectToolchainCandidates(
             repo.Root, new Dictionary<string, int> { [".rs"] = 634, [".json"] = 156, [".js"] = 14 });
 
-        Assert.Equal(new TestCommandCandidate[] { new("cargo test", "rust"), new(ToolingScript, "node") }, candidates);
+        Assert.Equal(new TestCommandCandidate[] { new("cargo test", "rust"), new("npm test", "node") }, candidates);
     }
 
     [Fact]
@@ -40,6 +40,6 @@ public sealed partial class TestCommandDetectorTests
         var candidates = TestCommandDetector.DetectToolchainCandidates(
             repo.Root, new Dictionary<string, int> { [".rs"] = 60, [".ts"] = 40 });
 
-        Assert.Equal([ToolingScript, "cargo test"], candidates.Select(c => c.Command));
+        Assert.Equal(["npm test", "cargo test"], candidates.Select(c => c.Command));
     }
 }

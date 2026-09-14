@@ -67,7 +67,7 @@ public sealed class ProjectBootstrapperTestLayoutTests
         var result = await BootstrapAsync(repo, sim, [.. tracked]);
 
         Assert.Equal("cargo test", result.TestCommand);
-        Assert.Equal(["node --test tests/tooling/*.test.js"], result.OtherTestCommands);
+        Assert.Equal(["npm test"], result.OtherTestCommands);
     }
 
     [Fact]

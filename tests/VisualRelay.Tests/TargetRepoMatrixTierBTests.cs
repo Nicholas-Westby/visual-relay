@@ -78,9 +78,9 @@ public sealed class TargetRepoMatrixTierBTests
 
     /// <summary>
     /// The Node row. A repo whose <c>scripts.test</c> is an <c>&amp;&amp;</c>-chained
-    /// command is detected verbatim, and the chain survives into the config the
-    /// pipeline runs. Init validates with a direct exec while the pipeline runs
-    /// under a shell, which is the mismatch this row exists to pin.
+    /// command is detected as <c>npm test</c>, and a chain an operator writes into the
+    /// config survives intact into the run. Init validates with a direct exec while the
+    /// pipeline runs under a shell, which is the mismatch this row exists to pin.
     /// </summary>
     [Fact]
     public async Task Row_NodeWithChainedTestScript_KeepsTheChainThroughTheWholePipeline()
@@ -91,7 +91,7 @@ public sealed class TargetRepoMatrixTierBTests
             """{ "scripts": { "test": "vitest run && tsc --noEmit" } }""");
 
         var candidates = TestCommandDetector.DetectCandidates(repo.Root);
-        Assert.Contains("vitest run && tsc --noEmit", candidates);
+        Assert.Contains("npm test", candidates);
 
         repo.WriteConfig("vitest run && tsc --noEmit", []);
         repo.WriteTask("add-status", "# Add status\n");

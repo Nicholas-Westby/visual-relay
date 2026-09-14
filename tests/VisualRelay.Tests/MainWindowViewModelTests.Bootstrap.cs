@@ -106,19 +106,22 @@ public sealed partial class MainWindowViewModelTests
     {
         using var repo = TestRepository.Create();
         // Greenfield: bootstrap to a placeholder, then a "scaffold task" added a toolchain
-        // marker. package.json's scripts.test = "true" keeps the upgrade's real validation
-        // hermetic (no node needed — the detected command IS "true", which always exits 0).
+        // marker. The injected validation runner keeps the upgrade hermetic: no npm needed.
         await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: new GitSimEngine());
         File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{\"scripts\":{\"test\":\"true\"}}");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            InitValidationRunnerFactory = _ => new ScriptedTestRunner(new TestRunResult(0, "ok")),
+        };
         await viewModel.LoadInitialAsync();
         viewModel.IsHuggingFaceConfigured = true;
 
         await viewModel.EnsureRunnableAsync(pendingTaskId: null);
 
         var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal("true", loaded.Config.TestCommand); // adopted the detected command
+        Assert.Equal("npm test", loaded.Config.TestCommand); // adopted the detected command
         Assert.NotEqual(ProjectBootstrapper.PlaceholderTestCommand, loaded.Config.TestCommand);
     }
 }

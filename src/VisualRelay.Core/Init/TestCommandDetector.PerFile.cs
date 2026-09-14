@@ -32,6 +32,43 @@ public static partial class TestCommandDetector
     }
 
     /// <summary>
+    /// The per-file form of a command run in <paramref name="rootPath"/>. A package manager's test
+    /// command takes it from the script the package manager runs, and a runner the project installs
+    /// is reached through npx: the script's binary is no more on a plain shell's PATH for one file
+    /// than for the whole suite.
+    /// </summary>
+    /// <param name="testCommand">The detected whole-suite command.</param>
+    /// <param name="rootPath">The repository the command runs in.</param>
+    /// <returns>The command with a <c>{files}</c> token, or null.</returns>
+    public static string? PerFileForm(string testCommand, string rootPath)
+    {
+        if (!PackageManagerTests.Contains(testCommand.Trim()) || ReadPackageJsonScriptsTest(rootPath) is not { } script)
+            return PerFileForm(testCommand);
+
+        if (PerFileForm(script) is not { } form)
+            return null;
+        var runner = form.Split(' ', 2)[0];
+        return !runner.Contains('/') && File.Exists(Path.Combine(rootPath, "node_modules", ".bin", runner))
+            ? $"npx {form}"
+            : form;
+    }
+
+    private static readonly string[] PackageManagerTests = ["npm test", "yarn test", "pnpm test", "bun run test"];
+
+    /// <summary>
+    /// The package manager commands that run a package.json test script: the lockfile's manager, and
+    /// npm after yarn or pnpm, which can run the same installed script when that manager is missing.
+    /// </summary>
+    private static IReadOnlyList<string> PackageManagerTestCommands(string rootPath)
+    {
+        if (File.Exists(Path.Combine(rootPath, "bun.lock")) || File.Exists(Path.Combine(rootPath, "bun.lockb")))
+            return ["bun run test"];
+        if (File.Exists(Path.Combine(rootPath, "pnpm-lock.yaml")))
+            return ["pnpm test", "npm test"];
+        return File.Exists(Path.Combine(rootPath, "yarn.lock")) ? ["yarn test", "npm test"] : ["npm test"];
+    }
+
+    /// <summary>
     /// The two runners whose detected command must be REPLACED rather than extended.
     /// Both take file paths, but the detected string is routinely a wrapper script,
     /// and a bare <c>vitest</c> is watch mode — a targeted run that never returns.

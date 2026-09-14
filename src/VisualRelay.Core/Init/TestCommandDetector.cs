@@ -9,7 +9,7 @@ namespace VisualRelay.Core.Init;
 //
 // Priority order (strongest → weakest signal):
 //   1. .NET         (*.slnx / *.sln / *.csproj)  → "dotnet test"
-//   2. Node          (package.json)              → scripts.test value or "npm test"
+//   2. Node          (package.json)              → the test script through its package manager
 //   3. Bun           (bun.lock / bunfig.toml)     → "bun test"
 //   4. Python        (pyproject.toml / setup.py / pytest.ini) → "pytest"
 //   5. Rust          (Cargo.toml)                 → "cargo test"
@@ -68,11 +68,14 @@ public static partial class TestCommandDetector
         }
         Tag("dotnet");
 
-        // 2. Node — parse scripts.test when available, otherwise fall back to "npm test"
+        // 2. Node — a test script through the project's package manager, which puts node_modules/.bin
+        //    on the PATH: a copied body such as "jest --coverage" is not runnable in a plain shell.
         if (File.Exists(Path.Combine(rootPath, "package.json")))
         {
-            var script = ReadPackageJsonScriptsTest(rootPath);
-            candidates.Add(script ?? "npm test");
+            if (ReadPackageJsonScriptsTest(rootPath) is null)
+                candidates.Add("npm test");
+            else
+                candidates.AddRange(PackageManagerTestCommands(rootPath));
         }
         Tag("node");
 
