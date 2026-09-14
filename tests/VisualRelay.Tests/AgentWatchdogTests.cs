@@ -165,12 +165,13 @@ public sealed class AgentWatchdogTests
     public void TheKillSignature_NamesTheLastSignal()
     {
         var (watchdog, clock) = Build();
-        watchdog.Publish(Event(AgentEventKind.ToolCallStarted, clock.GetUtcNow()));
+        // Not a tool call: one still running is no stall (AgentWatchdogToolCallTests).
+        watchdog.Publish(Event(AgentEventKind.Retry, clock.GetUtcNow()));
 
         clock.Advance(FirstOutput + TimeSpan.FromSeconds(1));
 
         var (_, kill) = watchdog.Evaluate();
-        Assert.Equal("ToolCallStarted", kill!.LastSignal);
+        Assert.Equal("Retry", kill!.LastSignal);
         Assert.True(kill.SilenceMs >= FirstOutput.TotalMilliseconds);
     }
 

@@ -42,6 +42,11 @@ public enum AgentWatchdogOutcome
 /// sampler did, and it is why a request that burned CPU while producing nothing
 /// survived to the absolute ceiling instead of being cut in seconds.
 /// </para>
+/// <para>
+/// A tool call in flight stops both: it is not a stall, and the model is not silent
+/// while it waits for the result. The tool's own timeout bounds it, and the ceiling
+/// still bounds the stage.
+/// </para>
 /// </summary>
 /// <param name="firstOutputTimeout">How long to wait for the first model output.</param>
 /// <param name="inactivityTimeout">How long any silence may last.</param>
@@ -68,6 +73,7 @@ public sealed class AgentWatchdog(
     private bool _started;
     private bool _sawOutput;
     private bool _requestInFlight;
+    private DateTimeOffset? _toolStartedAt;
     private string _lastSignal = "none";
 
     /// <summary>Starts the clocks. Call once, as the stage begins.</summary>
@@ -100,6 +106,19 @@ public sealed class AgentWatchdog(
                 _sawOutput = true;
             }
 
+            // The model cannot speak while a tool runs, so the tool's time is taken off
+            // its silence: the output clock moves forward by exactly that long.
+            switch (agentEvent.Kind)
+            {
+                case AgentEventKind.ToolCallStarted:
+                    _toolStartedAt = now;
+                    break;
+                case AgentEventKind.ToolCallFinished when _toolStartedAt is { } toolStarted:
+                    _lastOutput += now - toolStarted;
+                    _toolStartedAt = null;
+                    break;
+            }
+
             _requestInFlight = agentEvent.Kind switch
             {
                 AgentEventKind.TurnStarted => true,
@@ -128,7 +147,11 @@ public sealed class AgentWatchdog(
             var now = _timeProvider.GetUtcNow();
             var elapsed = now - _startedAt;
             var sinceActivity = now - _lastActivity;
-            var sinceOutput = now - _lastOutput;
+            // A running tool publishes nothing until it returns, yet it is bounded by its own
+            // timeout and the stage by the ceiling below: measured with crawl, a 600 s build
+            // was killed as a stall while its command still had time. Its time is not silence.
+            var toolRunning = _toolStartedAt is not null;
+            var sinceOutput = (_toolStartedAt ?? now) - _lastOutput;
 
             if (absoluteCeiling > TimeSpan.Zero && elapsed >= absoluteCeiling)
                 return Fire(AgentWatchdogOutcome.FiredAbsoluteCeiling, "absolute_ceiling", elapsed);
@@ -139,7 +162,7 @@ public sealed class AgentWatchdog(
             // Before any output has arrived the first-output budget applies;
             // after it, the ordinary inactivity budget does.
             var stallBudget = _sawOutput ? inactivityTimeout : firstOutputTimeout;
-            if (stallBudget > TimeSpan.Zero && sinceActivity >= stallBudget)
+            if (!toolRunning && stallBudget > TimeSpan.Zero && sinceActivity >= stallBudget)
                 return Fire(AgentWatchdogOutcome.FiredStall, "stall", sinceActivity);
 
             // Activity continues but the model has gone quiet mid-request: the
