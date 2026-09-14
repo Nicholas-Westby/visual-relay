@@ -198,7 +198,7 @@ public static class PlanningWorktree
         {
             foreach (var runDir in Directory.GetDirectories(repoHashDir))
             {
-                try { Directory.Delete(runDir, recursive: true); }
+                try { WorktreeLinks.UnlinkAll(runDir); Directory.Delete(runDir, recursive: true); }
                 catch { /* concurrency-safe */ }
             }
         }

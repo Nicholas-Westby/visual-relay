@@ -172,6 +172,7 @@ public static class PlanPhaseRunner
                 runnerFactory(sink), testRunner, sink, gitInvoker, environmentAccessor, SandboxHost: sandboxHost);
             var options = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
             var driver = new RelayDriver(dependencies, options);
+            await driver.OverlayCheckoutDependenciesAsync(mainRootPath, worktreePath, taskId, runId, ct);
 
             var outcome = await driver.RunTaskAsync(worktreePath, taskId, ct);
 
@@ -193,7 +194,11 @@ public static class PlanPhaseRunner
         {
             // Fresh token: a cancelled drain must still take its worktrees with it.
             if (worktreePath is not null)
+            {
+                // The overlay may have linked the checkout's large dependencies in here.
+                WorktreeLinks.UnlinkAll(worktreePath);
                 await PlanningWorktree.RemoveAsync(mainRootPath, worktreePath, gitInvoker, CancellationToken.None);
+            }
         }
     }
 }

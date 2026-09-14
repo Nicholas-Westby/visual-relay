@@ -230,8 +230,8 @@ public sealed partial class SplitGuardVerificationTests
         //
         // 2026-09-10: 142 -> 143. The commit-stage regression fix added one fact to
         // GitCommitterTests: only the tracked-changes add keeps the relay exclude.
-        // 2026-09-11: 143 -> 144. One fact for the repo-relative flagged-work bundle.
-        const int baseline = 144;
+        // 2026-09-11: 143 -> 144, the repo-relative flagged-work bundle. 2026-09-13: 144 -> 145, planning worktree deps.
+        const int baseline = 145;
 
         string[] prefixes =
         [

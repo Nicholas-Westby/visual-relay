@@ -59,7 +59,7 @@ public sealed partial class RelayDriver
                 Directory.Delete(dst, recursive: false); // unlink the link node only
                 return;
             }
-            UnlinkOverlaySymlinks(dst);
+            WorktreeLinks.UnlinkAll(dst);
             Directory.Delete(dst, recursive: true);
         }
         catch
