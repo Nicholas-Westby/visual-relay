@@ -66,6 +66,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     [Fact]
     public async Task CreateVerifyWorktree_UnreadableIgnoredFile_PublishesWarnEventAndCompletes()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the file is made unreadable with a POSIX mode, which Windows lacks");
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-warn-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var sink = new InMemoryRelayEventSink();
