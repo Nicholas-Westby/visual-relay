@@ -99,6 +99,26 @@ public sealed partial class MainWindowViewModelTests
             MainWindowViewModel.DescribeBootstrap(result), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Someone else's pre-commit hook does not hide what bootstrap did about the test command.
+    /// Measured on the Mac with moment/luxon, which has a husky hook: the status gave only the hook
+    /// warning, and the placeholder test command bootstrap had written went unmentioned.
+    /// </summary>
+    [Fact]
+    public void DescribeBootstrap_WithAForeignHook_StillSaysWhichTestCommandItSet()
+    {
+        var result = new ProjectBootstrapResult(
+            GitInitialized: false, HookInstalled: false,
+            HookWarning: "A pre-commit hook already exists at /repo/.husky/pre-commit and was not written by Visual Relay.",
+            UsedPlaceholderTestCommand: true, TestCommand: ProjectBootstrapper.PlaceholderTestCommand,
+            ConfigPath: ".relay/config.json");
+
+        var text = MainWindowViewModel.DescribeBootstrap(result);
+
+        Assert.Contains("placeholder test command set", text, StringComparison.Ordinal);
+        Assert.Contains("A pre-commit hook already exists", text, StringComparison.Ordinal);
+    }
+
     private const string ConfigNote = "Config written to .relay/config.json and left uncommitted.";
 
     [Fact]

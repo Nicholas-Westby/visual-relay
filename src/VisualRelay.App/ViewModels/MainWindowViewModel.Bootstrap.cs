@@ -63,13 +63,15 @@ public partial class MainWindowViewModel
     internal static string DescribeBootstrap(ProjectBootstrapResult result)
     {
         var gitNote = result.GitInitialized ? "initialized git repo; " : string.Empty;
-        var headline = result.HookWarning
-            ?? (result.UsedPlaceholderTestCommand
-                ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
-                  + "scaffolds the project; the real test command is adopted automatically once a toolchain appears."
-                : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.{DescribeOtherTestCommands(result)}");
+        // A foreign hook's warning follows the test command sentence instead of replacing it: luxon's
+        // husky hook once hid that bootstrap had written the placeholder.
+        var headline = result.UsedPlaceholderTestCommand
+            ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
+              + "scaffolds the project; the real test command is adopted automatically once a toolchain appears."
+            : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.{DescribeOtherTestCommands(result)}";
+        var warning = result.HookWarning is { } hookWarning ? " " + hookWarning : string.Empty;
         var notes = string.Concat(new[] { result.FormatNote, result.TasksDirNote }.OfType<string>().Select(note => " " + note));
-        return headline + " " + DescribeTestLayout(result.TestLayout) + notes
+        return headline + warning + " " + DescribeTestLayout(result.TestLayout) + notes
                + " Config written to .relay/config.json and left uncommitted.";
     }
 
