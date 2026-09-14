@@ -32,8 +32,10 @@ internal static class LinkedGitDir
         }
 
         var line = text.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith(GitDirPrefix, StringComparison.Ordinal));
-        var gitDir = line?[GitDirPrefix.Length..].Trim();
-        if (string.IsNullOrEmpty(gitDir))
+        if (line is null)
+            return null;
+        var gitDir = line[GitDirPrefix.Length..].Trim();
+        if (gitDir.Length == 0)
             return null;
         if (!gitDir.StartsWith('/') && !Path.IsPathRooted(gitDir))
             gitDir = Path.GetFullPath(Path.Combine(workspaceRoot, gitDir));
