@@ -35,15 +35,21 @@ public sealed class SandboxedTestRunnerWslLaunchTests
         Assert.Equal("/home/alice/repo", args[8]);
         // The target environment travels as env arguments: a wsl.exe child's Windows
         // environment does not cross into Linux.
-        Assert.Equal(new[] { "env", "MSBUILDDISABLENODEREUSE=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1" }, args.Skip(9).Take(3));
+        Assert.Equal(
+            new[]
+            {
+                "env", "MSBUILDDISABLENODEREUSE=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "GRADLE_OPTS=-Dorg.gradle.daemon=false",
+                "ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy=in-process",
+            },
+            args.Skip(9).Take(5));
         Assert.Equal(
             new[]
             {
                 "/usr/local/bin/nono", "run", "--profile", LinuxProfile, "--allow-cwd", "-a", TemplatesGrant,
                 "--diagnostics-json", "--silent", "--",
             },
-            args.Skip(12).Take(10));
-        Assert.Equal(new[] { "/bin/sh", "-c", "go test ./..." }, args.Skip(22));
+            args.Skip(14).Take(10));
+        Assert.Equal(new[] { "/bin/sh", "-c", "go test ./..." }, args.Skip(24));
     }
 
     [Fact]

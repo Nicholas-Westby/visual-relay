@@ -27,12 +27,25 @@ public static partial class SandboxedStage
         // of lingering past the tests; the telemetry opt-out drops the background
         // uploader. Both are ignored by non-.NET targets. (UseSharedCompilation=false
         // in the configured testCmd already disables the Roslyn build server.)
+        //
+        // No Gradle or Kotlin daemon either. Measured on the Windows arm: a sandboxed gradle handed
+        // its build over loopback to a daemon started outside the sandbox, whose tasks then wrote
+        // where no grant allowed, and a daemon started in one sandbox kept its rules for the next
+        // build, which then could not write its own output.
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["MSBUILDDISABLENODEREUSE"] = "1",
             ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
+            ["GRADLE_OPTS"] = NoGradleDaemon,
+            ["ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy"] = "in-process",
         };
     }
+
+    private const string NoGradleDaemon = "-Dorg.gradle.daemon=false";
+
+    // The user's own GRADLE_OPTS (heap size and the like) stay; the daemon switch comes last so it wins.
+    private static string WithNoGradleDaemon(string? existing) =>
+        string.IsNullOrWhiteSpace(existing) ? NoGradleDaemon : $"{existing} {NoGradleDaemon}";
 
     /// <summary>
     /// Builds the target-repo command environment by starting from the
@@ -49,11 +62,18 @@ public static partial class SandboxedStage
 
         var snapshot = UserEnvSnapshot.Load(accessor);
         if (snapshot is null || !snapshot.ContainsKey("PATH"))
-            return new TargetCommandEnvironment(BuildSandboxEnvironment(config), new HashSet<string>());
+        {
+            var overrides = new Dictionary<string, string>(BuildSandboxEnvironment(config))
+            {
+                ["GRADLE_OPTS"] = WithNoGradleDaemon(processEnv.GetValueOrDefault("GRADLE_OPTS")),
+            };
+            return new TargetCommandEnvironment(overrides, new HashSet<string>());
+        }
 
         var merged = new Dictionary<string, string>(snapshot!);
         foreach (var kvp in BuildSandboxEnvironment(config))
             merged[kvp.Key] = kvp.Value;
+        merged["GRADLE_OPTS"] = WithNoGradleDaemon(snapshot.GetValueOrDefault("GRADLE_OPTS"));
 
         var remove = new HashSet<string>();
         foreach (var key in processEnv.Keys)
