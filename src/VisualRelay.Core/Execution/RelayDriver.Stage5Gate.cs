@@ -178,6 +178,12 @@ public sealed partial class RelayDriver
         if (BuildToolStartFailure.IsMatch(output))
             return true;
 
+        // A run that names its failing tests ran tests, whatever else it printed. Measured on the Windows
+        // arm with zeroshot's cargo workspace: members without tests print "running 0 tests", and the
+        // zero-tests checks below recorded two genuine failures as an unproven gate.
+        if (TestFailureIds.Extract(output).Count > 0)
+            return false;
+
         return output.Contains("no tests found", StringComparison.OrdinalIgnoreCase)
             || output.Contains("no tests collected", StringComparison.OrdinalIgnoreCase)
             || ZeroTestsPattern.IsMatch(output)

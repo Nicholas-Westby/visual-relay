@@ -62,6 +62,56 @@ public sealed class RelayDriverStage5GateEnvironmentTests
         Assert.Equal("unproven", RelayDriverStage5GateTests.Stage5Status(repo, "gradle-start").Check);
     }
 
+    // the-open-engine/zeroshot's cargo test --workspace red on the Windows arm, excerpted as captured
+    // (CRLF endings): members without tests print "running 0 tests" around the real failures.
+    private const string CargoWorkspaceRed =
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s\r\n"
+        + "     Running unittests src/lib.rs (target/debug/deps/openengine_cluster_testkit-be28f6325ed769ec)\r\n"
+        + "\r\n"
+        + "running 1 test\r\n"
+        + "test artifacts::api_reference::tests::renderer_projects_an_unknown_method_from_openrpc ... ok\r\n"
+        + "\r\n"
+        + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\r\n"
+        + "\r\n"
+        + "     Running unittests src/bin/generate-cluster-protocol.rs (target/debug/deps/generate_cluster_protocol-f08bda3db7bee341)\r\n"
+        + "\r\n"
+        + "running 0 tests\r\n"
+        + "\r\n"
+        + "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\r\n"
+        + "\r\n"
+        + "     Running unittests src/bin/openengine-cluster-stdio.rs (target/debug/deps/openengine_cluster_stdio-a413bb0c913b0fb3)\r\n"
+        + "\r\n"
+        + "running 0 tests\r\n"
+        + "\r\n"
+        + "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\r\n"
+        + "\r\n"
+        + "test native_v2_target::tests::contracts::target_access_is_explicit_and_hosted_remains_the_default ... ok\r\n"
+        + "test native_v2_target::tests::contracts::target_origins_match_the_existing_hosted_cli_contract ... FAILED\r\n"
+        + "test native_v2_target::tests::contracts::target_origins_reject_an_invalid_port_or_an_empty_host ... FAILED\r\n"
+        + "\r\n"
+        + "failures:\r\n"
+        + "    native_v2_target::tests::contracts::target_origins_match_the_existing_hosted_cli_contract\r\n"
+        + "    native_v2_target::tests::contracts::target_origins_reject_an_invalid_port_or_an_empty_host\r\n"
+        + "\r\n"
+        + "test result: FAILED. 39 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s\r\n"
+        + "\r\n"
+        + "error: test failed, to rerun pass `-p zeroshot --bin zeroshot`\r\n";
+
+    /// <summary>
+    /// A red that names its failing tests is a red, whatever "0 tests" lines appear beside it. The
+    /// zero-tests check matched the "running 0 tests" of zeroshot's test-less workspace members and
+    /// recorded two genuine failures as an unproven gate.
+    /// </summary>
+    [Fact]
+    public async Task ARedThatNamesItsFailingTests_IsARedBesideEmptyWorkspaceMembers()
+    {
+        using var repo = TestRepository.Create();
+        var (_, events) = await RunWithRedGateOutputAsync(repo, "cargo-red", CargoWorkspaceRed);
+
+        Assert.DoesNotContain(events.Events, e => e.EventName == "author_test_gate_unusable");
+        Assert.Equal("red", RelayDriverStage5GateTests.Stage5Status(repo, "cargo-red").Check);
+    }
+
     [Fact]
     public async Task ACompileErrorFromTheNewTest_IsStillARed()
     {
