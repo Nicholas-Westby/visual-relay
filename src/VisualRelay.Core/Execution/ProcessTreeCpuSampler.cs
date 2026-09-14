@@ -8,18 +8,20 @@ namespace VisualRelay.Core.Execution;
 /// Samples cumulative CPU time of a process tree. A filesystem-independent
 /// activity signal: a subagent doing real work accrues CPU even when its stdout is
 /// quiet and its trace-file view is frozen (virtio-fs attr-cache staleness).
-/// Dispatches by OS — a single <c>ps</c> snapshot on Unix, a Toolhelp snapshot plus
+/// Dispatches by OS — /proc on Linux, a single <c>ps</c> snapshot on macOS, a Toolhelp snapshot plus
 /// <see cref="Process.TotalProcessorTime"/> on Windows — and shares one OS-agnostic
 /// tree summation. Returns null when sampling fails; callers must treat null as
 /// "no signal", never as activity.
 /// </summary>
-internal static class ProcessTreeCpuSampler
+internal static partial class ProcessTreeCpuSampler
 {
     internal static long? TrySampleTreeCpuMs(int rootPid)
     {
         try
         {
-            return OperatingSystem.IsWindows() ? SampleWindows(rootPid) : SamplePosix(rootPid);
+            return OperatingSystem.IsWindows() ? SampleWindows(rootPid)
+                : OperatingSystem.IsLinux() ? SampleProc(rootPid)
+                : SamplePosix(rootPid);
         }
         catch
         {

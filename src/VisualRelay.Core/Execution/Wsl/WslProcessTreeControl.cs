@@ -5,8 +5,8 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// <summary>
 /// <see cref="IProcessTreeControl"/> for a tree that lives inside a WSL distro.
 /// Learns the sandbox root's pid (its process group, thanks to the envelope's
-/// setsid) from the pid file the envelope wrote, sums the tree's CPU from one
-/// <c>ps</c> inside the distro, and signals the group from inside the distro,
+/// setsid) from the pid file the envelope wrote, sums the tree's CPU from one read
+/// of the distro's /proc stat lines, and signals the group from inside the distro,
 /// which is the only place a signal reaches it. Every step is a plain
 /// <c>wsl.exe --exec</c> launch handed to the injected runner, so the strategy is
 /// exercised without wsl.exe. A pid file that is not there yet (the envelope has
@@ -26,7 +26,7 @@ public sealed class WslProcessTreeControl(
             return null;
 
         var (exitCode, output) = await RunAsync(WslProcessControl.SampleArgv(), ct);
-        return exitCode == 0 ? ProcessTreeCpuSampler.SumTreeCpuMs(pgid.Value, output) : null;
+        return exitCode == 0 ? ProcessTreeCpuSampler.SumProcStatTreeCpuMs(pgid.Value, output) : null;
     }
 
     public async Task StopAsync(bool graceful, CancellationToken ct)

@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;
@@ -5,17 +6,22 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// The WSL strategy behind <see cref="VisualRelay.Core.Execution.IProcessTreeControl"/>:
 /// it learns the sandbox root's pid from the file the envelope wrote, samples CPU
-/// with one <c>ps</c> inside the distro, and signals the root's process group,
+/// from one read of the distro's /proc stat lines, and signals the root's process group,
 /// every step a plain <c>wsl.exe --exec</c> launch handed to an injected runner.
 /// </summary>
 public sealed class WslProcessTreeControlTests
 {
     private const string PidFile = "/tmp/visual-relay/run-1-attempt-1.pid";
-    private const string Ps =
-        "      1       0 00:00:02\n" +
-        "   4242     311 00:00:01\n" +
-        "   4250    4242 00:01:30\n" +
-        "   5000       1 00:10:00\n";
+    private const string Sh = "/bin/sh";
+
+    // Stat lines (utime and stime are fields 14 and 15) at 100 ticks a second: the root's tree
+    // is 4242 (1 s) and its child 4250 (90 s); 1 and 5000 are not in it.
+    private const string ProcStat =
+        "1 (init) S 0 1 1 0 -1 4194560 100 0 0 0 150 50 0 0 20 0 1 0 1 0 0\n" +
+        "4242 (nono) S 311 4242 311 0 -1 4194560 100 0 0 0 60 40 0 0 20 0 1 0 1 0 0\n" +
+        "4250 (java (main)) S 4242 4242 311 0 -1 4194560 100 0 0 0 8000 1000 0 0 20 0 30 0 1 0 0\n" +
+        "5000 (cron) S 1 5000 5000 0 -1 4194560 100 0 0 0 50000 10000 0 0 20 0 1 0 1 0 0\n" +
+        "hz 100\n";
 
     private static readonly WslContext Context =
         new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
@@ -23,7 +29,7 @@ public sealed class WslProcessTreeControlTests
     private static WslProcessTreeControl Control(ScriptedRunner runner) => new(Context, PidFile, runner.RunAsync);
 
     [Fact]
-    public async Task Sample_ReadsThePidFileOnce_ThenSumsTheRootsTreeFromPs()
+    public async Task Sample_ReadsThePidFileOnce_ThenSumsTheRootsTreeFromProcStat()
     {
         var runner = new ScriptedRunner();
         var control = Control(runner);
@@ -33,7 +39,7 @@ public sealed class WslProcessTreeControlTests
 
         Assert.Equal(91_000, first);
         Assert.Equal(91_000, second);
-        Assert.Equal(["cat", "ps", "ps"], runner.Programs);
+        Assert.Equal(["cat", Sh, Sh], runner.Programs);
     }
 
     [Fact]
@@ -48,7 +54,7 @@ public sealed class WslProcessTreeControlTests
 
         Assert.Null(early);
         Assert.Equal(91_000, later);
-        Assert.Equal(["cat", "cat", "ps"], runner.Programs);
+        Assert.Equal(["cat", "cat", Sh], runner.Programs);
     }
 
     [Fact]
@@ -63,9 +69,9 @@ public sealed class WslProcessTreeControlTests
     }
 
     [Fact]
-    public async Task Sample_PsFailing_IsNoSignal()
+    public async Task Sample_ReadFailing_IsNoSignal()
     {
-        var runner = new ScriptedRunner { PsReply = (1, "ps: command not found") };
+        var runner = new ScriptedRunner { SampleReply = (126, "/bin/sh: cannot execute") };
         var control = Control(runner);
 
         Assert.Null(await control.SampleCpuMsAsync(CancellationToken.None));
@@ -132,14 +138,14 @@ public sealed class WslProcessTreeControlTests
             Assert.Equal("1", launch.Environment["WSL_UTF8"]);
         });
         Assert.Equal(["cat", PidFile], runner.Launches[0].Arguments.Skip(3));
-        Assert.Equal(["ps", "-axo", "pid=,ppid=,time="], runner.Launches[1].Arguments.Skip(3));
+        Assert.Equal([Sh, "-c", ProcessTreeCpuSampler.ProcStatScript], runner.Launches[1].Arguments.Skip(3));
     }
 
     private sealed class ScriptedRunner
     {
         public List<WslLaunch> Launches { get; } = [];
         public Queue<(int ExitCode, string Output)> PidReplies { get; } = new();
-        public (int ExitCode, string Output) PsReply { get; init; } = (0, Ps);
+        public (int ExitCode, string Output) SampleReply { get; init; } = (0, ProcStat);
 
         public IEnumerable<string> Programs => Launches.Select(l => l.Arguments[3]);
 
@@ -149,7 +155,7 @@ public sealed class WslProcessTreeControlTests
             return Task.FromResult(launch.Arguments[3] switch
             {
                 "cat" => PidReplies.Count > 0 ? PidReplies.Dequeue() : (0, "4242\n"),
-                "ps" => PsReply,
+                Sh => SampleReply,
                 "kill" or "rm" => (0, ""),
                 _ => (127, "unexpected program"),
             });

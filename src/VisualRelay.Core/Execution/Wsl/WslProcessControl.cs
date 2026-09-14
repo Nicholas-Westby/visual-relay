@@ -7,7 +7,7 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// to control the sandboxed tree the <see cref="WslLauncher.Envelope"/> started:
 /// the envelope's setsid made the sandbox root the leader of its own process
 /// group, so one signal to <c>-pgid</c> reaches the whole tree; the pid file it
-/// wrote is how that pgid is learned; and a headerless <c>ps</c> is the CPU sample
+/// wrote is how that pgid is learned; and the processes' /proc stat lines are the CPU sample
 /// the shared tree summation reads.
 /// </summary>
 public static class WslProcessControl
@@ -22,8 +22,11 @@ public static class WslProcessControl
         return ["kill", "-" + signal, "--", "-" + pgid.ToString(CultureInfo.InvariantCulture)];
     }
 
-    /// <summary>The same headerless pid/ppid/time snapshot the Unix sampler reads on the host.</summary>
-    public static IReadOnlyList<string> SampleArgv() => ["ps", "-axo", "pid=,ppid=,time="];
+    /// <summary>
+    /// Every process's /proc stat line, the CPU sample the tree summation reads. Not <c>ps</c>:
+    /// procps prints TIME in whole seconds, too coarse to tell a quiet tree from an idle one.
+    /// </summary>
+    public static IReadOnlyList<string> SampleArgv() => ["/bin/sh", "-c", ProcessTreeCpuSampler.ProcStatScript];
 
     public static IReadOnlyList<string> ReadPidFileArgv(string pidFile) => ["cat", pidFile];
 

@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;
@@ -29,9 +30,9 @@ public sealed class WslProcessControlTests
     }
 
     [Fact]
-    public void SampleArgv_IsTheSameHeaderlessPsShapeTheUnixSamplerReads()
+    public void SampleArgv_ReadsTheProcStatLinesTheTreeSummationParses()
     {
-        Assert.Equal(["ps", "-axo", "pid=,ppid=,time="], WslProcessControl.SampleArgv());
+        Assert.Equal(["/bin/sh", "-c", ProcessTreeCpuSampler.ProcStatScript], WslProcessControl.SampleArgv());
     }
 
     [Fact]
