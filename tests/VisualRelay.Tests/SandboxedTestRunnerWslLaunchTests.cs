@@ -38,18 +38,18 @@ public sealed class SandboxedTestRunnerWslLaunchTests
         Assert.Equal(
             new[]
             {
-                "env", "MSBUILDDISABLENODEREUSE=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "GRADLE_OPTS=-Dorg.gradle.daemon=false",
-                "ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy=in-process",
+                "env", "MSBUILDDISABLENODEREUSE=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+                "GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process",
             },
-            args.Skip(9).Take(5));
+            args.Skip(9).Take(4));
         Assert.Equal(
             new[]
             {
                 "/usr/local/bin/nono", "run", "--profile", LinuxProfile, "--allow-cwd", "-a", TemplatesGrant,
                 "--diagnostics-json", "--silent", "--",
             },
-            args.Skip(14).Take(10));
-        Assert.Equal(new[] { "/bin/sh", "-c", "go test ./..." }, args.Skip(24));
+            args.Skip(13).Take(10));
+        Assert.Equal(new[] { "/bin/sh", "-c", "go test ./..." }, args.Skip(23));
     }
 
     [Fact]

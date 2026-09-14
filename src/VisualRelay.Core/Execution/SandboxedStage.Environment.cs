@@ -31,21 +31,23 @@ public static partial class SandboxedStage
         // No Gradle or Kotlin daemon either. Measured on the Windows arm: a sandboxed gradle handed
         // its build over loopback to a daemon started outside the sandbox, whose tasks then wrote
         // where no grant allowed, and a daemon started in one sandbox kept its rules for the next
-        // build, which then could not write its own output.
+        // build, which then could not write its own output. The Kotlin property rides in GRADLE_OPTS as
+        // well: dash, the shell gradle's launcher runs in, drops a variable whose name holds a dot, so
+        // ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy never arrived.
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["MSBUILDDISABLENODEREUSE"] = "1",
             ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
-            ["GRADLE_OPTS"] = NoGradleDaemon,
-            ["ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy"] = "in-process",
+            ["GRADLE_OPTS"] = NoGradleDaemons,
         };
     }
 
-    private const string NoGradleDaemon = "-Dorg.gradle.daemon=false";
+    private const string NoGradleDaemons =
+        "-Dorg.gradle.daemon=false -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process";
 
-    // The user's own GRADLE_OPTS (heap size and the like) stay; the daemon switch comes last so it wins.
-    private static string WithNoGradleDaemon(string? existing) =>
-        string.IsNullOrWhiteSpace(existing) ? NoGradleDaemon : $"{existing} {NoGradleDaemon}";
+    // The user's own GRADLE_OPTS (heap size and the like) stay; the daemon switches come last so they win.
+    private static string WithNoGradleDaemons(string? existing) =>
+        string.IsNullOrWhiteSpace(existing) ? NoGradleDaemons : $"{existing} {NoGradleDaemons}";
 
     /// <summary>
     /// Builds the target-repo command environment by starting from the
@@ -65,7 +67,7 @@ public static partial class SandboxedStage
         {
             var overrides = new Dictionary<string, string>(BuildSandboxEnvironment(config))
             {
-                ["GRADLE_OPTS"] = WithNoGradleDaemon(processEnv.GetValueOrDefault("GRADLE_OPTS")),
+                ["GRADLE_OPTS"] = WithNoGradleDaemons(processEnv.GetValueOrDefault("GRADLE_OPTS")),
             };
             return new TargetCommandEnvironment(overrides, new HashSet<string>());
         }
@@ -73,7 +75,7 @@ public static partial class SandboxedStage
         var merged = new Dictionary<string, string>(snapshot!);
         foreach (var kvp in BuildSandboxEnvironment(config))
             merged[kvp.Key] = kvp.Value;
-        merged["GRADLE_OPTS"] = WithNoGradleDaemon(snapshot.GetValueOrDefault("GRADLE_OPTS"));
+        merged["GRADLE_OPTS"] = WithNoGradleDaemons(snapshot.GetValueOrDefault("GRADLE_OPTS"));
 
         var remove = new HashSet<string>();
         foreach (var key in processEnv.Keys)
