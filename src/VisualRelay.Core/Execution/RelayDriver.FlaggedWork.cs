@@ -21,10 +21,11 @@ public sealed partial class RelayDriver
         List<StageStatusEntry> statusEntries,
         CancellationToken ct)
     {
-        // Redirect: Visual-review (stage 8) must always run as part of the
-        // Review pair; if the flagged stage is 8, re-enter at Review (stage 7).
-        if (_options.Resume && firstStageToRun == 8)
-            return (7, null);
+        // Two stages are never entered on their own: Visual-review (8) runs as half of the Review
+        // pair, and Fix-verify (11) is the loop Verify (10) starts with its failing output. Both
+        // redirect before the restore; a redirect that returned early reviewed an empty checkout.
+        if (_options.Resume && firstStageToRun is 8 or 11)
+            firstStageToRun--;
 
         if (!_options.Resume || firstStageToRun is < 5 or > 11)
             return (firstStageToRun, null);
