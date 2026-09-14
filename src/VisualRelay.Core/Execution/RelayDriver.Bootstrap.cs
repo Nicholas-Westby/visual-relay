@@ -68,9 +68,10 @@ public sealed partial class RelayDriver
 
     private async Task<TestRunResult> RunTestCommandWithRetryAsync(
         string rootPath, RelayConfig config, CancellationToken ct,
-        int stageNumber, string runId, string taskId)
+        int stageNumber, string runId, string taskId, IReadOnlyDictionary<string, string>? searchPaths = null)
     {
-        var result = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, ct);
+        searchPaths ??= PythonEditableImports.SearchPaths([]);
+        var result = await RunInSnapshotAsync(rootPath, config.TestCommand, searchPaths, ct);
         if (result.TimedOut || result.ExitCode == 0 || !config.RetryFlakyVerify)
             return result;
 
@@ -79,7 +80,7 @@ public sealed partial class RelayDriver
             DateTimeOffset.UtcNow, "warn", "verify_retry", runId, rootPath, taskId, stageNumber,
             Data: new Dictionary<string, string> { ["reason"] = "first-run-nonzero" }), ct);
 
-        var retryResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, ct);
+        var retryResult = await RunInSnapshotAsync(rootPath, config.TestCommand, searchPaths, ct);
 
         if (retryResult is { ExitCode: 0, TimedOut: false })
         {

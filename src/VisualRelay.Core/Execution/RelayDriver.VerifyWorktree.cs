@@ -21,13 +21,14 @@ public sealed partial class RelayDriver
         string runId, string taskId, CancellationToken cancellationToken)
     {
         string? worktreePath;
+        IReadOnlyList<(string Name, bool IsDirectory)> ignoredEntries = [];
         var worktreeId = $"{taskId}-verify-s{stageNumber}-a{attempt}";
         try
         {
             // Fresh token: a torn `git worktree add` lands in the catch below, whose
             // fallback runs the project's suite against the REAL repository — the
             // opposite of stopping. The loop-top check stops the run right after.
-            worktreePath = await CreateVerifyWorktreeAsync(rootPath, worktreeId, runId, CancellationToken.None);
+            (worktreePath, ignoredEntries) = await CreateVerifyWorktreeAsync(rootPath, worktreeId, runId, CancellationToken.None);
         }
         catch (OperationCanceledException)
         {
@@ -48,7 +49,9 @@ public sealed partial class RelayDriver
         {
             // Dirty set IMMEDIATELY AFTER the overlay / BEFORE the suite runs.
             var before = await CaptureDirtySetAsync(worktreePath, cancellationToken);
-            var result = await RunTestCommandWithRetryAsync(worktreePath, config, cancellationToken, stageNumber, runId, taskId);
+            var searchPaths = await SnapshotSearchPathsAsync(
+                rootPath, worktreePath, ignoredEntries, runId, taskId, stageNumber, cancellationToken);
+            var result = await RunTestCommandWithRetryAsync(worktreePath, config, cancellationToken, stageNumber, runId, taskId, searchPaths);
             // Dirty set AFTER the suite ran — the DELTA is the suite's writes.
             var after = await CaptureDirtySetAsync(worktreePath, cancellationToken);
             var mutations = after.Where(p => !before.Contains(p))
@@ -74,10 +77,10 @@ public sealed partial class RelayDriver
     /// (clone-first) by default; passing <c>false</c> forces the recursive copy/symlink
     /// FALLBACK so its machinery stays deterministically testable on APFS hosts.
     /// </summary>
-    internal Task<string> CreateVerifyWorktreeForTestAsync(
+    internal async Task<string> CreateVerifyWorktreeForTestAsync(
         string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
         long thresholdBytes = IgnoredOverlayCopyMaxBytes, bool cloneOverlay = true) =>
-        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken, thresholdBytes, cloneOverlay);
+        (await CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken, thresholdBytes, cloneOverlay)).Path;
 
     /// <summary>TEST SEAM: drives the private <see cref="CleanupVerifyWorktreeAsync"/>.</summary>
     internal Task CleanupVerifyWorktreeForTestAsync(string sourcePath, string worktreePath) =>
@@ -90,7 +93,7 @@ public sealed partial class RelayDriver
     /// snapshot mirrors exactly what the agent produced (Defect C). Throws if
     /// <paramref name="sourcePath"/> is not a git repo (caller catches → fallback).
     /// </summary>
-    private async Task<string> CreateVerifyWorktreeAsync(
+    private async Task<(string Path, IReadOnlyList<(string Name, bool IsDirectory)> IgnoredEntries)> CreateVerifyWorktreeAsync(
         string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
         long thresholdBytes = IgnoredOverlayCopyMaxBytes, bool cloneOverlay = true)
     {
@@ -131,10 +134,10 @@ public sealed partial class RelayDriver
         // The overlay above carries only uncommitted-NOT-ignored files, so the snapshot
         // still omits everything git ignores. Mirror the source's git-ignored RUNTIME
         // content in so the test command can resolve its deps (see the method).
-        await OverlayIgnoredEntriesAsync(
+        var ignoredEntries = await OverlayIgnoredEntriesAsync(
             sourcePath, worktreePath, worktreeId, runId, thresholdBytes, cloneOverlay,
             cancellationToken);
-        return worktreePath;
+        return (worktreePath, ignoredEntries);
     }
 
     /// <summary>

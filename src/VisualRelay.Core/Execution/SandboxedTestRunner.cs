@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
@@ -26,16 +27,24 @@ public sealed partial class SandboxedTestRunner(
     // Names the pid file a launch behind wsl.exe leaves in the distro.
     private const string WslLaunchTag = "verify";
 
+    private static readonly IReadOnlyDictionary<string, string> NoSearchPaths = new Dictionary<string, string>();
+
     private readonly TimeSpan _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     // Resolved on use, not at construction: on Windows the first resolution probes the machine.
     private SandboxHost Host => host ?? SandboxHost.Current;
 
+    public Task<TestRunResult> RunAsync(
+        string rootPath, string command, CancellationToken cancellationToken = default) =>
+        RunAsync(rootPath, command, NoSearchPaths, cancellationToken);
+
+    /// <inheritdoc />
     public async Task<TestRunResult> RunAsync(
-        string rootPath, string command, CancellationToken cancellationToken = default)
+        string rootPath, string command, IReadOnlyDictionary<string, string> searchPaths,
+        CancellationToken cancellationToken)
     {
-        var launch = ResolveSandboxedLaunch(command, rootPath);
+        var launch = ResolveSandboxedLaunch(command, rootPath, searchPaths);
 
         // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
         // supervises the test process tree and can outlive the FINISHED tests —
@@ -81,7 +90,8 @@ public sealed partial class SandboxedTestRunner(
     /// refusal (no usable distro, a workspace the policy refuses). There is no
     /// unsandboxed fallback on either.
     /// </summary>
-    internal SandboxedLaunch ResolveSandboxedLaunch(string command, string? rootPath = null)
+    internal SandboxedLaunch ResolveSandboxedLaunch(
+        string command, string? rootPath = null, IReadOnlyDictionary<string, string>? searchPaths = null)
     {
         var sandboxHost = Host;
         if (sandboxHost is { IsWindows: true, Wsl: null })
@@ -112,7 +122,7 @@ public sealed partial class SandboxedTestRunner(
             // ("/bin/sh: - : invalid option", exit 2), making every sandboxed verify falsely red.
             // ArgumentList re-quotes each entry as needed, so the command passes through unescaped.
             program = "/bin/sh";
-            arguments = ["-c", command];
+            arguments = ["-c", WithSearchPaths(searchPaths, command)];
         }
         else
         {
@@ -133,4 +143,23 @@ public sealed partial class SandboxedTestRunner(
         var environment = SandboxedStage.BuildTargetCommandEnvironment(config);
         return new SandboxedLaunch("nono", [.. prefix, program, .. arguments], environment.Overrides, environment.Remove, null);
     }
+    /// <summary>
+    /// <paramref name="command"/> behind a shell prelude that sets each search-path variable to its
+    /// value followed by the inherited one, when there is one, and exports it: the shell that runs
+    /// the command is the only place that sees what the user's environment or the distro holds.
+    /// </summary>
+    internal static string WithSearchPaths(IReadOnlyDictionary<string, string>? searchPaths, string command)
+    {
+        if (searchPaths is not { Count: > 0 })
+            return command;
+        var prelude = string.Concat(searchPaths
+            .Where(variable => ShellName().IsMatch(variable.Key))
+            .OrderBy(variable => variable.Key, StringComparer.Ordinal)
+            .Select(variable =>
+                $"{variable.Key}='{variable.Value.Replace("'", @"'\''", StringComparison.Ordinal)}'\"${{{variable.Key}:+:${variable.Key}}}\"; export {variable.Key}; "));
+        return prelude + command;
+    }
+
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
+    private static partial Regex ShellName();
 }

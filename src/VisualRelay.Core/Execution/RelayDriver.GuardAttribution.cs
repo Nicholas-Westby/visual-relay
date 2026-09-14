@@ -137,11 +137,12 @@ public sealed partial class RelayDriver
             worktreePath = await PlanningWorktree.CreateAsync(
                 rootPath, worktreeId, runId, _dependencies.GitInvoker, CancellationToken.None,
                 timeProvider: _dependencies.TimeProvider, commitish: baseSha);
-            await OverlayIgnoredEntriesAsync(
+            var ignoredEntries = await OverlayIgnoredEntriesAsync(
                 rootPath, worktreePath, worktreeId, runId,
                 IgnoredOverlayCopyMaxBytes, cloneOverlay: true, cancellationToken);
-            var result = await _dependencies.TestRunner.RunAsync(
-                worktreePath, guardCommand, cancellationToken);
+            var searchPaths = await SnapshotSearchPathsAsync(
+                rootPath, worktreePath, ignoredEntries, runId, taskId, stageNumber: null, cancellationToken);
+            var result = await RunInSnapshotAsync(worktreePath, guardCommand, searchPaths, cancellationToken);
             return result is { TimedOut: false, ExitCode: 0 };
         }
         catch (OperationCanceledException)

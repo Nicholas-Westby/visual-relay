@@ -11,9 +11,10 @@ public sealed partial class RelayDriver
     /// <paramref name="sourcePath"/> into <paramref name="worktreePath"/>, so a command
     /// run in the worktree can resolve its dependencies and read its config. Shared by
     /// the verify snapshot and the pristine-base checkout the guard attribution probe
-    /// runs in. Best-effort per entry: a failure warns and moves on.
+    /// runs in. Best-effort per entry: a failure warns and moves on. Returns the entries it
+    /// enumerated, so a caller can find what the snapshot inherited (a virtualenv, say).
     /// </summary>
-    private async Task OverlayIgnoredEntriesAsync(
+    private async Task<IReadOnlyList<(string Name, bool IsDirectory)>> OverlayIgnoredEntriesAsync(
         string sourcePath, string worktreePath, string worktreeId, string runId,
         long thresholdBytes, bool cloneOverlay, CancellationToken cancellationToken)
     {
@@ -46,7 +47,7 @@ public sealed partial class RelayDriver
                     ? null
                     : WslTreeCopy.IgnoredEntries(context, source, dest, thresholdBytes, entries.Select(e => e.Name).ToList()),
                 cancellationToken))
-            return;
+            return entries;
 
         foreach (var (name, isDirectory) in entries)
         {
@@ -94,5 +95,7 @@ public sealed partial class RelayDriver
                 }
             }
         }
+
+        return entries;
     }
 }
