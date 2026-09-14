@@ -32,6 +32,8 @@ public sealed partial class TestCommandValidatorTests
     // ThreeMammals/Ocelot on the Mac, two .slnx files at the root: "Specify" read as the "spec" marker.
     [InlineData("Found more than one solution file in /Users/admin/Dev/vr-eval/Ocelot. Specify which one to use.")]
     [InlineData("MSBUILD : error MSB1011: Specify which project or solution file to use because this folder contains more than one project or solution file.")]
+    // Ocelot.slnx itself: a benchmark project on the older runner makes dotnet test refuse the whole solution.
+    [InlineData("global.json defines test runner to be Microsoft.Testing.Platform. All projects must use that test runner.\nThe following test projects are using VSTest test runner:\nOcelot.Benchmarks.csproj\n\nSee https://aka.ms/dotnet-test/mtp for more information.")]
     public void Classify_NonZeroExitWithARefusal_Rejects(string output)
     {
         var result = TestCommandValidator.Classify(new TestRunResult(1, output));

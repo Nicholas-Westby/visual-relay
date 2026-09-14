@@ -185,7 +185,9 @@ public sealed class TestCommandValidator(ITestRunner runner)
          "npm error", "no test specified", "don't know how to build task",
          "no rule to make target", "not found in root project",
          // dotnet in a folder with several solutions or projects: "Specify" read as the "spec" marker.
-         "specify which"])
+         "specify which",
+         // dotnet test refusing a solution that mixes test runners, whose message says "test runner".
+         "all projects must use that test runner"])
         .Any(refusal => output.Contains(refusal, StringComparison.OrdinalIgnoreCase));
 }
 
