@@ -130,6 +130,55 @@ public sealed partial class TestFailureIdsTests
             + "        1..2\n    not ok 1 - sum # time=9.345ms\n"));
     }
 
+    /// <summary>
+    /// With projects in its config, vitest and jest print the project between FAIL and the file: "|runtime|"
+    /// plain, a coloured " runtime " badge otherwise. On the Windows arm i18next's two vitest projects named
+    /// no failure, so the base never ran and its three old failures reached Fix-verify. Real output from
+    /// i18next (vitest 4.1.11, coloured, CRLF) and from vitest 4.1.11 and jest 29 on the Mac.
+    /// </summary>
+    [Fact]
+    public void Extract_ProjectLabels_KeepTheSameTestInTwoProjectsApart()
+    {
+        var esc = (char)27;
+        Assert.Equal(
+            ["[compatibility] test/compat/broken.test.js",
+             "[compatibility] test/runtime/fmt.test.js > formatting > formats a date",
+             "[runtime] test/runtime/fmt.test.js > formatting > formats a date"],
+            Ids(" FAIL  |compatibility| test/compat/broken.test.js [ test/compat/broken.test.js ]\n"
+                + " FAIL  |runtime| test/runtime/fmt.test.js > formatting > formats a date\n"
+                + " FAIL  |compatibility| test/runtime/fmt.test.js > formatting > formats a date\n"));
+        Assert.Equal(
+            ["[runtime] test/runtime/i18next.translation.formatting.test.js > i18next.translation.formatting > formatting > "
+             + "correctly formats translations for [\"intlDateTime\",{\"val\":\"2012-12-20T03:00:00.000Z\"}]"],
+            Ids($"{esc}[41m{esc}[1m FAIL {esc}[22m{esc}[49m {esc}[30m{esc}[46m runtime {esc}[49m{esc}[39m "
+                + "test/runtime/i18next.translation.formatting.test.js > i18next.translation.formatting > formatting > "
+                + "correctly formats translations for [\"intlDateTime\",{\"val\":\"2012-12-20T03:00:00.000Z\"}]\r\n"));
+        Assert.Equal(
+            ["[compatibility] test/runtime/fmt.test.js › formatting › formats a date",
+             "[runtime] test/runtime/fmt.test.js › formatting › formats a date"],
+            Ids("FAIL compatibility test/runtime/fmt.test.js\n  ● formatting › formats a date\n\n"
+                + $"{esc}[0m{esc}[7m{esc}[1m{esc}[31m FAIL {esc}[39m{esc}[22m{esc}[27m{esc}[0m {esc}[0m{esc}[7m{esc}[37m runtime "
+                + $"{esc}[39m{esc}[27m{esc}[0m {esc}[2mtest/runtime/{esc}[22m{esc}[1mfmt.test.js{esc}[22m\n"
+                + "  ● formatting › formats a date\n"));
+    }
+
+    /// <summary>
+    /// jest adds a file's run time to its header once the file passes the slow threshold (5 s by default, so
+    /// common in a big suite), and its heap size under --logHeapUsage. Unread, such a header left the failures
+    /// under it filed under the file before. Real jest 29 output from the Mac.
+    /// </summary>
+    [Fact]
+    public void Extract_Jest_ReadsTheHeaderOfASlowFile()
+    {
+        Assert.Equal(
+            ["[runtime] test/runtime/slow.test.js › formatting › formats a date",
+             "test/runtime/fmt.test.js › formatting › formats a date",
+             "test/runtime/slow.test.js › sum › adds wrongly"],
+            Ids("FAIL test/runtime/fmt.test.js\n  ● formatting › formats a date\n\n"
+                + "FAIL test/runtime/slow.test.js (0.106 s, 31 MB heap size)\n  ● sum › adds wrongly\n\n"
+                + "FAIL runtime test/runtime/slow.test.js (30 MB heap size)\n  ● formatting › formats a date\n"));
+    }
+
     [Fact]
     public void Extract_OutputThatNamesNoTest_IsEmpty()
     {

@@ -26,7 +26,7 @@ internal static partial class TestFailureIds
             var line = raw.TrimEnd('\r');
             if (JestFileHeader().Match(line) is { Success: true } header)
             {
-                jestFile = header.Groups["file"].Value;
+                jestFile = WithProject(header, header.Groups["file"].Value);
                 continue;
             }
 
@@ -73,13 +73,17 @@ internal static partial class TestFailureIds
                      RspecRerun(), TapNotOk()])
         {
             if (pattern.Match(line) is { Success: true } match)
-                return match.Groups["id"].Value.Trim();
+                return WithProject(match, match.Groups["id"].Value.Trim());
         }
 
         return null;
     }
 
     private static string FileNameOf(string path) => path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
+
+    // A project's name, "|runtime|" plain or " runtime " as a coloured badge, comes first: the same test runs in each project.
+    private static string WithProject(Match match, string id) =>
+        match.Groups["project"] is { Success: true } project ? $"[{project.Value.Trim('|')}] {id}" : id;
 
     [GeneratedRegex(@"\x1B\[[0-9;?]*[ -/]*[@-~]")]
     private static partial Regex AnsiSequence();
@@ -148,16 +152,18 @@ internal static partial class TestFailureIds
     [GeneratedRegex(@"^\s*● (?<id>.+?)\s*$")]
     private static partial Regex Jest();
 
-    // jest's file header: "FAIL jest2/a.test.js" (" FAIL  jest2/a.test.js" once its colours are gone).
-    [GeneratedRegex(@"^\s*FAIL\s+(?<file>\S+)\s*$")]
+    // jest's file header: "FAIL jest2/a.test.js" (" FAIL  jest2/a.test.js" once its colours are gone), with a
+    // project "FAIL runtime test/a.test.js", and for a slow file "(6.2 s)" or "(6.2 s, 31 MB heap size)" after it.
+    // Spaces only, so go's "FAIL\tpkg\t0.004s" is not taken for a project.
+    [GeneratedRegex(@"^\s*FAIL +(?:(?<project>\S+) +)?(?<file>\S+)(?: +\(\d[^)]*\))? *$")]
     private static partial Regex JestFileHeader();
 
-    // vitest: " FAIL  src/x.test.ts > suite > test name"
-    [GeneratedRegex(@"^\s*FAIL\s+(?<id>\S+ > .+?)\s*$")]
+    // vitest: " FAIL  src/x.test.ts > suite > test name", with a project " FAIL  |runtime| src/x.test.ts > ..."
+    [GeneratedRegex(@"^\s*FAIL\s+(?:(?<project>\S+) +)?(?<id>\S+ > .+?)\s*$")]
     private static partial Regex Vitest();
 
-    // vitest, a file that did not load: " FAIL  broken.test.ts [ broken.test.ts ]"
-    [GeneratedRegex(@"^\s*FAIL\s+(?<id>\S+) \[ [^\]]+ \]\s*$")]
+    // vitest, a file that did not load: " FAIL  broken.test.ts [ broken.test.ts ]", a project's name before the file
+    [GeneratedRegex(@"^\s*FAIL\s+(?:(?<project>\S+) +)?(?<id>\S+) \[ [^\]]+ \]\s*$")]
     private static partial Regex VitestFileFailed();
 
     // rspec's rerun list: "rspec ./spec/x_spec.rb:12 # Group does a thing" (the line number moves with edits).
