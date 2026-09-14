@@ -56,7 +56,6 @@ public sealed class ShellTestRunnerWslRouteTests
 
         Assert.Equal("/bin/sh", launch.FileName);
         Assert.Equal(new[] { flag, "dotnet test" }, launch.Arguments);
-        Assert.Empty(launch.Environment);
         Assert.Null(launch.TreeControl);
         // A local launch still follows the workspace.
         Assert.Equal("/home/alice/repo", launch.StartIn("/home/alice/repo"));

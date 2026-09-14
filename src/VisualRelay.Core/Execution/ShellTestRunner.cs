@@ -1,7 +1,7 @@
-using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
@@ -20,7 +20,12 @@ namespace VisualRelay.Core.Execution;
 /// distro the command runs inside that distro, on the workspace the UNC root names,
 /// so a command validated here is validated where the pipeline will run it.
 /// </param>
-public sealed class ShellTestRunner(TimeSpan? timeout = null, bool loginShell = true, SandboxHost? host = null) : ITestRunner
+/// <param name="environment">
+/// Where the user's environment snapshot is looked up; null reads this process's variables.
+/// </param>
+public sealed class ShellTestRunner(
+    TimeSpan? timeout = null, bool loginShell = true, SandboxHost? host = null,
+    IEnvironmentAccessor? environment = null) : ITestRunner
 {
     // Names the pid file a launch behind wsl.exe leaves in the distro.
     private const string WslLaunchTag = "bootstrap";
@@ -37,7 +42,7 @@ public sealed class ShellTestRunner(TimeSpan? timeout = null, bool loginShell = 
         SandboxedLaunch launch;
         try
         {
-            launch = ResolveLaunch(command, rootPath, loginShell, host ?? SandboxHost.Current);
+            launch = ResolveLaunch(command, rootPath, loginShell, host ?? SandboxHost.Current, environment);
         }
         catch (InvalidOperationException refusal)
         {
@@ -46,7 +51,7 @@ public sealed class ShellTestRunner(TimeSpan? timeout = null, bool loginShell = 
 
         var result = await ProcessCapture.RunAsync(
             launch.FileName, launch.Arguments, launch.StartIn(rootPath), _timeout, cancellationToken,
-            environment: launch.Environment, treeControl: launch.TreeControl);
+            environment: launch.Environment, envRemove: launch.EnvironmentRemove, treeControl: launch.TreeControl);
         var output = result.TimedOut
             ? $"test command timed out after {_timeout.TotalMilliseconds:F0}ms\n\n{result.Output}"
             : result.Output;
@@ -62,13 +67,18 @@ public sealed class ShellTestRunner(TimeSpan? timeout = null, bool loginShell = 
     /// timeout stop the Linux tree. Throws <see cref="InvalidOperationException"/>
     /// with the refusal when the workspace cannot be used inside the distro.
     /// </summary>
-    internal static SandboxedLaunch ResolveLaunch(string command, string rootPath, bool loginShell, SandboxHost host)
+    internal static SandboxedLaunch ResolveLaunch(
+        string command, string rootPath, bool loginShell, SandboxHost host,
+        IEnvironmentAccessor? accessor = null, IReadOnlyDictionary<string, string>? processEnv = null)
     {
         if (host.Wsl is not { } context)
         {
+            // The environment the pipeline gives the command, the user's own from the snapshot: through
+            // the dev launcher the check otherwise ran Ocelot's dotnet test under the launcher's nix SDK.
             var (fileName, arguments) = BuildShellLaunch(command, host.IsWindows, loginShell);
-            return new SandboxedLaunch(
-                fileName, arguments, FrozenDictionary<string, string>.Empty, FrozenSet<string>.Empty, null);
+            var environment = SandboxedStage.BuildTargetCommandEnvironment(
+                RelayConfigLoader.Defaults(command), accessor, processEnv);
+            return new SandboxedLaunch(fileName, arguments, environment.Overrides, environment.Remove, null);
         }
 
         var (launch, refusal) = WslSandboxLauncher.Build(
