@@ -36,7 +36,8 @@ internal static class AuthorTestGate
         {
             if (stashed)
             {
-                restore = await RedGate.RestoreStashAsync(rootPath, tag, gitInvoker, cancellationToken);
+                // A cancel arrives here with the token already cancelled; the stash holds the implementation.
+                restore = await RedGate.RestoreStashAsync(rootPath, tag, gitInvoker, CancellationToken.None);
             }
         }
 

@@ -96,7 +96,8 @@ public sealed partial class RelayDriver
         }
         finally
         {
-            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, gitInvoker, ct)
+            // A cancel arrives here with ct already cancelled; the stash holds the task's work.
+            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, gitInvoker, CancellationToken.None)
                 == RedGateRestoreResult.Conflict)
             {
                 // Baseline restore conflict is non-fatal for guard diff;
