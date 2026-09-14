@@ -110,29 +110,20 @@ internal static class NonoDiagnosticsJsonParser
         try
         {
             using var doc = JsonDocument.Parse(jsonBlock.ToString());
-            if (!doc.RootElement.TryGetProperty("denials", out var denialsElement))
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
                 return false;
 
-            if (denialsElement.ValueKind != JsonValueKind.Array)
+            // nono 0.75 nests the record under "session": its "violations" carry the operation and
+            // target pairs the older top-level "denials" did, and its "denials" the supervised path
+            // refusals. Read the old way, no run since the upgrade reported a denial.
+            if (root.TryGetProperty("session", out var session) && session.ValueKind == JsonValueKind.Object)
+                return TryReadSession(session, denials);
+
+            if (!root.TryGetProperty("denials", out var denialsElement) || denialsElement.ValueKind != JsonValueKind.Array)
                 return false;
 
-            foreach (var item in denialsElement.EnumerateArray())
-            {
-                string? operation = null;
-                string? target = null;
-
-                if (item.TryGetProperty("operation", out var opProp) &&
-                    opProp.ValueKind == JsonValueKind.String)
-                    operation = opProp.GetString();
-
-                if (item.TryGetProperty("target", out var tgtProp) &&
-                    tgtProp.ValueKind == JsonValueKind.String)
-                    target = tgtProp.GetString();
-
-                if (operation is not null && target is not null)
-                    denials.Add(new SandboxDenial(operation, target));
-            }
-
+            AddOperationTargets(denialsElement, denials);
             return true;
         }
         catch (JsonException)
@@ -140,4 +131,39 @@ internal static class NonoDiagnosticsJsonParser
             return false;
         }
     }
+
+    private static bool TryReadSession(JsonElement session, List<SandboxDenial> denials)
+    {
+        if (!session.TryGetProperty("denials", out var supervised) || supervised.ValueKind != JsonValueKind.Array)
+            return false;
+
+        if (session.TryGetProperty("violations", out var violations) && violations.ValueKind == JsonValueKind.Array)
+            AddOperationTargets(violations, denials);
+
+        // A supervised refusal the violations did not already name (Landlock reports no violations).
+        var named = denials.Select(d => d.Target).ToHashSet(StringComparer.Ordinal);
+        foreach (var item in supervised.EnumerateArray())
+        {
+            if (StringProperty(item, "path") is { } path && StringProperty(item, "access") is { } access
+                && named.Add(path))
+                denials.Add(new SandboxDenial($"file-{access.ToLowerInvariant()}", path));
+        }
+
+        return true;
+    }
+
+    private static void AddOperationTargets(JsonElement records, List<SandboxDenial> denials)
+    {
+        foreach (var item in records.EnumerateArray())
+        {
+            if (StringProperty(item, "operation") is { } operation && StringProperty(item, "target") is { } target)
+                denials.Add(new SandboxDenial(operation, target));
+        }
+    }
+
+    private static string? StringProperty(JsonElement item, string name) =>
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 }

@@ -9,7 +9,7 @@ namespace VisualRelay.Tests;
 /// JSON block from the captured output.  Absent, truncated, or malformed JSON
 /// must never throw — the parser returns false with the output unchanged.
 /// </summary>
-public sealed class NonoDiagnosticsJsonParserTests
+public sealed partial class NonoDiagnosticsJsonParserTests
 {
     // ── Happy path: valid trailing JSON with denials ──────────────────
 
