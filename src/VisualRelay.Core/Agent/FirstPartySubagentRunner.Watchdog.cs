@@ -77,23 +77,34 @@ public sealed partial class FirstPartySubagentRunner
             },
             null, Tick, Tick);
 
+        (AgentLoopResult, KillSignature?, bool) Killed(AgentStats? stats = null) => (
+            new AgentLoopResult(
+                AgentLoopOutcome.Error,
+                string.Empty,
+                stats ?? new AgentStats(),
+                $"the stage stalled: {Describe(fired)}"),
+            kill,
+            // A plain stall CAN be the model, so it stays escalatable. A
+            // ceiling, an output-silence kill and a wedge are host
+            // conditions a dearer tier would hit identically.
+            AgentWatchdog.IsHardAbort(fired));
+
         try
         {
-            return (await body(stall.Token).ConfigureAwait(false), null, false);
+            var result = await body(stall.Token).ConfigureAwait(false);
+            // The loop reports a cancellation as its own Cancelled outcome rather than
+            // throwing, so a kill shows as that outcome after the clock fired. Measured
+            // with crawl: checking only for the exception passed a stall off as
+            // "stage cancelled", with no signature for the driver to branch on.
+            return result.Outcome == AgentLoopOutcome.Cancelled
+                && fired != AgentWatchdogOutcome.Disarmed
+                && !cancellationToken.IsCancellationRequested
+                    ? Killed(result.Stats)
+                    : (result, null, false);
         }
         catch (OperationCanceledException) when (fired != AgentWatchdogOutcome.Disarmed)
         {
-            return (
-                new AgentLoopResult(
-                    AgentLoopOutcome.Error,
-                    string.Empty,
-                    new AgentStats(),
-                    $"the stage stalled: {Describe(fired)}"),
-                kill,
-                // A plain stall CAN be the model, so it stays escalatable. A
-                // ceiling, an output-silence kill and a wedge are host
-                // conditions a dearer tier would hit identically.
-                AgentWatchdog.IsHardAbort(fired));
+            return Killed();
         }
         finally
         {

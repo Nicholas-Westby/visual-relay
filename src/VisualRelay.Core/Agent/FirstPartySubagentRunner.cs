@@ -117,8 +117,9 @@ public sealed partial class FirstPartySubagentRunner : ISubagentRunner
 
                 // A hop is worth taking only for a fault of this route. An exhausted
                 // turn budget or a cancelled stage would repeat identically on the
-                // next model, and a success is done.
-                if (last.Outcome != AgentLoopOutcome.Error)
+                // next model, and a success is done. So would a hard-abort kill: the
+                // next model gets the same ceiling and runs on the same host.
+                if (last.Outcome != AgentLoopOutcome.Error || hardAbort)
                 {
                     // Reading the contract HERE, before the report is written, is
                     // what lets a repair re-ask count toward the stage: its turn
