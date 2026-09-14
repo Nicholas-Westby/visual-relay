@@ -33,7 +33,7 @@ public sealed class RelayQueueControllerCancelTests
         var controller = new RelayQueueController(repo.Root, runner, gitInvoker: git);
         await controller.RefreshAsync(CancellationToken.None);
         var drain = controller.DrainAsync(cts.Token);
-        await runner.FirstStarted.WaitAsync(HangGuard);
+        await runner.FirstStarted.WaitAsync(HangGuard, TestContext.Current.CancellationToken);
         await cts.CancelAsync();
         var results = await drain;
 
@@ -77,7 +77,7 @@ public sealed class RelayQueueControllerCancelTests
 
         await controller.RefreshAsync(CancellationToken.None);
         var drain = controller.DrainAsync(cts.Token);
-        await planRunner.FirstStarted.WaitAsync(HangGuard);
+        await planRunner.FirstStarted.WaitAsync(HangGuard, TestContext.Current.CancellationToken);
         await cts.CancelAsync();
         var results = await drain;
 
