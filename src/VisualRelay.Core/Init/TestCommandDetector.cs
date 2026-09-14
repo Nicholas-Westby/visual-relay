@@ -27,7 +27,7 @@ namespace VisualRelay.Core.Init;
 // An explicit project script (package.json scripts.test) beats an inferred runner
 // (bun test). This way a Bun-lockfile repo whose tests are vitest via scripts.test
 // gets the correct command validated first.
-public static class TestCommandDetector
+public static partial class TestCommandDetector
 {
     /// <summary>
     /// Convenience: first candidate or empty string (backward-compatible).
@@ -131,7 +131,7 @@ public static class TestCommandDetector
         if (File.Exists(Path.Combine(rootPath, "CMakeLists.txt")))
         {
             candidates.Add(
-                "cmake -S . -B build && cmake --build build "
+                $"cmake -S . -B build{CMakeTestOptions(rootPath)} && cmake --build build "
                 + "&& ctest --test-dir build --output-on-failure");
         }
 

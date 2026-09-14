@@ -79,4 +79,18 @@ public sealed partial class TestCommandValidatorTests
 
         Assert.True(result.Accepted, result.RejectionReason);
     }
+
+    /// <summary>
+    /// ctest exits 0 when the build registered no tests, so a CMake project whose suite is behind a
+    /// disabled option looked like a passing run. Found bootstrapping odygrd/quill on the Mac.
+    /// </summary>
+    [Fact]
+    public void Classify_ExitZeroWithCtestFindingNoTests_Rejects()
+    {
+        var result = TestCommandValidator.Classify(new TestRunResult(0,
+            "Test project /repo/build\nNo tests were found!!!\n"));
+
+        Assert.False(result.Accepted);
+        Assert.Contains("no tests", result.RejectionReason, StringComparison.OrdinalIgnoreCase);
+    }
 }

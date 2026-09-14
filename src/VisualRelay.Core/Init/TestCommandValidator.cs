@@ -88,10 +88,13 @@ public sealed class TestCommandValidator(ITestRunner runner)
 
         var hasOutput = !string.IsNullOrWhiteSpace(runResult.Output);
 
-        // Exit 0 — accept regardless of output shape.
+        // Exit 0 — accept regardless of output shape, except ctest saying the build registered no
+        // tests: a suite behind a disabled CMake option (quill's QUILL_BUILD_TESTS) ran nothing.
         if (runResult.ExitCode == 0)
         {
-            return ValidationResult.Accept(runResult);
+            return hasOutput && runResult.Output.Contains("No tests were found", StringComparison.Ordinal)
+                ? ValidationResult.Reject("ctest found no tests: the build registered none, so the command ran nothing", runResult)
+                : ValidationResult.Accept(runResult);
         }
 
         // Exit 127 — command not found (ENOENT), whatever it printed.
