@@ -49,7 +49,7 @@ public sealed partial class RelayDriver
         var guardCommand = config.GuardCommand;
         if (string.IsNullOrWhiteSpace(guardCommand)) return false;
 
-        var baseSha = await ResolveGuardBaseShaAsync(rootPath, runBaseSha, cancellationToken);
+        var baseSha = await ResolveBaseShaAsync(rootPath, runBaseSha, cancellationToken);
         var basePassed = baseSha is null
             ? null
             : await BaseGuardVerdictAsync(rootPath, runId, taskId, baseSha, guardCommand, cancellationToken);
@@ -77,7 +77,7 @@ public sealed partial class RelayDriver
     /// moving <c>HEAD</c>), so a cached verdict belongs to exactly one tree. Null when
     /// the repo has no resolvable commit, in which case no probe is possible.
     /// </summary>
-    private async Task<string?> ResolveGuardBaseShaAsync(
+    private async Task<string?> ResolveBaseShaAsync(
         string rootPath, string? runBaseSha, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(runBaseSha)) return runBaseSha.Trim();
