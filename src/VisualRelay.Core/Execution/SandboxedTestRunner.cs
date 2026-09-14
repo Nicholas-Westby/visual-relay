@@ -143,6 +143,7 @@ public sealed partial class SandboxedTestRunner(
         var environment = SandboxedStage.BuildTargetCommandEnvironment(config);
         return new SandboxedLaunch("nono", [.. prefix, program, .. arguments], environment.Overrides, environment.Remove, null);
     }
+
     /// <summary>
     /// <paramref name="command"/> behind a shell prelude that sets each search-path variable to its
     /// value followed by the inherited one, when there is one, and exports it: the shell that runs
