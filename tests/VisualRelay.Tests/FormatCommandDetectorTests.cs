@@ -2,7 +2,7 @@ using VisualRelay.Core.Init;
 
 namespace VisualRelay.Tests;
 
-public sealed class FormatCommandDetectorTests
+public sealed partial class FormatCommandDetectorTests
 {
     [Fact]
     public void Detect_SlnxPresent_ReturnsDotnetFormatWithSolutionName()
@@ -60,7 +60,7 @@ public sealed class FormatCommandDetectorTests
     }
 
     [Fact]
-    public void Detect_PackageJsonWithFormatScript_ReturnsScriptValue()
+    public void Detect_PackageJsonWithFormatScript_RunsItThroughNpm()
     {
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "package.json"),
@@ -68,7 +68,7 @@ public sealed class FormatCommandDetectorTests
 
         var result = FormatCommandDetector.Detect(repo.Root);
 
-        Assert.Equal("biome format --write .", result);
+        Assert.Equal("npm run format", result);
     }
 
     /// <summary>
@@ -102,7 +102,7 @@ public sealed class FormatCommandDetectorTests
             """{ "scripts": { "test": "jest" } }""");
         File.WriteAllText(Path.Combine(repo.Root, configFile), "{}");
 
-        Assert.Equal("prettier --write .", FormatCommandDetector.Detect(repo.Root));
+        Assert.Equal("node_modules/.bin/prettier --write .", FormatCommandDetector.Detect(repo.Root));
     }
 
     /// <summary>A prettier key in package.json is its config too.</summary>
@@ -113,7 +113,7 @@ public sealed class FormatCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "package.json"),
             """{ "prettier": { "semi": false }, "scripts": { "test": "jest" } }""");
 
-        Assert.Equal("prettier --write .", FormatCommandDetector.Detect(repo.Root));
+        Assert.Equal("node_modules/.bin/prettier --write .", FormatCommandDetector.Detect(repo.Root));
     }
 
     /// <summary>So is depending on it.</summary>
@@ -124,7 +124,7 @@ public sealed class FormatCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "package.json"),
             """{ "devDependencies": { "prettier": "^3.3.0" } }""");
 
-        Assert.Equal("prettier --write .", FormatCommandDetector.Detect(repo.Root));
+        Assert.Equal("node_modules/.bin/prettier --write .", FormatCommandDetector.Detect(repo.Root));
     }
 
     [Fact]

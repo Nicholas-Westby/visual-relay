@@ -34,14 +34,17 @@ public static class FormatCommandDetector
         if (TestCommandDetector.HasAnyFile(rootPath, "*.csproj"))
             return "dotnet format";
 
-        // Bun / Node — the repo's own format script wins; prettier only when the repo
-        // configures it. A lower-priority marker still gets its turn otherwise.
+        // Bun / Node — the repo's own format script wins, run through its package manager, which puts
+        // node_modules/.bin on the PATH: i18next's copied body answered "prettier: not found" before
+        // every guard. A script that only checks formats nothing, so a writing sibling is preferred.
+        // Prettier only when the repo configures it, from node_modules so none is ever downloaded. A
+        // lower-priority marker still gets its turn otherwise.
         if (File.Exists(Path.Combine(rootPath, "package.json")))
         {
-            var fmt = ReadPackageJsonFormatScript(rootPath)
-                      ?? (HasPrettierConfig(rootPath) ? "prettier --write ." : null);
-            if (fmt is not null)
-                return fmt;
+            if (WritingFormatScript(rootPath) is { } script)
+                return $"{ScriptRunner(rootPath)} {script}";
+            if (HasPrettierConfig(rootPath))
+                return "node_modules/.bin/prettier --write .";
         }
 
         // Go
@@ -99,20 +102,25 @@ public static class FormatCommandDetector
         return false;
     }
 
-    private static string? ReadPackageJsonFormatScript(string rootPath)
+    private static readonly string[] FormatScriptNames = ["format", "format:fix", "format:write"];
+
+    /// <summary>
+    /// The first of the repo's format scripts that writes: a script whose body checks
+    /// (<c>--check</c>, <c>--list-different</c>) without writing changes nothing.
+    /// </summary>
+    private static string? WritingFormatScript(string rootPath)
     {
         try
         {
-            var path = Path.Combine(rootPath, "package.json");
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            if (doc.RootElement.TryGetProperty("scripts", out var scripts)
-                && scripts.ValueKind == JsonValueKind.Object
-                && scripts.TryGetProperty("format", out var formatScript)
-                && formatScript.ValueKind == JsonValueKind.String)
+            using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(rootPath, "package.json")));
+            if (!doc.RootElement.TryGetProperty("scripts", out var scripts) || scripts.ValueKind != JsonValueKind.Object)
+                return null;
+
+            foreach (var name in FormatScriptNames)
             {
-                var value = formatScript.GetString();
-                if (!string.IsNullOrWhiteSpace(value))
-                    return value;
+                if (scripts.TryGetProperty(name, out var script) && script.ValueKind == JsonValueKind.String
+                    && script.GetString() is { } body && !string.IsNullOrWhiteSpace(body) && !OnlyChecks(body))
+                    return name;
             }
         }
         catch
@@ -122,4 +130,14 @@ public static class FormatCommandDetector
 
         return null;
     }
+
+    private static bool OnlyChecks(string body)
+    {
+        var tokens = body.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return (tokens.Contains("--check") || tokens.Contains("--list-different")) && !tokens.Contains("--write");
+    }
+
+    // bun's script runner for a bun lockfile, npm's otherwise: npm runs a script from any installed node_modules.
+    private static string ScriptRunner(string rootPath) =>
+        File.Exists(Path.Combine(rootPath, "bun.lock")) || File.Exists(Path.Combine(rootPath, "bun.lockb")) ? "bun run" : "npm run";
 }

@@ -103,7 +103,7 @@ public sealed class FormatBaselineCheckTests
     [InlineData("dotnet format App.slnx", "dotnet format App.slnx --verify-no-changes")]
     [InlineData("dotnet format", "dotnet format --verify-no-changes")]
     [InlineData("cargo fmt", "cargo fmt --check")]
-    [InlineData("prettier --write .", "prettier --check .")]
+    [InlineData("node_modules/.bin/prettier --write .", "node_modules/.bin/prettier --check .")]
     [InlineData("gofmt -w .", "test -z \"$(gofmt -l .)\"")]
     [InlineData("swiftformat .", "swiftformat --lint .")]
     public void TheCheckForm_OfEachDetectedFormatter(string formatCmd, string check)

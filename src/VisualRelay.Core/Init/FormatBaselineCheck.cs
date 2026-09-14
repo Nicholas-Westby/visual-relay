@@ -19,7 +19,7 @@ internal static class FormatBaselineCheck
     {
         _ when formatCmd.StartsWith("dotnet format", StringComparison.Ordinal) => formatCmd + " --verify-no-changes",
         "cargo fmt" => "cargo fmt --check",
-        "prettier --write ." => "prettier --check .",
+        "node_modules/.bin/prettier --write ." => "node_modules/.bin/prettier --check .",
         "gofmt -w ." => "test -z \"$(gofmt -l .)\"",
         "swiftformat ." => "swiftformat --lint .",
         _ => null,
