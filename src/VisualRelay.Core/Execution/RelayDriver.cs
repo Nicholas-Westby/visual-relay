@@ -51,7 +51,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             if (await FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;
             var isReAdded = !_options.Resume ? DetectStaleCompletedState(rootPath, taskId, taskDirectory, runId, input.Markdown, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun) : _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             EnsureTaskInputHash(statusEntries, input.Markdown);
-            (firstStageToRun, var flaggedOutcome) = await RestoreFlaggedWorkIfNeededAsync(rootPath, taskId, taskDirectory, firstStageToRun, ledger, statusEntries, cancellationToken);
+            (firstStageToRun, var flaggedOutcome) = await RestoreFlaggedWorkIfNeededAsync(rootPath, runId, taskId, taskDirectory, firstStageToRun, ledger, statusEntries, cancellationToken);
             if (flaggedOutcome is not null) return flaggedOutcome;
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);

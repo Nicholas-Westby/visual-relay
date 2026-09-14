@@ -13,6 +13,7 @@ public sealed partial class RelayDriver
     /// </summary>
     private async Task<(int firstStageToRun, RelayTaskOutcome? flaggedOutcome)> RestoreFlaggedWorkIfNeededAsync(
         string rootPath,
+        string runId,
         string taskId,
         string taskDirectory,
         int firstStageToRun,
@@ -36,6 +37,16 @@ public sealed partial class RelayDriver
 
         var restoreResult = await FlaggedWorkStore.RestoreAsync(
             rootPath, taskId, taskDirectory, _dependencies.GitInvoker, ct);
+
+        // Said in run.log whichever way it goes: measured with FreshRSS, a resume that restored
+        // the work and committed left no line saying the bundle had been applied.
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, restoreResult.IsUnrestorable ? "warn" : "info", "flagged_work_restored",
+            runId, rootPath, taskId, firstStageToRun,
+            Data: new Dictionary<string, string>
+            {
+                ["result"] = restoreResult.IsUnrestorable ? "unrestorable" : restoreResult.HasConflicts ? "conflicts" : "clean"
+            }), ct);
 
         if (restoreResult.IsUnrestorable)
         {

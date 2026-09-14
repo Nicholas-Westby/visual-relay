@@ -240,6 +240,7 @@ public sealed partial class RelayDriver
         entries[idx] = entries[idx] with
         {
             Status = "Done",
+            Error = null,
             Reason = checkReason,
             DurationSeconds = cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds,
             CostUsd = stage.Kind == "driver" ? 0 : cost?.CostUsd,
@@ -254,7 +255,7 @@ public sealed partial class RelayDriver
     {
         var idx = stage.Number - 1;
         if (idx < 0 || idx >= entries.Count) return;
-        entries[idx] = entries[idx] with { Status = "Skipped", Check = "green" };
+        entries[idx] = entries[idx] with { Status = "Skipped", Check = "green", Error = null };
     }
 
     /// <summary>
