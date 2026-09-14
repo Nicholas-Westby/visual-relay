@@ -48,6 +48,20 @@ public sealed class VrGuardProfileLinuxTests
         Assert.Contains("/opt", grants);
     }
 
+    /// <summary>
+    /// Maven and Gradle keep their dependency caches under the home directory, and a build
+    /// writes them before it compiles. Measured in the WSL distro: apache/commons-lang's
+    /// <c>mvn test</c> failed in 4 s with AccessDeniedException on
+    /// <c>~/.m2/repository/.../_remote.repositories</c>, and passed once <c>~/.m2</c> was allowed.
+    /// </summary>
+    [Theory]
+    [InlineData("$HOME/.m2")]
+    [InlineData("$HOME/.gradle")]
+    public void JavaBuildCaches_AreWritableOnEveryPlatform(string cache)
+    {
+        Assert.Contains(Entries("allow"), e => e.Path == cache && e.When is null);
+    }
+
     [Fact]
     public void Macos_KeepsReadingTheWholeFilesystem()
     {
