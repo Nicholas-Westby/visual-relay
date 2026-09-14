@@ -73,6 +73,19 @@ public sealed class VrGuardProfileLinuxTests
         Assert.Contains(Entries("allow"), e => e.Path == "$HOME/.nuget/NuGet" && e.When is null);
     }
 
+    /// <summary>
+    /// rustup installs the toolchain a repository pins in rust-toolchain.toml into <c>~/.rustup</c>
+    /// on first use, and many Rust repositories pin one. Measured in the WSL distro with only
+    /// <c>~/.cargo</c> allowed: a sandboxed <c>cargo test</c> in a crate pinning an uninstalled
+    /// 1.96.0 failed in 1 s with "could not create temp file /home/enjay/.rustup/tmp/...:
+    /// Permission denied (os error 13)".
+    /// </summary>
+    [Fact]
+    public void RustupHome_IsWritableOnEveryPlatform()
+    {
+        Assert.Contains(Entries("allow"), e => e.Path == "$HOME/.rustup" && e.When is null);
+    }
+
     [Fact]
     public void Macos_KeepsReadingTheWholeFilesystem()
     {

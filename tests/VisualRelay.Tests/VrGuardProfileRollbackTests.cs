@@ -37,7 +37,7 @@ public sealed class VrGuardProfileRollbackTests
         // workspace dirs (e.g. a repo vendoring the "Unity" C test framework).
         foreach (var required in new[]
                  {
-                     ".nuget", ".cache", "Caches", ".bun", ".npm", ".dotnet", ".cargo", ".cloakbrowser",
+                     ".nuget", ".cache", "Caches", ".bun", ".npm", ".dotnet", ".cargo", ".rustup", ".cloakbrowser",
                      "/Library/Unity",
                      "/Library/Application Support/Unity",
                      "/Library/Application Support/UnityHub",
