@@ -22,8 +22,12 @@ namespace VisualRelay.App.Services;
 public sealed partial class ControlApi(
     MainWindowViewModel viewModel,
     Window? window = null,
-    IReadOnlyCollection<string>? confirmGatedCommands = null)
+    IReadOnlyCollection<string>? confirmGatedCommands = null,
+    bool? isWindows = null)
 {
+    // Where the folder-pick policy runs: this machine, unless a test pins the Windows arm.
+    private bool IsWindows => isWindows ?? OperatingSystem.IsWindows();
+
     /// <summary>
     /// Resolves the <see cref="ICommand"/> for a documented command name, or
     /// null when the name is not an ICommand-backed action. Must be called on
@@ -222,12 +226,20 @@ public sealed partial class ControlApi(
                     // project folder. Like Browse it is always available; mirrors
                     // BrowseAsync (set RootPath, then refresh the task list).
                     var path = Json.ReadString(body, "path");
-                    if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                    // The pick policy Browse applies comes first: a folder Windows can never run
+                    // in is refused with its reason whether or not it exists.
+                    var pick = string.IsNullOrWhiteSpace(path) ? null : FolderPickerWslTranslation.Decide(path, IsWindows);
+                    if (pick is { Root: null })
+                    {
+                        return (409, Json.Object(("ok", false), ("command", name), ("error", "folder refused"), ("reason", pick.Message)));
+                    }
+
+                    if (pick?.Root is not { } root || !Directory.Exists(root))
                     {
                         return (409, Json.Object(("ok", false), ("command", name), ("error", "folder not found")));
                     }
 
-                    viewModel.RootPath = path;
+                    viewModel.RootPath = root;
                     if (viewModel.RefreshCommand.CanExecute(null))
                     {
                         viewModel.RefreshCommand.Execute(null);

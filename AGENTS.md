@@ -124,7 +124,8 @@ Endpoints:
   `new-task`, `follow-running`, `edit`, `rewrite-selected`, `cancel-rewrite`,
   `revert-rewrite`, `mark-done`, `reset-selected`, plus property actions
   `open-folder` (body `{"path":"<dir>"}` — the programmatic Browse: point the app at a
-  project), `create-task` (body `{"title":"<text>","body":"<markdown>"}`, `body`
+  project; `409` with `reason` for a folder Browse would refuse, such as a Windows drive
+  folder or a non-WSL share on Windows, and `409` for a missing folder), `create-task` (body `{"title":"<text>","body":"<markdown>"}`, `body`
   optional — authors a task headlessly through the same view-model command the New
   Task dialog's Create button runs: writes `llm-tasks/<slug>/<slug>.md` holding the
   title line, a blank line and the body, and answers
