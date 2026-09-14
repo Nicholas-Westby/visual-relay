@@ -144,6 +144,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     [Fact]
     public async Task CreateVerifyWorktree_LargeIgnoredDir_HasSymlinkedChild()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-largedir-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();

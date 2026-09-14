@@ -62,6 +62,7 @@ public sealed class AgentToolPathContainmentTests
     [Fact]
     public async Task ReadFile_RefusesSymlinkPointingOutOfTree()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         using var root = new TempDirectory();
         using var outside = new TempDirectory();
         var secret = Path.Combine(outside.Path, "secret.txt");
@@ -80,6 +81,7 @@ public sealed class AgentToolPathContainmentTests
     [Fact]
     public async Task ReadFile_RefusesPathThroughSymlinkedDirectory()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         using var root = new TempDirectory();
         using var outside = new TempDirectory();
         await File.WriteAllTextAsync(Path.Combine(outside.Path, "secret.txt"), "credentials");
@@ -151,6 +153,7 @@ public sealed class AgentToolPathContainmentTests
     [Fact]
     public async Task ListFiles_DoesNotFollowDirectorySymlinkOutOfTree()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         using var root = new TempDirectory();
         using var outside = new TempDirectory();
         await File.WriteAllTextAsync(Path.Combine(outside.Path, "secret.txt"), "credentials");
@@ -168,6 +171,7 @@ public sealed class AgentToolPathContainmentTests
     [Fact]
     public async Task Grep_DoesNotSearchThroughDirectorySymlink()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         using var root = new TempDirectory();
         using var outside = new TempDirectory();
         await File.WriteAllTextAsync(Path.Combine(outside.Path, "secret.txt"), "needle out here");

@@ -12,6 +12,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     [Fact]
     public async Task CreateVerifyWorktree_NpmShapeRelativeSymlink_IsPreservedAndResolves()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-npm-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();
@@ -72,6 +73,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     [Fact]
     public async Task CreateVerifyWorktree_CycleSymlink_DoesNotHangOrThrow()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-cycle-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();
@@ -115,6 +117,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     [Fact]
     public async Task CreateVerifyWorktree_AbsoluteInternalSymlink_IsRewrittenToWorktree()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-absint-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();
@@ -174,6 +177,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     [Fact]
     public async Task CleanupVerifyWorktree_EscapeSymlink_TargetSurvivesUntouched()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-escape-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         // Sentinel dir OUTSIDE the repo — must survive the overlay + teardown cycle.

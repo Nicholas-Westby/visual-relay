@@ -95,6 +95,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
     [Fact]
     public async Task CleanupVerifyWorktree_RemovesLinksOnly_SourceTargetsSurviveWithContents()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-safety-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();

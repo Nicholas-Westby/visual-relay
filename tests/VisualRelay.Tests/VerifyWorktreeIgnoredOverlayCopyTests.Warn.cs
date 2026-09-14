@@ -14,6 +14,7 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     [Fact]
     public async Task CreateVerifyWorktree_DanglingSymlink_IsRecreatedWithoutAbortingCopy()
     {
+        Assert.SkipUnless(WindowsTestCapabilities.CanCreateSymlinks, WindowsTestCapabilities.NoSymlinks);
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-dangle-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();
