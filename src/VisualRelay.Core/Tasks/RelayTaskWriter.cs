@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Tasks;
@@ -57,7 +58,7 @@ public static class RelayTaskWriter
         // Collision check (optional rootPath parameter).
         if (rootPath is not null)
         {
-            var tasksDir = Path.Combine(rootPath, "llm-tasks");
+            var tasksDir = Path.Combine(rootPath, RelayConfigLoader.ReadTasksDir(rootPath));
             var flatPath = Path.Combine(tasksDir, $"{slug}.md");
             var nestedDir = Path.Combine(tasksDir, slug);
 
@@ -100,7 +101,7 @@ public static class RelayTaskWriter
             throw new InvalidOperationException(error);
         }
 
-        var tasksDir = Path.Combine(rootPath, "llm-tasks");
+        var tasksDir = Path.Combine(rootPath, RelayConfigLoader.ReadTasksDir(rootPath));
         Directory.CreateDirectory(tasksDir);
 
         var nestedDir = Path.Combine(tasksDir, slug);
@@ -131,7 +132,7 @@ public static class RelayTaskWriter
             return Task.FromResult(task.MarkdownPath);
         }
 
-        var tasksDir = Path.Combine(rootPath, "llm-tasks");
+        var tasksDir = Path.Combine(rootPath, RelayConfigLoader.ReadTasksDir(rootPath));
         var nestedDir = Path.Combine(tasksDir, task.Id);
         Directory.CreateDirectory(nestedDir);
 
@@ -212,7 +213,7 @@ public static class RelayTaskWriter
             throw new InvalidOperationException(error);
         }
 
-        var tasksDir = Path.Combine(rootPath, "llm-tasks");
+        var tasksDir = Path.Combine(rootPath, RelayConfigLoader.ReadTasksDir(rootPath));
         var newDir = Path.Combine(tasksDir, newSlug);
         Directory.CreateDirectory(newDir);
 
@@ -270,7 +271,7 @@ public static class RelayTaskWriter
             return $"Slug \"{slug}\" contains unsafe characters. Use lowercase letters, digits, and hyphens only.";
         }
 
-        var tasksDir = Path.Combine(rootPath, "llm-tasks");
+        var tasksDir = Path.Combine(rootPath, RelayConfigLoader.ReadTasksDir(rootPath));
         var flatPath = Path.Combine(tasksDir, $"{slug}.md");
         var nestedDir = Path.Combine(tasksDir, slug);
 

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.App.ViewModels;
@@ -27,7 +28,7 @@ public partial class MainWindowViewModel
     {
         _newTaskTemplates = TaskTemplates.Load(
             TaskTemplates.ResolveUserTemplatesDir(EnvironmentAccessor),
-            Path.Combine(RootPath, "llm-tasks", "templates"));
+            Path.Combine(RootPath, RelayConfigLoader.ReadTasksDir(RootPath), "templates"));
 
         NewTaskTemplateNames.Clear();
         foreach (var template in _newTaskTemplates)

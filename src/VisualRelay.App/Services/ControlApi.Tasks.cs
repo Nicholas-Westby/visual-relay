@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.App.Services;
@@ -76,5 +77,5 @@ public sealed partial class ControlApi
     /// </summary>
     private string ResolveTaskPath(string slug) =>
         viewModel.Tasks.FirstOrDefault(t => string.Equals(t.Id, slug, StringComparison.Ordinal))?.Task.MarkdownPath
-            ?? Path.Combine(viewModel.RootPath, "llm-tasks", slug, $"{slug}.md");
+            ?? Path.Combine(viewModel.RootPath, RelayConfigLoader.ReadTasksDir(viewModel.RootPath), slug, $"{slug}.md");
 }
