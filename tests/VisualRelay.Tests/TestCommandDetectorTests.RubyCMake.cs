@@ -20,6 +20,28 @@ public sealed partial class TestCommandDetectorTests
         Assert.Equal(["bundle exec rake test", "bundle exec rake"], candidates);
     }
 
+    /// <summary>
+    /// An RSpec project often has no rake test task: measured with ruby-grape/grape, bootstrap's
+    /// <c>bundle exec rake test</c> answered "Don't know how to build task 'test'". A .rspec
+    /// file or a spec directory names the runner, so rspec is tried first.
+    /// </summary>
+    /// <param name="marker">The RSpec marker the repo carries.</param>
+    /// <param name="isDirectory">Whether the marker is a directory.</param>
+    [Theory]
+    [InlineData(".rspec", false)]
+    [InlineData("spec", true)]
+    public void DetectCandidates_GemfileWithAnRspecMarker_OffersRspecFirst(string marker, bool isDirectory)
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "Gemfile"), "source 'https://rubygems.org'\n");
+        if (isDirectory) Directory.CreateDirectory(Path.Combine(repo.Root, marker));
+        else File.WriteAllText(Path.Combine(repo.Root, marker), "--require spec_helper\n");
+
+        var candidates = TestCommandDetector.DetectCandidates(repo.Root);
+
+        Assert.Equal(["bundle exec rspec", "bundle exec rake test", "bundle exec rake"], candidates);
+    }
+
     [Fact]
     public void DetectCandidates_RakefileWithoutGemfile_StillOffersRake()
     {

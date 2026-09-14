@@ -18,7 +18,8 @@ namespace VisualRelay.Core.Init;
 //   8. Maven         (pom.xml)                    → "./mvnw test" | "mvn test"
 //   9. Gradle        (build.gradle[.kts] / settings.gradle[.kts])
 //                                                 → "./gradlew test" | "gradle test"
-//  10. Ruby          (Gemfile / Rakefile)         → "bundle exec rake test", then
+//  10. Ruby          (Gemfile / Rakefile)         → "bundle exec rspec" (with .rspec or
+//                                                   spec/), "bundle exec rake test", then
 //                                                   "bundle exec rake"
 //  11. CMake         (CMakeLists.txt)             → configure + build + ctest
 //  12. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
@@ -115,6 +116,10 @@ public static class TestCommandDetector
         if (File.Exists(Path.Combine(rootPath, "Gemfile"))
             || File.Exists(Path.Combine(rootPath, "Rakefile")))
         {
+            // An RSpec project often has no rake test task (grape answers "Don't know how
+            // to build task 'test'"); a .rspec file or a spec directory names its runner.
+            if (File.Exists(Path.Combine(rootPath, ".rspec")) || Directory.Exists(Path.Combine(rootPath, "spec")))
+                candidates.Add("bundle exec rspec");
             candidates.Add("bundle exec rake test");
             candidates.Add("bundle exec rake");
         }

@@ -15,12 +15,20 @@ public sealed partial class TestCommandValidatorTests
     /// as the repository's test command.
     /// </summary>
     /// <param name="output">The refusal a runner-less repo actually prints.</param>
+    /// <remarks>
+    /// A build tool refusing an unknown task names the task, and the task is called test,
+    /// so the refusal read as test output: measured with ruby-grape/grape, bootstrap kept
+    /// <c>bundle exec rake test</c>, which answers "Don't know how to build task 'test'".
+    /// </remarks>
     [Theory]
     [InlineData("npm error Missing script: \"test\"\nnpm error\nnpm error Did you mean one of these?")]
     [InlineData("sh: gradle: command not found")]
     [InlineData("bash: pytest: No such file or directory")]
     [InlineData("Error: Missing script: test")]
     [InlineData("npm ERR! missing script: test")]
+    [InlineData("rake aborted!\nDon't know how to build task 'test' (See the list of available tasks with `rake --tasks`)")]
+    [InlineData("make: *** No rule to make target 'test'.  Stop.")]
+    [InlineData("FAILURE: Build failed with an exception.\n\n* What went wrong:\nTask 'test' not found in root project 'demo'.")]
     public void Classify_NonZeroExitWithARefusal_Rejects(string output)
     {
         var result = TestCommandValidator.Classify(new TestRunResult(1, output));

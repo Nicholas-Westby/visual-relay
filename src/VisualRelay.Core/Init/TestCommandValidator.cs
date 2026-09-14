@@ -104,11 +104,14 @@ public sealed class TestCommandValidator(ITestRunner runner)
     /// <returns>True when the output looks like a test run.</returns>
     private static bool LooksLikeTestOutput(string output)
     {
+        // A build tool refusing an unknown task names it, and the task is called test, so
+        // these must be caught before the markers: grape's `rake test` otherwise passed.
         foreach (var refusal in (string[])
                  ["missing script", "command not found", "no such file or directory",
                   "is not recognized as an internal or external command",
                   "could not determine executable to run", "unknown command",
-                  "npm error", "no test specified"])
+                  "npm error", "no test specified", "don't know how to build task",
+                  "no rule to make target", "not found in root project"])
             if (output.Contains(refusal, StringComparison.OrdinalIgnoreCase))
                 return false;
 
