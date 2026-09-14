@@ -72,7 +72,7 @@ public static partial class AuthorTestDiffAuditor
 
         var listed = await git.RunAsync(rootPath, ["ls-files", "-z", "--", .. testFiles], cancellationToken);
         return listed.ExitCode == 0
-            ? [.. listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)]
+            ? [.. GitPathOutput.SplitNulRecords(listed.Output)]
             : [];
     }
 

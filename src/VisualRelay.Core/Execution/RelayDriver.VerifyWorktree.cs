@@ -201,8 +201,7 @@ public sealed partial class RelayDriver
         return set;
     }
 
-    private static IEnumerable<string> SplitNul(string? gitOutput) =>
-        (gitOutput ?? string.Empty).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    private static IEnumerable<string> SplitNul(string? gitOutput) => GitPathOutput.SplitNulRecords(gitOutput);
 
     /// <summary>
     /// Emits a <c>verify_mutated_tree</c> warn advisory naming the DELTA files the test

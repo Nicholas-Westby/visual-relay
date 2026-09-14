@@ -34,6 +34,21 @@ internal static class GitPathOutput
     }
 
     /// <summary>
+    /// Splits NUL-terminated (<c>-z</c>) git output into its records, dropping empty ones. The
+    /// capture appends one line ending after the last read (<c>\r\n</c> on Windows), which is not
+    /// a record: kept, it became a phantom ignored entry the verify overlay tried to copy.
+    /// Exactly one ending is removed, so a path that itself ends in a newline keeps it.
+    /// </summary>
+    public static IReadOnlyList<string> SplitNulRecords(string? output) =>
+        TrimCaptureLineEnding(output ?? string.Empty).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>The output without the one line ending the capture appended after the last read.</summary>
+    internal static string TrimCaptureLineEnding(string output) =>
+        output.EndsWith("\r\n", StringComparison.Ordinal) ? output[..^2]
+        : output.EndsWith('\n') ? output[..^1]
+        : output;
+
+    /// <summary>
     /// Decodes a single C-quoted git path line.  If <paramref name="line"/>
     /// starts with <c>"</c> the surrounding quotes are stripped and every
     /// backslash escape (<c>\\</c>, <c>\"</c>, <c>\n</c>, <c>\t</c>,

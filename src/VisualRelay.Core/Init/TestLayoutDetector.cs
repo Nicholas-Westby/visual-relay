@@ -57,7 +57,7 @@ public static partial class TestLayoutDetector
         if (exitCode != 0 || timedOut)
             return Empty;
 
-        var tracked = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var tracked = GitPathOutput.SplitNulRecords(output);
         return Detect(tracked, path => ReadHead(rootPath, path));
     }
 

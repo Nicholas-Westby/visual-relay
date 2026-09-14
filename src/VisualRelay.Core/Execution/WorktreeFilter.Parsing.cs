@@ -31,11 +31,9 @@ internal static partial class WorktreeFilter
     /// </summary>
     private static string[] SplitNulRecords(string output)
     {
-        // Remove exactly one trailing capture-appended '\n' (never more — a
-        // path may legitimately end in a newline before its NUL).
-        if (output.EndsWith('\n'))
-            output = output[..^1];
-        return output.Split('\0');
+        // Remove exactly one trailing capture-appended line ending, \r\n on Windows (never
+        // more — a path may legitimately end in a newline before its NUL).
+        return GitPathOutput.TrimCaptureLineEnding(output).Split('\0');
     }
 
     /// <summary>
