@@ -1,6 +1,7 @@
 using VisualRelay.App.ViewModels;
 using VisualRelay.Cli;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -22,7 +23,11 @@ public sealed partial class MainWindowViewModelTests
         // see no tools — deterministic, and no process-global env mutation (the
         // convention guard forbids mutating the real process environment in tests).
         var env = new DictionaryEnvironmentAccessor { ["PATH"] = string.Empty };
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = env };
+        // The local host, stated: on a Windows box with WSL this machine's host has nono in the distro.
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root, EnvironmentAccessor = env, SandboxHostResolver = () => Task.FromResult(SandboxHost.Local),
+        };
         await viewModel.LoadInitialAsync();
 
         // Satisfy the HF gate so we reach the tool-presence gate.
@@ -101,7 +106,7 @@ public sealed partial class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task EnsureRunnableAsync_AsksForTheIdentityOfTheWorkspace_OnTheResolvedHost()
+    public async Task EnsureRunnableAsync_AsksForTheIdentityOfTheWorkspace_InsideTheResolvedDistro()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -111,7 +116,9 @@ public sealed partial class MainWindowViewModelTests
         {
             RootPath = repo.Root,
             IsHuggingFaceConfigured = true,
-            SandboxHostResolver = () => Task.FromResult(SandboxHost.Local),
+            // A resolved distro satisfies the tool gate on any OS (a local host on Windows has no nono).
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(
+                new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u"))),
             GitIdentityCheck = (root, insideWsl) =>
             {
                 asked = (root, insideWsl);
@@ -122,7 +129,7 @@ public sealed partial class MainWindowViewModelTests
         var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
 
         Assert.True(runnable, viewModel.StatusText);
-        Assert.Equal((repo.Root, false), asked);
+        Assert.Equal((repo.Root, true), asked);
     }
 
     /// <summary>
