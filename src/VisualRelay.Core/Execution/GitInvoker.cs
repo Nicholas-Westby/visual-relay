@@ -72,7 +72,10 @@ public sealed partial class GitInvoker : IGitInvoker
         var context = ContextFor(rootPath);
         if (GitRouting.Decide(rootPath, context) is GitRoute.Wsl route)
         {
-            var launch = GitRouting.Launch(route, WslExe.Resolve(context), [.. arguments], environment);
+            // With the login shell's PATH, as sandboxed commands get it: a hook that runs npx (husky's
+            // pre-commit) otherwise failed VR's commit with "npx: not found" under the distro's default PATH.
+            var launch = GitRouting.Launch(route, WslExe.Resolve(context), [.. arguments],
+                context is null ? environment : WslSandboxLauncher.WithUserPath(environment, context));
             if (_runWsl is not null)
                 return await _runWsl(launch, cancellationToken);
 

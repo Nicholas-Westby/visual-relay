@@ -230,4 +230,30 @@ public sealed class GitInvokerTests
         string[] expected = ["-d", "Ubuntu", "--exec", "git", "-C", "/home/alice/repo", "log", "-1"];
         Assert.Equal(expected, launch.Arguments);
     }
+
+    /// <summary>
+    /// Git inside the distro runs with the login shell's PATH, as sandboxed commands do. A wsl.exe
+    /// --exec child starts from the distro's default PATH, so on the Windows arm i18next's husky
+    /// pre-commit hook failed VR's commit with "npx: not found" (exit 127): nvm's node is on the
+    /// login PATH only.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WslRoot_GivesGitAndItsHooksTheLoginShellPath()
+    {
+        const string loginPath = "/home/alice/.nvm/versions/node/v24.21.0/bin:/usr/local/bin:/usr/bin:/bin";
+        var launches = new List<WslLaunch>();
+        var invoker = new GitInvoker(Wsl with { UserPath = loginPath },
+            (launch, _) => { launches.Add(launch); return Task.FromResult((0, "", false)); });
+
+        await invoker.RunAsync(
+            @"\\wsl.localhost\Ubuntu\home\alice\repo", ["commit", "-m", "x"], CancellationToken.None,
+            environment: new Dictionary<string, string> { ["RELAY_COMMIT_TOKEN"] = "t" });
+
+        string[] expected =
+        [
+            "-d", "Ubuntu", "--exec", "env", "RELAY_COMMIT_TOKEN=t", $"PATH={loginPath}",
+            "git", "-C", "/home/alice/repo", "commit", "-m", "x",
+        ];
+        Assert.Equal(expected, Assert.Single(launches).Arguments);
+    }
 }

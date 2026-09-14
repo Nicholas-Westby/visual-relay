@@ -86,7 +86,7 @@ public static class WslSandboxLauncher
     // A wsl.exe --exec child starts from the distro's default PATH, which lacks what the
     // user's profile adds (~/.cargo/bin, nvm's node); the probed login-shell PATH is what
     // the same command finds in their terminal, as the macOS environment snapshot is.
-    private static IReadOnlyDictionary<string, string>? WithUserPath(
+    internal static IReadOnlyDictionary<string, string>? WithUserPath(
         IReadOnlyDictionary<string, string>? env, WslContext context)
     {
         if (context.UserPath is null || env?.ContainsKey("PATH") == true)
