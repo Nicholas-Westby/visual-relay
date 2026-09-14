@@ -45,6 +45,11 @@ public sealed partial class RelayDriver
             return (inPlace, Array.Empty<string>());
         }
 
+        // The snapshot's path names nothing about the task, so the log says which one it is.
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "info", "verify_snapshot_created", runId, rootPath, taskId, stageNumber,
+            Data: new Dictionary<string, string> { ["snapshot"] = worktreeId, ["worktree"] = worktreePath }), cancellationToken);
+
         try
         {
             // Dirty set IMMEDIATELY AFTER the overlay / BEFORE the suite runs.

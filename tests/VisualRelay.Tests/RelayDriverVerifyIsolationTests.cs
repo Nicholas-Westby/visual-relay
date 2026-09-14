@@ -24,11 +24,12 @@ public sealed class RelayDriverVerifyIsolationTests
             new TestRunResult(1, "red"),    // stage 5 author gate — red (passes)
             new TestRunResult(0, "green")); // stage 10 verify gate — green
 
+        var events = new InMemoryRelayEventSink();
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, recordingTestRunner,
-                new InMemoryRelayEventSink(), sim),
+                events, sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "isolation-check");
@@ -41,11 +42,14 @@ public sealed class RelayDriverVerifyIsolationTests
         Assert.Equal(repo.Root, recordingTestRunner.Calls[0].RootPath);
 
         // Call 2: stage-10 isolated verify worktree — path differs from repo.Root,
-        // contains the visual-relay worktree temp segment, and ends with the
-        // verify worktree identifier.
+        // contains the visual-relay worktree temp segment, keeps the task's name out
+        // of the path, and is named by the verify_snapshot_created event.
         var verifyRootPath = recordingTestRunner.Calls[1].RootPath;
         Assert.NotEqual(repo.Root, verifyRootPath);
         Assert.Contains("/visual-relay/wt/", verifyRootPath.Replace('\\', '/'), StringComparison.Ordinal);
-        Assert.EndsWith("-verify-s10-a1", verifyRootPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("isolation-check", verifyRootPath, StringComparison.Ordinal);
+        var created = Assert.Single(events.Events, e => e.EventName == "verify_snapshot_created");
+        Assert.Equal(verifyRootPath, created.Data!["worktree"]);
+        Assert.Equal("isolation-check-verify-s10-a1", created.Data["snapshot"]);
     }
 }

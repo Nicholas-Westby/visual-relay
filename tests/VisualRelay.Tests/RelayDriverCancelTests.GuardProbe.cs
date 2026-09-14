@@ -26,16 +26,17 @@ public sealed partial class RelayDriverCancelTests
         using var cts = new CancellationTokenSource();
         var subagent = new ScriptedSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new CancelInsideGuardProbeTestRunner(cts, repo.Root);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent,
-                new CancelInsideGuardProbeTestRunner(cts, repo.Root), new InMemoryRelayEventSink(), git),
+            RelayDriverDependencies.ForTests(subagent, tests, new InMemoryRelayEventSink(), git),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "cancel-probe", cts.Token);
 
+        Assert.NotNull(tests.ProbeRoot);
         var removals = git.Calls
             .Where(c => c.Arguments is ["worktree", "remove", ..]
-                     && c.Arguments.Any(a => a.Contains("-guard-base", StringComparison.Ordinal)))
+                     && c.Arguments.Any(a => a.Contains(Path.GetFileName(tests.ProbeRoot), StringComparison.Ordinal)))
             .ToList();
         Assert.NotEmpty(removals);
         Assert.All(removals, c => Assert.False(c.TokenWasCancelled,
@@ -54,6 +55,9 @@ public sealed partial class RelayDriverCancelTests
             new TestRunResult(1, "red"),               // stage 5 author gate
             new TestRunResult(0, "All tests pass"));   // stage 10 suite
 
+        /// <summary>The probe's base checkout, where the guard ran when the cancel came.</summary>
+        public string? ProbeRoot { get; private set; }
+
         public Task<TestRunResult> RunAsync(
             string rootPath, string command, CancellationToken cancellationToken = default)
         {
@@ -64,6 +68,7 @@ public sealed partial class RelayDriverCancelTests
                 return Task.FromResult(new TestRunResult(1, "ERROR: src/app.cs is 305 lines (limit: 300)"));
 
             // Inside the probe's base checkout: the operator cancels mid-probe.
+            ProbeRoot = rootPath;
             cts.Cancel();
             return Task.FromResult(new TestRunResult(1, "ERROR: src/app.cs is 305 lines (limit: 300)"));
         }

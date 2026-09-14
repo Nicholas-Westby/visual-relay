@@ -3,12 +3,10 @@ using VisualRelay.Core.Tasks;
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
-/// Git worktree management for parallel planning isolation.
-/// Worktrees are created OUTSIDE the main repo under a temp directory,
-/// namespaced by repo-root hash and run id so concurrent drains to the
-/// same repo from different processes never collide. Which temp directory
-/// is <see cref="WorktreeNamespace"/>'s answer: on the Windows arm the
-/// serving git runs inside the distro, so the worktrees do too.
+/// Git worktree management for parallel planning isolation. Worktrees are created OUTSIDE the
+/// main repo under a temp directory, namespaced by repo-root hash and run so concurrent drains to
+/// the same repo never collide. Which temp directory is <see cref="WorktreeNamespace"/>'s answer:
+/// on the Windows arm the serving git runs inside the distro, so the worktrees do too.
 /// </summary>
 public static class PlanningWorktree
 {
@@ -17,17 +15,20 @@ public static class PlanningWorktree
     /// process. Deleted on completion; pruned on next drain after crash.
     /// </summary>
     /// <remarks>
-    /// Rewrite worktrees (<paramref name="isRewrite"/> = <c>true</c>) live under a
-    /// DISJOINT top-level segment (<c>wt-rewrite</c> vs <c>wt</c>). A rewrite is
-    /// explicitly allowed to run WHILE the queue drains, and the drain calls
-    /// <see cref="PruneLeftoversAsync"/> at every planning phase — which deletes
-    /// every leftover run dir under its repo-hash namespace. Sharing one namespace
-    /// would let the drain's prune wipe a live rewrite worktree out from under the
-    /// running rewrite (and vice-versa). Separate namespaces make a prune
-    /// physically unable to see the other kind.
+    /// Rewrite worktrees (<paramref name="isRewrite"/> = <c>true</c>) live under a DISJOINT top-level
+    /// segment (<c>wt-rewrite</c> vs <c>wt</c>). A rewrite may run WHILE the queue drains, and the
+    /// drain calls <see cref="PruneLeftoversAsync"/> at every planning phase, deleting every leftover
+    /// run dir under its repo-hash namespace; a shared namespace would let that prune wipe a live
+    /// rewrite worktree (and vice-versa). Separate namespaces make a prune unable to see the other kind.
     /// </remarks>
     private static WorktreeNamespace GetTempRoot(string repoRoot, string runId, bool isRewrite) =>
         RepoNamespace(repoRoot, isRewrite).Child(runId);
+
+    /// <summary>
+    /// A short directory name standing for <paramref name="name"/> without spelling it. A path that
+    /// spelled the task tripped worktrunk's "-wt" search in generated output, and ran past socket limits.
+    /// </summary>
+    private static string NeutralName(string name) => Hashing.Sha256Hex(name)[..12];
 
     /// <summary>The repo-hash namespace every run's worktrees for this repo live in.</summary>
     private static WorktreeNamespace RepoNamespace(string repoRoot, bool isRewrite) =>
@@ -44,7 +45,7 @@ public static class PlanningWorktree
     {
         var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
-        var worktree = GetTempRoot(repoRoot, runId, isRewrite).Child(taskId);
+        var worktree = GetTempRoot(repoRoot, NeutralName(runId), isRewrite).Child(NeutralName(taskId));
         if (Directory.Exists(worktree.Io))
             Directory.Delete(worktree.Io, recursive: true);
 
@@ -233,7 +234,7 @@ public static class PlanningWorktree
 
         foreach (var runDir in Directory.GetDirectories(repoHashDir))
         {
-            var taskLeaf = Path.Combine(runDir, taskId);
+            var taskLeaf = Path.Combine(runDir, NeutralName(taskId));
             if (!Directory.Exists(taskLeaf))
                 continue;
             try { Directory.Delete(taskLeaf, recursive: true); }
