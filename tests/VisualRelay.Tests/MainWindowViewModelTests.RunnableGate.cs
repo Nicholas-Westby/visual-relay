@@ -1,6 +1,7 @@
 using VisualRelay.App.ViewModels;
 using VisualRelay.Cli;
 using VisualRelay.Core.Execution;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -66,6 +67,62 @@ public sealed partial class MainWindowViewModelTests
 
         Assert.False(runnable);
         Assert.Contains("WSL2 distro with nono", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A workspace whose git cannot name a committer would run every stage and fail at
+    /// the commit (measured in a fresh WSL distro), so the gate refuses before the
+    /// baseline guard spends a build, with the identity fix in the status.
+    /// </summary>
+    [Fact]
+    public async Task EnsureRunnableAsync_GitHasNoIdentity_RefusesBeforeTheGuardRuns()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], guardCmd: "swift build");
+        repo.WriteTask("alpha", "# Alpha\n");
+        var guardRan = false;
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            IsHuggingFaceConfigured = true,
+            GitIdentityCheck = (_, _) => Task.FromResult<string?>("Git has no identity to commit with in this project."),
+            BaselineGuardRunnerFactory = _ =>
+            {
+                guardRan = true;
+                return new ScriptedTestRunner(new TestRunResult(0, ""));
+            },
+        };
+
+        var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
+
+        Assert.False(runnable);
+        Assert.Contains("no identity to commit with", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(guardRan);
+    }
+
+    [Fact]
+    public async Task EnsureRunnableAsync_AsksForTheIdentityOfTheWorkspace_OnTheResolvedHost()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        (string Root, bool InsideWsl)? asked = null;
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            IsHuggingFaceConfigured = true,
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Local),
+            GitIdentityCheck = (root, insideWsl) =>
+            {
+                asked = (root, insideWsl);
+                return Task.FromResult<string?>(null);
+            },
+        };
+
+        var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
+
+        Assert.True(runnable, viewModel.StatusText);
+        Assert.Equal((repo.Root, false), asked);
     }
 
     /// <summary>

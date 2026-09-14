@@ -21,6 +21,10 @@ public partial class MainWindowViewModel
     // arm — whose real resolution is a wsl.exe probe — is gated on any OS.
     public Func<Task<SandboxHost>>? SandboxHostResolver { get; init; }
 
+    // Injectable git identity check for EnsureRunnableAsync: (workspace root, whether git
+    // runs inside a WSL distro) to a refusal or null. Null → GitIdentityGate with real git.
+    public Func<string, bool, Task<string?>>? GitIdentityCheck { get; init; }
+
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 
     // Makes an empty/greenfield folder runnable in one action: git init + a HEAD

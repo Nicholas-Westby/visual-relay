@@ -65,6 +65,14 @@ public partial class MainWindowViewModel
             return false;
         }
 
+        // The sealed commit is the last stage: without an identity git refuses it only
+        // after every paid stage has run, for every task in the queue.
+        if (await CheckGitIdentityAsync(host) is { } identityRefusal)
+        {
+            StatusText = identityRefusal;
+            return false;
+        }
+
         // A guard that already fails on the untouched tree fails for every task in the
         // queue; refusing once here is the difference between one actionable message
         // and one escalation ladder per task. No-op for a repo with no guardCmd.
@@ -84,6 +92,26 @@ public partial class MainWindowViewModel
     /// <returns>The resolved sandbox host.</returns>
     private Task<SandboxHost> ResolveSandboxHostAsync() =>
         SandboxHostResolver?.Invoke() ?? SandboxHost.CurrentAsync();
+
+    /// <summary>
+    /// Whether git can name a committer in the workspace, asked where that git runs.
+    /// A check that cannot run at all (no git) is not a refusal: the commit stage says so.
+    /// </summary>
+    /// <param name="host">The resolved sandbox host.</param>
+    /// <returns>The refusal, or null.</returns>
+    private async Task<string?> CheckGitIdentityAsync(SandboxHost host)
+    {
+        try
+        {
+            return GitIdentityCheck is { } check
+                ? await check(RootPath, host.Wsl is not null)
+                : await GitIdentityGate.CheckAsync(RootPath, new GitInvoker(), host.Wsl is not null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>The runner the baseline guard check uses; tests inject a fake.</summary>
     /// <param name="config">The loaded configuration.</param>
