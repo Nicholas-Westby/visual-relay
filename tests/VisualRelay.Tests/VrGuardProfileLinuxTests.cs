@@ -62,6 +62,17 @@ public sealed class VrGuardProfileLinuxTests
         Assert.Contains(Entries("allow"), e => e.Path == cache && e.When is null);
     }
 
+    /// <summary>
+    /// NuGet keeps the user's NuGet.Config under <c>~/.nuget/NuGet</c> and creates it on first use.
+    /// Measured in the WSL distro with litedb-org/LiteDB: restore failed "Failed to read NuGet.Config
+    /// due to unauthorized access" because only <c>~/.nuget/packages</c> was granted.
+    /// </summary>
+    [Fact]
+    public void NugetUserConfig_IsWritableOnEveryPlatform()
+    {
+        Assert.Contains(Entries("allow"), e => e.Path == "$HOME/.nuget/NuGet" && e.When is null);
+    }
+
     [Fact]
     public void Macos_KeepsReadingTheWholeFilesystem()
     {
