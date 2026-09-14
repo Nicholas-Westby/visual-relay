@@ -85,7 +85,9 @@ public sealed partial class ControlApi(
         {
             if (!command.CanExecute(null))
             {
-                return (409, Json.Object(("ok", false), ("command", name), ("error", "disabled")));
+                return DisabledReason(name) is { } reason
+                    ? (409, Json.Object(("ok", false), ("command", name), ("error", "disabled"), ("reason", reason)))
+                    : (409, Json.Object(("ok", false), ("command", name), ("error", "disabled")));
             }
 
             var destructive = _confirmGatedCommands.Contains(name);

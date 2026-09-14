@@ -106,7 +106,10 @@ Endpoints:
   - every `tasks[]` entry, and `selectedTask`, also carries `reviewReason`, `costUsd`,
     `durationSeconds`, `completedStageCount`, `settledStageCount`, `pipelineStageCount`.
 - `POST /command/{name}` — invokes the same command the button binds. A **disabled**
-  command is refused with `409` (never executed); unknown names return `404`. Async run
+  command is refused with `409` (never executed); for `run-all`, `run-selected` and
+  `resume` the body's `reason` names every blocker and what lifts it (a run in progress,
+  a pause, which outlives the drain it stopped and a folder switch, the archive view, an
+  empty queue, no selection). Unknown names return `404`. Async run
   commands are fire-and-forget (like a click) — poll `/state` to follow progress. Names:
   `bootstrap` (greenfield setup — git init + an EMPTY HEAD commit when missing, a runnable
   `.relay/config.json` with a placeholder test command when no toolchain is detected,
