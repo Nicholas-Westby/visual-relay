@@ -24,10 +24,7 @@ public partial class MainWindowViewModel
         StatusText = FormatQueueStatus();
     }
 
-    private bool CanResetSelectedTask() =>
-        SelectedTask is not null &&
-        SelectedTask.NeedsReview &&
-        !ShowArchive;
+    private bool CanResetSelectedTask() => ResetSelectedBlockers().Count == 0;
 
     public bool IsResetButtonVisible =>
         SelectedTask is not null && SelectedTask.NeedsReview && !ShowArchive;

@@ -56,4 +56,37 @@ public sealed partial class ControlApiTests
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("the queue has no tasks: create-task adds one", doc.RootElement.GetProperty("reason").GetString());
     }
+
+    /// <summary>
+    /// Reset only returns a flagged task to Pending. Measured on the Windows arm: reset-selected on a
+    /// Pending task whose planning stages had finished came back as a bare 409 "disabled".
+    /// </summary>
+    [AvaloniaFact]
+    public async Task InvokeCommand_ResetSelected_OnATaskThatIsNotFlagged_SaysOnlyAFlaggedTaskResets()
+    {
+        var api = NewApi(out var vm);
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            vm.Tasks.Add(new TaskRowViewModel(new RelayTaskItem("alpha", "/tmp/alpha.md", "/tmp", false, [])));
+            vm.SelectedTask = vm.Tasks[0];
+        });
+
+        var (status, json) = await api.InvokeCommandAsync("reset-selected", "{\"confirm\":true}");
+
+        Assert.Equal(409, status);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("the selected task is not flagged: reset returns a flagged task to Pending",
+            doc.RootElement.GetProperty("reason").GetString());
+    }
+
+    [AvaloniaFact]
+    public async Task InvokeCommand_ResetSelected_WithNothingSelected_SaysSo()
+    {
+        var api = NewApi(out _);
+
+        var (_, json) = await api.InvokeCommandAsync("reset-selected", "{\"confirm\":true}");
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("no task is selected: select-task picks one", doc.RootElement.GetProperty("reason").GetString());
+    }
 }

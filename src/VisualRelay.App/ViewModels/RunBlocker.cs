@@ -27,4 +27,7 @@ public enum RunBlocker
 
     /// <summary>The selected task is being rewritten.</summary>
     SelectedRewriting,
+
+    /// <summary>The selected task is not flagged, and only a flagged task can be reset.</summary>
+    SelectedNotFlagged,
 }

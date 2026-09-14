@@ -26,6 +26,16 @@ public partial class MainWindowViewModel
         return blockers;
     }
 
+    /// <summary>What keeps Reset disabled right now, in order; empty when it can reset.</summary>
+    internal IReadOnlyList<RunBlocker> ResetSelectedBlockers()
+    {
+        var blockers = new List<RunBlocker>();
+        if (ShowArchive) blockers.Add(RunBlocker.ArchiveShowing);
+        if (SelectedTask is null) blockers.Add(RunBlocker.NothingSelected);
+        else if (!SelectedTask.NeedsReview) blockers.Add(RunBlocker.SelectedNotFlagged);
+        return blockers;
+    }
+
     private List<RunBlocker> RunBlockersCommonToAll()
     {
         var blockers = new List<RunBlocker>();

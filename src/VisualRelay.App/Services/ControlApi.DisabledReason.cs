@@ -15,6 +15,7 @@ public sealed partial class ControlApi
         {
             "run-all" => viewModel.DrainBlockers(),
             "run-selected" or "resume" => viewModel.RunSelectedBlockers(),
+            "reset-selected" => viewModel.ResetSelectedBlockers(),
             _ => [],
         };
         return blockers.Count == 0 ? null : string.Join("; ", blockers.Select(Describe));
@@ -29,6 +30,7 @@ public sealed partial class ControlApi
         RunBlocker.NothingSelected => "no task is selected: select-task picks one",
         RunBlocker.SelectedArchived => "the selected task is archived",
         RunBlocker.SelectedRewriting => "the selected task is being rewritten: cancel-rewrite stops it",
+        RunBlocker.SelectedNotFlagged => "the selected task is not flagged: reset returns a flagged task to Pending",
         _ => blocker.ToString(),
     };
 }
