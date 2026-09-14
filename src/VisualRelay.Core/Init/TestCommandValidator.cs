@@ -49,6 +49,12 @@ public sealed class TestCommandValidator(ITestRunner runner)
         RegexOptions.CultureInvariant | RegexOptions.Multiline);
 
     /// <summary>
+    /// A terminal control sequence, such as the colour Maven forces with <c>-Djansi.mode=force</c>: it
+    /// sits between "Tests run: " and the count, so the counts are read with these taken out.
+    /// </summary>
+    private static readonly Regex AnsiSequence = new(@"\x1B\[[0-9;?]*[ -/]*[@-~]", RegexOptions.CultureInvariant);
+
+    /// <summary>
     /// Whether a command stopped at the check's time limit was running tests when it was stopped. A
     /// suite longer than the check is not a broken command: measured with openai-agents-python,
     /// pytest printed "1558 passed, 6 skipped in 59.19s" at the 60 s limit and was rejected, which
@@ -61,9 +67,9 @@ public sealed class TestCommandValidator(ITestRunner runner)
         if (PackageScript.IsMatch(command))
             return false;
         var firstLineEnd = output.IndexOf('\n');
-        var printed = output.StartsWith("test command timed out", StringComparison.Ordinal)
+        var printed = AnsiSequence.Replace(output.StartsWith("test command timed out", StringComparison.Ordinal)
             ? firstLineEnd < 0 ? string.Empty : output[(firstLineEnd + 1)..]
-            : output;
+            : output, string.Empty);
         return TestRunProgress.IsMatch(printed) && LooksLikeTestOutput(printed);
     }
 

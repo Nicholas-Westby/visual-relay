@@ -69,6 +69,25 @@ public sealed partial class TestCommandValidatorTests
         Assert.True((await validator.ValidateAsync("/tmp/repo", "make check")).Accepted);
     }
 
+    /// <summary>
+    /// A runner that colours its counts still printed them. Measured on the Windows arm with
+    /// apache/commons-lang: Maven forced colour (<c>-Djansi.mode=force</c>), an escape sequence sat
+    /// between "Tests run: " and the count, and the suite stopped at the limit was rejected again.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAsync_ColouredMavenCountsAtTheLimit_AreAccepted()
+    {
+        const string output = "test command timed out after 60000ms\n\n"
+            + "[\u001b[1;34mINFO\u001b[m] \u001b[1;32mTests run: \u001b[0;1;32m11\u001b[m, Failures: 0, Errors: 0, "
+            + "Skipped: 0, Time elapsed: 0.008 s -- in org.apache.commons.lang3.time.\u001b[1mGmtTimeZoneTest\u001b[m\n"
+            + "Terminated\n";
+        var validator = new TestCommandValidator(new ScriptedTestRunner(new TestRunResult(-1, output, TimedOut: true)));
+
+        var result = await validator.ValidateAsync("/tmp/repo", "mvn test");
+
+        Assert.True(result.Accepted, result.RejectionReason);
+    }
+
     [Fact]
     public async Task ValidateAsync_ACommandThatPrintedNothingBeforeTheLimit_StaysRejected()
     {
