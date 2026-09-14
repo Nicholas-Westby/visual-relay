@@ -178,7 +178,20 @@ internal static partial class ProcessCapture
             // Propagate cancellation, mirroring the old WaitForExitAsync(cancellationToken).
             await using var ctReg = cancellationToken.Register(() => exitedTcs.TrySetCanceled(cancellationToken));
 
-            if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, tp, cancellationToken)) != exitedTcs.Task)
+            var first = await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, tp, cancellationToken));
+
+            // A cancel completes both tasks at once, so which one won says nothing about it.
+            // Measured: a cancel came back as a timeout when the delay won, and with the
+            // command still running when the wait won. The command is stopped either way,
+            // and then the cancellation surfaces.
+            if (cancellationToken.IsCancellationRequested && !exitedTcs.Task.IsCompletedSuccessfully)
+            {
+                await GracefulStopThenKillAsync(process, stageGroupId, tp, treeControl);
+                await ReapTreeAsync(treeControl);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            if (first != exitedTcs.Task)
             {
                 await GracefulStopThenKillAsync(process, stageGroupId, tp, treeControl);
                 await ReapTreeAsync(treeControl);
