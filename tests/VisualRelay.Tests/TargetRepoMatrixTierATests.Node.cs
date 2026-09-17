@@ -96,6 +96,10 @@ public sealed partial class TargetRepoMatrixTierATests
     [Fact]
     public async Task ShellMismatch_InitDirectExecNeverEvaluatesTheRightHandSide()
     {
+        // POSIX only: the premise is that DirectExec execs argv[0] with no shell, which
+        // needs a real `true` binary to demonstrate. Windows has none, so the chain
+        // exits 127 there and the mismatch cannot be shown this way.
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the demonstration needs a POSIX `true` binary");
         var root = NewRepo("shell-mismatch");
         try
         {

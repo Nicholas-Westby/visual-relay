@@ -29,6 +29,83 @@ public sealed class ManifestPathsTests
         Assert.Equal("src/x.cs", repoRelative);
     }
 
+    /// <summary>
+    /// The root must never go through <c>Path.GetFullPath</c>: on Windows that
+    /// resolves a POSIX-rooted path against the CURRENT DRIVE, so <c>/repo</c> became
+    /// <c>C:\repo</c> while the entry beside it stayed textual, and every rooted entry
+    /// was rejected as outside the workspace — the exact case this exists to rescue.
+    /// Measured on a real Windows box: <c>[IO.Path]::GetFullPath('/repo')</c> is
+    /// <c>C:\repo</c>.
+    /// </summary>
+    [Fact]
+    public void TryResolve_APosixRootedPath_ResolvesTheSameOnEveryHost()
+    {
+        Assert.True(ManifestPaths.TryResolve("/repo", "/repo/src/x.rs", out var repoRelative, out _));
+        Assert.Equal("src/x.rs", repoRelative);
+        Assert.NotEqual("C:/repo/src/x.rs", repoRelative);
+    }
+
+    /// <summary>
+    /// On Windows the two sides live in different namespaces: Visual Relay holds the
+    /// workspace as a UNC path into the distro, while the stage runs INSIDE that
+    /// distro and writes distro-absolute paths. They name one tree and match under
+    /// neither spelling alone, so the root offers both.
+    /// </summary>
+    [Fact]
+    public void TryResolve_ADistroPathUnderAUncRoot_IsMadeRelative()
+    {
+        Assert.True(ManifestPaths.TryResolve(
+            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            "/home/enjay/repo/src/x.rs",
+            out var repoRelative,
+            out var rejection));
+
+        Assert.Equal("src/x.rs", repoRelative);
+        Assert.Null(rejection);
+    }
+
+    [Fact]
+    public void TryResolve_AUncPathUnderAUncRoot_IsMadeRelative()
+    {
+        Assert.True(ManifestPaths.TryResolve(
+            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            @"\\wsl.localhost\Ubuntu\home\enjay\repo\src\x.rs",
+            out var repoRelative,
+            out _));
+
+        Assert.Equal("src/x.rs", repoRelative);
+    }
+
+    [Fact]
+    public void TryResolve_ADistroPathOutsideAUncRoot_IsStillRejected()
+    {
+        Assert.False(ManifestPaths.TryResolve(
+            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            "/home/enjay/other/x.rs",
+            out _,
+            out var rejection));
+
+        Assert.Equal("absolute path outside the workspace", rejection);
+    }
+
+    /// <summary>
+    /// The shape a confused model on the Windows arm is most likely to produce: a
+    /// path that IS reachable from inside the distro but is not in the workspace.
+    /// Accepting the distro's spelling of the root must not accept everything the
+    /// distro can see.
+    /// </summary>
+    [Fact]
+    public void TryResolve_ADrvFsPathUnderAUncRoot_IsRejected()
+    {
+        Assert.False(ManifestPaths.TryResolve(
+            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            "/mnt/c/dev/elsewhere/x.cs",
+            out _,
+            out var rejection));
+
+        Assert.Equal("absolute path outside the workspace", rejection);
+    }
+
     [Fact]
     public void TryResolve_ARootedPathOutsideTheRoot_IsRejectedWithTheReason()
     {

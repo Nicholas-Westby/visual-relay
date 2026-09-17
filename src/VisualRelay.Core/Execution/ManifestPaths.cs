@@ -1,3 +1,5 @@
+using VisualRelay.Core.Execution.Wsl;
+
 namespace VisualRelay.Core.Execution;
 
 /// <summary>One entry a reader refused, with the reason it is reported under.</summary>
@@ -47,19 +49,21 @@ internal static class ManifestPaths
         var comparison = HasDriveForm(candidate) || OperatingSystem.IsMacOS() || OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
-        var root = CanonicalRoot(rootPath);
         var full = Canonicalize(candidate);
 
-        // The workspace itself names no file; downstream readers already drop an empty
-        // entry, so this is not worth reporting as a refusal.
-        if (string.Equals(full, root, comparison))
-            return true;
-
-        if (full.Length > root.Length && full[root.Length] == '/'
-            && full.AsSpan(0, root.Length).Equals(root, comparison))
+        foreach (var root in RootSpellings(rootPath))
         {
-            repoRelative = WorktreeFilter.NormalizeRepoRelativePath(full[(root.Length + 1)..]);
-            return true;
+            // The workspace itself names no file; downstream readers already drop an
+            // empty entry, so this is not worth reporting as a refusal.
+            if (string.Equals(full, root, comparison))
+                return true;
+
+            if (full.Length > root.Length && full[root.Length] == '/'
+                && full.AsSpan(0, root.Length).Equals(root, comparison))
+            {
+                repoRelative = WorktreeFilter.NormalizeRepoRelativePath(full[(root.Length + 1)..]);
+                return true;
+            }
         }
 
         rejection = OutsideWorkspaceReason;
@@ -106,16 +110,30 @@ internal static class ManifestPaths
     private static bool HasDriveForm(string path) =>
         path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '/';
 
-    // A drive-form root cannot go through Path.GetFullPath off Windows (it would be
-    // taken for a relative name and hung off the current directory), so it is
-    // canonicalized textually; everything else is resolved against the host first so a
-    // relative root still compares correctly.
-    private static string CanonicalRoot(string rootPath)
+    /// <summary>
+    /// Every spelling of the workspace an entry may legitimately be written against.
+    /// <para>
+    /// The root is canonicalized TEXTUALLY, never through <c>Path.GetFullPath</c>: on
+    /// Windows that resolves a POSIX-rooted path against the current drive
+    /// (<c>/repo</c> becomes <c>C:\repo</c>) while the entry beside it is canonicalized
+    /// textually, and the asymmetry rejected every rooted entry as outside the
+    /// workspace.
+    /// </para>
+    /// <para>
+    /// On Windows the two sides are also in different NAMESPACES. Visual Relay holds
+    /// the workspace as a UNC path into the distro, while a stage runs inside that
+    /// distro and writes distro-absolute paths, so
+    /// <c>\\wsl.localhost\Ubuntu\home\u\repo</c> and <c>/home/u/repo/src/x.rs</c> name
+    /// the same tree and match under neither spelling alone. Both are offered.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<string> RootSpellings(string rootPath)
     {
         var forwardSlashed = rootPath.Replace('\\', '/');
-        return HasDriveForm(forwardSlashed) && !OperatingSystem.IsWindows()
-            ? Canonicalize(forwardSlashed)
-            : Canonicalize(Path.GetFullPath(rootPath).Replace('\\', '/'));
+        yield return Canonicalize(forwardSlashed);
+
+        if (WslPath.TryParseUnc(rootPath, out _, out var linuxPath))
+            yield return Canonicalize(linuxPath);
     }
 
     // Collapses "." and ".." segments and repeated separators. The leading separator

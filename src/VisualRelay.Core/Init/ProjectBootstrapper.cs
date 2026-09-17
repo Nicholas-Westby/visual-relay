@@ -103,6 +103,13 @@ public static class ProjectBootstrapper
     /// check would run on the Windows host, unsandboxed, and the command it accepted
     /// could never run. Bootstrap then writes nothing at all.
     /// </summary>
+    /// <para>
+    /// Callers PASS the host; the parameter defaults to the local host rather than
+    /// this machine's, so a test that says nothing about where it runs behaves the
+    /// same on every platform instead of being refused only on Windows. Every
+    /// production caller passes the resolved host, which
+    /// <c>SplitGuardVerificationTests</c> pins.
+    /// </para>
     /// <param name="host">Where the sandbox launches from.</param>
     /// <returns>The gate's refusal message, or null when bootstrap may proceed.</returns>
     internal static string? RefusalFor(SandboxHost host) =>
@@ -125,7 +132,7 @@ public static class ProjectBootstrapper
         CancellationToken cancellationToken = default)
     {
         var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
-        var sandboxHost = host ?? SandboxHost.Current;
+        var sandboxHost = host ?? SandboxHost.Local;
         if (RefusalFor(sandboxHost) is { } refusal)
             return ProjectBootstrapResult.Refused(refusal);
 
@@ -187,7 +194,7 @@ public static class ProjectBootstrapper
         SandboxHost? host = null,
         CancellationToken cancellationToken = default)
     {
-        var sandboxHost = host ?? SandboxHost.Current;
+        var sandboxHost = host ?? SandboxHost.Local;
         if (RefusalFor(sandboxHost) is not null)
             return false;
 
