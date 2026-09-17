@@ -106,6 +106,38 @@ public sealed class ControlApiCreateTaskTests
     }
 
     [AvaloniaFact]
+    public async Task CreateTask_WhileTheArchiveIsShowing_SwitchesToTheQueueAndListsIt()
+    {
+        // The archive lists DONE-* only, so a reload taken from it cannot hold the
+        // task just written. Creating a task is a queue action: it switches back to
+        // the queue, and only then keeps the promise that the answer names a listed row.
+        using var repo = TestRepository.Create();
+        var api = NewApi(repo, out var viewModel);
+        var (toggled, _) = await api.InvokeCommandAsync("archive-toggle", null);
+        Assert.Equal(200, toggled);
+        Assert.True(viewModel.ShowArchive);
+
+        var (status, json) = await api.InvokeCommandAsync("create-task", Body("Probe Task", "probe\n"));
+
+        Assert.Equal(200, status);
+        Assert.False(viewModel.ShowArchive);
+        using var doc = JsonDocument.Parse(json);
+        var row = viewModel.Tasks.Single(task => task.Id == "probe-task");
+        Assert.Equal(row.Task.MarkdownPath, doc.RootElement.GetProperty("path").GetString());
+        Assert.Equal(
+            Path.Combine(repo.Root, "llm-tasks", "probe-task", "probe-task.md"),
+            row.Task.MarkdownPath);
+
+        using var state = JsonDocument.Parse(await api.BuildStateJsonAsync());
+        var ids = state.RootElement.GetProperty("tasks")
+            .EnumerateArray()
+            .Select(t => t.GetProperty("id").GetString())
+            .ToArray();
+        Assert.Contains("probe-task", ids);
+        Assert.Equal("probe-task", viewModel.SelectedTask?.Id);
+    }
+
+    [AvaloniaFact]
     public async Task State_ListsCreateTask_WithAnEnabledFlag()
     {
         using var repo = TestRepository.Create();

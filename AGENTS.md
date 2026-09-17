@@ -130,7 +130,9 @@ Endpoints:
   Task dialog's Create button runs: writes `llm-tasks/<slug>/<slug>.md` holding the
   title line, a blank line and the body, and answers
   `{"ok":true,"id":"<slug>","path":"<markdown path>"}` only once `/state.tasks[]`
-  lists it. `400` when the title is missing or its slug is empty, unsafe, reserved or
+  lists it. Creating a task is a queue action, so the app switches to the queue view
+  when the archive is showing and the answer always comes from the listed row.
+  `400` when the title is missing or its slug is empty, unsafe, reserved or
   already taken — the error text is the one the dialog would show; `409` while the app
   is busy or no project folder is open), `select-task` (body `{"id":"<taskId>"}`),
   `boost-turns` (body `{"value":true|false}`), `skip-tests` (body `{"value":true|false}`),

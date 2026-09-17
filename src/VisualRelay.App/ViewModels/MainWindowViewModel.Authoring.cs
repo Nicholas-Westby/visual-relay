@@ -229,67 +229,8 @@ public partial class MainWindowViewModel
     }
 
     // ── New task ──────────────────────────────────────────────────────────
+    // The dialog's commands live in MainWindowViewModel.Authoring.NewTask.cs.
 
-    [RelayCommand(CanExecute = nameof(CanOpenNewTaskDialog))]
-    private void OpenNewTaskDialog()
-    {
-        if (IsNewTaskDialogOpen)
-        {
-            IsNewTaskDialogOpen = false;
-            NewTaskTitle = string.Empty;
-            NewTaskBody = string.Empty;
-            NewTaskError = null;
-            return;
-        }
-
-        IsEditingMarkdown = false;
-        NewTaskTitle = string.Empty;
-        NewTaskBody = string.Empty;
-        NewTaskError = null;
-        PrepareNewTaskTemplates();
-        SelectedTabIndex = 0;
-        IsNewTaskDialogOpen = true;
-    }
-    [RelayCommand(CanExecute = nameof(CanCreateNewTask))]
-    private async Task CreateNewTaskAsync()
-    {
-        var slug = RelayTaskWriter.Slugify(NewTaskTitle);
-        NewTaskError = null;
-
-        // Validate the derived slug.
-        var validationError = RelayTaskWriter.ValidateSlug(slug, RootPath);
-        if (validationError is not null)
-        {
-            NewTaskError = validationError;
-            return;
-        }
-
-        try
-        {
-            var markdown = string.IsNullOrWhiteSpace(NewTaskBody)
-                ? $"# {NewTaskTitle.Trim()}\n"
-                : $"# {NewTaskTitle.Trim()}\n\n{NewTaskBody}";
-
-            var createdPath = await RelayTaskWriter.CreateAsync(RootPath, slug, markdown);
-            await WriteSelectedTemplateAttachmentsAsync(createdPath);
-        }
-        catch (Exception ex)
-        {
-            NewTaskError = ex.Message;
-            return;
-        }
-
-        IsNewTaskDialogOpen = false;
-        await ReloadTaskListAsync(slug);
-        // The count counts the new task (the control API read "0 pending" beside two); a run keeps its line.
-        if (!IsBusy) StatusText = FormatQueueStatus();
-    }
-
-    private bool CanOpenNewTaskDialog() =>
-        Directory.Exists(RootPath);
-
-    private bool CanCreateNewTask() =>
-        !string.IsNullOrWhiteSpace(NewTaskTitle) && Directory.Exists(RootPath);
     /// <summary>
     /// True when the Markdown tab should show the read-only view — neither
     /// editing an existing task nor authoring a new one.

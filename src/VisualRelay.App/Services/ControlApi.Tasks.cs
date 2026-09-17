@@ -67,15 +67,27 @@ public sealed partial class ControlApi
         }
 
         var slug = RelayTaskWriter.Slugify(title);
-        return (200, Json.Object(("ok", true), ("command", name), ("id", slug), ("path", ResolveTaskPath(slug))));
+        if (ResolveTaskPath(slug) is not { } path)
+        {
+            return (500, Json.Object(
+                ("ok", false),
+                ("command", name),
+                ("error", $"task written at {CanonicalTaskPath(slug)} but not listed")));
+        }
+
+        return (200, Json.Object(("ok", true), ("command", name), ("id", slug), ("path", path)));
     }
 
     /// <summary>
-    /// The created task's markdown path, taken from the reloaded queue row (the
-    /// authoritative location) and falling back to the canonical nested layout when
-    /// the row is not listed — as when the archive view is showing.
+    /// The created task's markdown path, taken from the reloaded queue row — the
+    /// only authoritative location. Null means the row is not listed, which after
+    /// the create command's own reload is a fault worth a 500: a path built from
+    /// the canonical layout instead would be a claim the API cannot back.
     /// </summary>
-    private string ResolveTaskPath(string slug) =>
-        viewModel.Tasks.FirstOrDefault(t => string.Equals(t.Id, slug, StringComparison.Ordinal))?.Task.MarkdownPath
-            ?? Path.Combine(viewModel.RootPath, RelayConfigLoader.ReadTasksDir(viewModel.RootPath), slug, $"{slug}.md");
+    private string? ResolveTaskPath(string slug) =>
+        viewModel.Tasks.FirstOrDefault(t => string.Equals(t.Id, slug, StringComparison.Ordinal))?.Task.MarkdownPath;
+
+    /// <summary>Where the writer puts a task, for the error text only.</summary>
+    private string CanonicalTaskPath(string slug) =>
+        Path.Combine(viewModel.RootPath, RelayConfigLoader.ReadTasksDir(viewModel.RootPath), slug, $"{slug}.md");
 }
