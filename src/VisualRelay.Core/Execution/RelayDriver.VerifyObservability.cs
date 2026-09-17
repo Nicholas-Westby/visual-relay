@@ -44,9 +44,14 @@ public sealed partial class RelayDriver
         bool includeExitCode = true)
     {
         var check = overrideCheck ?? (testResult.ExitCode == 0 ? "green" : "red");
-        var reason = testResult.ExitCode != 0
-            ? SandboxedStage.ExtractFailureReason(testResult.Output)
-            : BuildSetupCheckFailureReason(setupChecks);
+        // A reason belongs to a RED check. Keying it off the exit code alone gave every
+        // green commit-gate resume the literal "setup check failure", because that path
+        // publishes without setup checks and a zero exit took the setup-check branch.
+        var reason = check == "green"
+            ? string.Empty
+            : testResult.ExitCode != 0
+                ? SandboxedStage.ExtractFailureReason(testResult.Output)
+                : BuildSetupCheckFailureReason(setupChecks);
         // NOTE: WorkingTreeHash fingerprints only the manifest files' contents — a coarse
         // signal, acceptable for observability (and for the Task 2 convergence guard).
         var treeHash = WorkingTreeHash(rootPath, manifest);

@@ -48,4 +48,28 @@ public sealed partial class RelayDriver
 
         return resolved;
     }
+
+    /// <summary>
+    /// The run's opening event. No base_url: there is no single endpoint any more —
+    /// each tier resolves its own provider and the served model is recorded per stage
+    /// on the report. <c>resume</c> and <c>firstStage</c> are here because a resumed
+    /// run's log did not say it was one, so a run that silently restarted at stage 5
+    /// read as a fresh run that had skipped four stages.
+    /// </summary>
+    private async Task PublishRunStartAsync(
+        string rootPath, string runId, string taskId, int firstStageToRun, bool isReAdded,
+        CancellationToken cancellationToken)
+    {
+        var data = new Dictionary<string, string>
+        {
+            ["version"] = VersionHelper.ReadInformationalVersion(),
+            ["resume"] = _options.Resume ? "true" : "false",
+            ["firstStage"] = firstStageToRun.ToString(),
+        };
+        if (isReAdded)
+            data["fresh"] = "prior state archived (re-added task)";
+
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: data), cancellationToken);
+    }
 }

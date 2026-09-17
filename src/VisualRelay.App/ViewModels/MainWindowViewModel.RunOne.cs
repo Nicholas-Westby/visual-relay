@@ -3,6 +3,7 @@ using VisualRelay.Core.Agent;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
+using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -56,6 +57,16 @@ public partial class MainWindowViewModel
         try
         {
             var outcome = await runner.RunTaskAsync(RootPath, task.Id, cancellationToken);
+            // A commit ends the halt. The drain clears the marker at its start, but
+            // run-selected and resume build a driver directly and never pass through
+            // it, so a halt from a rejected commit stayed in /state after the resume
+            // that fixed it, and across a relaunch. A flagged or cancelled run leaves
+            // the marker alone: nothing has been proven yet.
+            if (outcome.Status == RelayTaskOutcomeStatus.Committed)
+            {
+                DrainCircuitBreaker.ClearHaltMarker(RootPath);
+            }
+
             StatusText = outcome.Status == RelayTaskOutcomeStatus.Committed ? $"Committed {task.Id}" : $"Flagged {task.Id}";
             await ExportSummaryOnCompletion(task.Id, outcome);
             await LoadRunHistoryAsync(task.Id);

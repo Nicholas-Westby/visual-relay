@@ -125,6 +125,18 @@ public sealed partial class RelayDriver
                 ledger.AppendLine($"> gatePassed={gatePassed} hashMatch={hashMatches}");
                 ledger.AppendLine("> Restarting from stage 5 (Author-tests).");
                 ledger.AppendLine();
+
+                // The ledger lines were the only record: no event and no status text, so
+                // an operator watching a resume saw it start again at stage 5 with
+                // nothing anywhere saying why.
+                await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                    DateTimeOffset.UtcNow, "warn", "resume_restart", runId, rootPath, taskId, 12,
+                    Data: new Dictionary<string, string>
+                    {
+                        ["fromStage"] = "12",
+                        ["toStage"] = "5",
+                        ["reason"] = "working tree changed since verify",
+                    }), cancellationToken);
             }
         }
 

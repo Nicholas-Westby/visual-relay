@@ -117,8 +117,12 @@ Task ledger (for context on the intended changes):
 
             // Stage resolved files: after git cherry-pick --quit the index
             // retains unmerged entries; ls-files -u reads the index, so the
-            // agent's working-tree edits must be staged first.
-            await _dependencies.GitInvoker.RunAsync(rootPath, ["add", "-A"], ct);
+            // agent's working-tree edits must be staged first. ONLY the conflicted
+            // paths: a whole-tree add also staged Visual Relay's own untracked files,
+            // so `git status` showed .relay/config.json staged until the commit
+            // stage's reset, and a commit made by hand in between would have taken it.
+            await _dependencies.GitInvoker.RunAsync(
+                rootPath, ["add", "--", .. conflictedFiles], ct);
 
             // Check for remaining conflicts.
             var unmergedResult = await _dependencies.GitInvoker.RunAsync(
