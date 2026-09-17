@@ -119,6 +119,22 @@ inline-capable while `.py` stays gated by path. Re-running `bootstrap` refreshes
 `detectedLanguages` and `inlineTestExtensions`, so record a hand-added extension
 somewhere you will remember.
 
+## Reset left files in the working tree
+
+`reset-selected` puts the tree back to the run base and deletes the untracked files
+the run authored, after re-capturing everything into the archived bundle. Two cases
+leave files behind on purpose, and `statusText` says which one you got:
+
+- **A run is active.** The running task owns the tree, so Reset archives the flagged
+  run only and says `the working tree was left as is because a run is active`. Reset
+  again once the run ends.
+- **No pre-run snapshot.** Without `pre-run-untracked.txt` the resetter cannot tell
+  the run's untracked files from ones you wrote, so it deletes none of them and says
+  `untracked files kept: no pre-run snapshot`. Tracked edits are still reverted.
+
+A third line, `tree reset failed: <error>`, means git refused; the flagged run is
+still archived, so nothing is lost, and the tree is yours to clear.
+
 ## `vr-control: slow request ...` on the app's stderr
 
 The control server writes that line for any request other than `GET /screenshot`

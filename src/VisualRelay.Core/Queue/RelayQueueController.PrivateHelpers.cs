@@ -43,19 +43,27 @@ public sealed partial class RelayQueueController
             return;
         }
 
-        // Fix 5: When stage 12 is Flagged, the commit may have landed (a check after it
-        // flagged) or not (git rejected it, or a gate before it refused). The tree is the
-        // flag's evidence either way, so skip the reset and log a summary entry instead.
+        var gi = _gitInvoker ?? new GitInvoker();
+
+        // A stage-12 flag used to skip the reset on the ASSUMPTION that the commit had
+        // landed. During one validation it flagged precisely because staging failed, so
+        // the assumption was false and the drain started the next task on a staged tree.
+        // The skip now asks whether HEAD actually moved off the run base.
         var statusDir = Path.Combine(RootPath, ".relay", taskId);
         var status = StageStatusRecord.Read(statusDir);
         if (status.Count >= 12 && status[11].Status == "Flagged")
         {
+            if (await CommitLandedAsync(statusDir, gi, ct))
+            {
+                DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
+                    "reset-skipped-commit-flagged", "stage 12 flagged; skipping worktree reset to preserve flag evidence");
+                return;
+            }
+
             DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
-                "reset-skipped-commit-flagged", "stage 12 flagged; skipping worktree reset to preserve flag evidence");
-            return;
+                "reset-after-commit-flag", "stage 12 flagged with HEAD still at the run base; resetting like any other flag");
         }
 
-        var gi = _gitInvoker ?? new GitInvoker();
         try
         {
             var result = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, gi, ct);
@@ -204,4 +212,30 @@ public sealed partial class RelayQueueController
 
     /// <summary>Evicts a task from the drain's seen set so it becomes eligible at the next boundary. No-op when no drain is active.</summary>
     public void RemoveFromSeen(string taskId) => _drainSeenIds?.Remove(taskId);
+
+    /// <summary>
+    /// Whether the task's sealed commit actually landed: HEAD has moved off the commit
+    /// the run started from. Unreadable state answers "landed", which keeps the old
+    /// conservative behaviour of preserving the tree when nothing can be established.
+    /// </summary>
+    /// <param name="statusDir">The task's run directory.</param>
+    /// <param name="git">The invoker to ask.</param>
+    /// <param name="ct">Cancellation.</param>
+    /// <returns>True when HEAD differs from the recorded run base.</returns>
+    private async Task<bool> CommitLandedAsync(string statusDir, IGitInvoker git, CancellationToken ct)
+    {
+        var runBasePath = Path.Combine(statusDir, "run-base.txt");
+        if (!File.Exists(runBasePath))
+            return true;
+
+        var runBase = (await File.ReadAllTextAsync(runBasePath, ct)).Trim();
+        if (string.IsNullOrEmpty(runBase))
+            return true;
+
+        var head = await git.RunAsync(RootPath, ["rev-parse", "HEAD"], ct);
+        if (head.ExitCode != 0 || head.TimedOut)
+            return true;
+
+        return !string.Equals(head.Output.Trim(), runBase, StringComparison.Ordinal);
+    }
 }

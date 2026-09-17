@@ -151,6 +151,9 @@ Endpoints:
   The destructive commands — `mark-done`, `rewrite-selected`, `reset-selected` — mirror the
   GUI confirm modal: each needs `{"confirm":true}` (else `409`, no-op) and is awaited to
   completion, so `{"ok":true}` means the effect took.
+  `reset-selected` also restores the working tree to the run base when no run is active,
+  after re-capturing the tree into the archived bundle; while a run IS active the running
+  task owns the tree, so it archives only and `statusText` says so.
 - `GET /screenshot[?path=/abs/file.png]` — renders the live window to PNG (`image/png`);
   with `?path=` it also writes the file and returns the location in `X-Screenshot-Path`.
 

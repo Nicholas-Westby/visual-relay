@@ -28,14 +28,32 @@ public sealed class TestDurationTests
         Assert.False(result.TimedOut);
     }
 
+    /// <summary>
+    /// Elapsed is captured whatever the launch decided, and the two arms say what the
+    /// launch IS on each platform. On Windows with no distro there is no native
+    /// fallback left: a command checked through cmd.exe would run on the Windows host
+    /// with no sandbox, so the runner refuses with exit 126 and the gate's message
+    /// rather than spawning. This test used to assert the deleted cmd.exe fallback.
+    /// </summary>
     [Fact]
     public async Task ShellTestRunner_CapturesElapsed()
     {
-        // This OS's own shell, with no distro: a resolved one refuses the drive-path cwd (DrvFs policy).
-        var host = OperatingSystem.IsWindows() ? SandboxHost.Windows(null) : SandboxHost.Local;
+        var windowsWithoutADistro = OperatingSystem.IsWindows();
+        var host = windowsWithoutADistro ? SandboxHost.Windows(null) : SandboxHost.Local;
         var runner = new ShellTestRunner(TimeSpan.FromSeconds(5), host: host);
+
         var result = await runner.RunAsync(Directory.GetCurrentDirectory(), "echo hi");
-        Assert.True(result.ExitCode == 0, $"exit {result.ExitCode}: {result.Output}");
+
+        if (windowsWithoutADistro)
+        {
+            Assert.Equal(126, result.ExitCode);
+            Assert.Contains("visual-relay: ", result.Output, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.True(result.ExitCode == 0, $"exit {result.ExitCode}: {result.Output}");
+        }
+
         Assert.True(result.Elapsed > TimeSpan.Zero, $"Elapsed was {result.Elapsed}");
     }
 

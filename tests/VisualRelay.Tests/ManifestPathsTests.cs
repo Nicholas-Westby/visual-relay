@@ -106,6 +106,25 @@ public sealed class ManifestPathsTests
         Assert.Equal("absolute path outside the workspace", rejection);
     }
 
+    /// <summary>
+    /// The escape has to be refused from the DISTRO spelling too, not just the
+    /// POSIX-rooted one: the two spellings are separate entry paths into the same
+    /// comparison, and this is the case where a mistake would be worst. On a real
+    /// Windows arm `/home/&lt;user&gt;/repo/../.ssh/id_rsa` resolves to an actual private
+    /// key, and it is a plausible thing for a confused model to emit.
+    /// </summary>
+    [Fact]
+    public void TryResolve_ADotDotEscapeFromTheDistroSpelling_IsRejected()
+    {
+        Assert.False(ManifestPaths.TryResolve(
+            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            "/home/enjay/repo/../.ssh/id_rsa",
+            out _,
+            out var rejection));
+
+        Assert.Equal("absolute path outside the workspace", rejection);
+    }
+
     [Fact]
     public void TryResolve_ARootedPathOutsideTheRoot_IsRejectedWithTheReason()
     {
