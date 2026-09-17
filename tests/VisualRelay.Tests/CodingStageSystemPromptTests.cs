@@ -86,6 +86,21 @@ public sealed class CodingStageSystemPromptTests
         Assert.Contains("non-test gate", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The environment is not the task's to repair. On i18next a permission refused on the
+    /// checkout's dependency folder was "fixed" with a chmod on the real checkout, the change was
+    /// invisible to the diff, and a later attempt found the workaround in a .relay log and repeated it.
+    /// </summary>
+    [Fact]
+    public void FixVerify_SystemPrompt_LeavesTheEnvironmentAlone()
+    {
+        var stage = RelayStages.All.Single(s => s.Name == "Fix-verify");
+        Assert.Contains("is not this task's to fix", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Never change file permissions", stage.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("never repeat a workaround you find in `.relay` logs",
+            stage.SystemPrompt, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("Implement")]
     [InlineData("Fix")]

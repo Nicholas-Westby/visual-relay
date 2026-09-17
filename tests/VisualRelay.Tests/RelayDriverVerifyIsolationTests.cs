@@ -51,5 +51,8 @@ public sealed class RelayDriverVerifyIsolationTests
         var created = Assert.Single(events.Events, e => e.EventName == "verify_snapshot_created");
         Assert.Equal(verifyRootPath, created.Data!["worktree"]);
         Assert.Equal("isolation-check-verify-s10-a1", created.Data["snapshot"]);
+        // Which arm made the snapshot's copies: the two lay a large ignored folder out to the
+        // same rule, and only the event says which one ran.
+        Assert.Equal("app", created.Data["overlay"]);
     }
 }

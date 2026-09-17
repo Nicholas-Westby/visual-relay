@@ -22,13 +22,14 @@ public sealed partial class RelayDriver
     {
         string? worktreePath;
         IReadOnlyList<(string Name, bool IsDirectory)> ignoredEntries = [];
+        var overlayArm = AppOverlayArm;
         var worktreeId = $"{taskId}-verify-s{stageNumber}-a{attempt}";
         try
         {
             // Fresh token: a torn `git worktree add` lands in the catch below, whose
             // fallback runs the project's suite against the REAL repository — the
             // opposite of stopping. The loop-top check stops the run right after.
-            (worktreePath, ignoredEntries) = await CreateVerifyWorktreeAsync(rootPath, worktreeId, runId, CancellationToken.None);
+            (worktreePath, ignoredEntries, overlayArm) = await CreateVerifyWorktreeAsync(rootPath, worktreeId, runId, CancellationToken.None);
         }
         catch (OperationCanceledException)
         {
@@ -45,10 +46,16 @@ public sealed partial class RelayDriver
             return (inPlace, Array.Empty<string>());
         }
 
-        // The snapshot's path names nothing about the task, so the log says which one it is.
+        // The snapshot's path names nothing about the task, so the log says which one it is, and
+        // which arm laid its ignored entries out: the layouts agree, but only one ran.
         await _dependencies.EventSink.PublishAsync(new RelayEvent(
             DateTimeOffset.UtcNow, "info", "verify_snapshot_created", runId, rootPath, taskId, stageNumber,
-            Data: new Dictionary<string, string> { ["snapshot"] = worktreeId, ["worktree"] = worktreePath }), cancellationToken);
+            Data: new Dictionary<string, string>
+            {
+                ["snapshot"] = worktreeId,
+                ["worktree"] = worktreePath,
+                ["overlay"] = overlayArm,
+            }), cancellationToken);
 
         try
         {
@@ -98,7 +105,7 @@ public sealed partial class RelayDriver
     /// snapshot mirrors exactly what the agent produced (Defect C). Throws if
     /// <paramref name="sourcePath"/> is not a git repo (caller catches → fallback).
     /// </summary>
-    private async Task<(string Path, IReadOnlyList<(string Name, bool IsDirectory)> IgnoredEntries)> CreateVerifyWorktreeAsync(
+    private async Task<(string Path, IReadOnlyList<(string Name, bool IsDirectory)> IgnoredEntries, string OverlayArm)> CreateVerifyWorktreeAsync(
         string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
         long thresholdBytes = IgnoredOverlayCopyMaxBytes, bool cloneOverlay = true)
     {
@@ -139,10 +146,10 @@ public sealed partial class RelayDriver
         // The overlay above carries only uncommitted-NOT-ignored files, so the snapshot
         // still omits everything git ignores. Mirror the source's git-ignored RUNTIME
         // content in so the test command can resolve its deps (see the method).
-        var ignoredEntries = await OverlayIgnoredEntriesAsync(
+        var (ignoredEntries, overlayArm) = await OverlayIgnoredEntriesAsync(
             sourcePath, worktreePath, worktreeId, runId, thresholdBytes, cloneOverlay,
             cancellationToken);
-        return (worktreePath, ignoredEntries);
+        return (worktreePath, ignoredEntries, overlayArm);
     }
 
     /// <summary>

@@ -221,7 +221,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                         if (check != "green")
                         {
-                            var failingTestOutput = BuildFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput);
+                            var failingTestOutput = WithRefusedBeforeTests(stage10TestResult!, BuildFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput));
                             var stage10Checks = SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config);
                             // A guard that fails on the untouched base too is the machine's fault;
                             // Fix-verify would escalate its whole tier ladder over it. One that
@@ -239,7 +239,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             {
                                 if (!config.EnableFixVerify)
                                 {
-                                    var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
+                                    var reason = VerifyFlagReason(newFailures);
                                     return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, stage10Checks.ToSummaryLines() + "\n\n" + failingTestOutput, statusEntries, cancellationToken,
                                         cost, stopwatch.Elapsed, sessionCostUsd, unknownCostStageCount);
                                 }

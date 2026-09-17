@@ -38,7 +38,9 @@ public sealed partial class RelayDriver
     /// Bounded by <paramref name="depth"/> (<see cref="MaxOverlayRecursionDepth"/>)
     /// and per-top-level-entry <paramref name="copiedBytes"/> budget; on hitting either
     /// bound the remaining subtree is symlinked and a <c>verify_overlay_skipped</c>
-    /// warn event is emitted. Directory sizing uses the early-exiting
+    /// warn event is emitted. This is the rule
+    /// <see cref="Wsl.WslTreeCopy.IgnoredEntriesScript"/> applies inside the distro on the
+    /// Windows arm, so the two are changed together. Directory sizing uses the early-exiting
     /// <see cref="NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold"/> (never fully
     /// sizes a huge tree). The walk is resilient per entry — errors are swallowed,
     /// never aborting worktree creation — and never follows a reparse point during

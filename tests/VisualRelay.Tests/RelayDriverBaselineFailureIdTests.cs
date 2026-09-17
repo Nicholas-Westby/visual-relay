@@ -79,6 +79,26 @@ public sealed class RelayDriverBaselineFailureIdTests
         Assert.Equal(3, tests.Calls.Count); // author gate, verify, retry: no base run
     }
 
+    /// <summary>
+    /// The operating system refused before the suite started: on i18next vitest could not create
+    /// a file under the snapshot's node_modules, exited 1 and named no test. The bare "verify
+    /// failed" sent Fix-verify looking for a test to repair, and it changed the checkout's modes.
+    /// </summary>
+    [Fact]
+    public async Task BaselineVerify_RunRefusedByTheOperatingSystem_NamesTheRefusalInstead()
+    {
+        using var repo = TestRepository.Create();
+        var (outcome, tests) = await RunAsync(repo,
+            "failed to load config\nError: EACCES: permission denied, mkdir '/wt/node_modules/.vite-temp'\n",
+            "never read\n");
+
+        Assert.Equal(
+            "the run failed before any test started: "
+            + "Error: EACCES: permission denied, mkdir '/wt/node_modules/.vite-temp'",
+            outcome.Reason);
+        Assert.Equal(3, tests.Calls.Count); // author gate, verify, retry: no base run
+    }
+
     [Fact]
     public async Task BaselineVerify_KeepsTheBaseOutputAndSaysWhatItSubtracted()
     {

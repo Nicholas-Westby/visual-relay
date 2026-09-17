@@ -42,16 +42,74 @@ public sealed class WslTreeCopyScriptTests : IDisposable
     }
 
     [Fact]
-    public async Task IgnoredEntries_LargeDirectory_IsLinkedToTheSource()
+    public async Task IgnoredEntries_LargeDirectory_IsARealDirectoryOfLinkedAndCopiedChildren()
     {
         SkipOnWindows();
-        Write("node_modules/big.bin", new string('x', 64 * 1024));
+        WriteLargeTree();
 
-        var failed = await RunAsync(WslTreeCopy.IgnoredEntriesScript, "16", "node_modules");
+        var failed = await RunAsync(WslTreeCopy.IgnoredEntriesScript, LimitKb, "node_modules");
 
         Assert.Empty(failed);
-        var link = new DirectoryInfo(Path.Combine(Dest, "node_modules"));
-        Assert.Equal(Path.Combine(Source, "node_modules"), link.LinkTarget);
+        var dir = Path.Combine(Dest, "node_modules");
+        Assert.False(IsLink(dir));
+        Assert.Equal(Path.Combine(Source, "node_modules", "big"),
+            new DirectoryInfo(Path.Combine(dir, "big")).LinkTarget);
+        Assert.False(IsLink(Path.Combine(dir, "small")));
+        Assert.Equal("small", File.ReadAllText(Path.Combine(dir, "small", "index.js")));
+        Assert.False(IsLink(Path.Combine(dir, ".bin")));
+        Assert.Equal("#!/bin/sh\n", File.ReadAllText(Path.Combine(dir, ".bin", "tool")));
+    }
+
+    /// <summary>
+    /// The whole-folder link made every path under it the checkout's, and the sandbox mounts the
+    /// checkout read-only: on i18next vitest could not create <c>node_modules/.vite-temp</c>,
+    /// printed EACCES and exited before a test ran.
+    /// </summary>
+    [Fact]
+    public async Task IgnoredEntries_AFileCreatedInTheSnapshotsFolder_DoesNotReachTheSource()
+    {
+        SkipOnWindows();
+        WriteLargeTree();
+
+        await RunAsync(WslTreeCopy.IgnoredEntriesScript, LimitKb, "node_modules");
+        File.WriteAllText(Path.Combine(Dest, "node_modules", ".vite-temp"), "probe");
+
+        Assert.False(File.Exists(Path.Combine(Source, "node_modules", ".vite-temp")));
+    }
+
+    [Fact]
+    public async Task IgnoredEntries_TheCopyBudget_LinksWhatIsLeft()
+    {
+        SkipOnWindows();
+        // Three 40 KiB children against a 64 KiB budget: the third is reached with it spent.
+        foreach (var name in (string[])["a.bin", "b.bin", "c.bin"])
+            Write($"deps/{name}", new string('x', 40 * 1024));
+
+        var failed = await RunAsync(WslTreeCopy.IgnoredEntriesScript, LimitKb, "deps");
+
+        Assert.Empty(failed);
+        Assert.False(IsLink(Path.Combine(Dest, "deps", "a.bin")));
+        Assert.False(IsLink(Path.Combine(Dest, "deps", "b.bin")));
+        Assert.True(IsLink(Path.Combine(Dest, "deps", "c.bin")));
+    }
+
+    /// <summary>
+    /// The teardown deletes the snapshot, and the links inside the new real folder point at the
+    /// checkout, so a delete that followed one would empty the checkout's dependencies.
+    /// </summary>
+    [Fact]
+    public async Task IgnoredEntries_Cleanup_LeavesTheSourceFolderIntact()
+    {
+        SkipOnWindows();
+        WriteLargeTree();
+
+        await RunAsync(WslTreeCopy.IgnoredEntriesScript, LimitKb, "node_modules");
+        WorktreeLinks.UnlinkAll(Dest);
+        Directory.Delete(Dest, recursive: true);
+
+        Assert.Equal(256 * 1024, new FileInfo(Path.Combine(Source, "node_modules", "big", "blob.bin")).Length);
+        Assert.Equal("small", File.ReadAllText(Path.Combine(Source, "node_modules", "small", "index.js")));
+        Assert.Equal("#!/bin/sh\n", File.ReadAllText(Path.Combine(Source, "node_modules", ".bin", "tool")));
     }
 
     [Fact]
@@ -123,6 +181,19 @@ public sealed class WslTreeCopyScriptTests : IDisposable
 
     private static void SkipOnWindows() =>
         Assert.SkipWhen(OperatingSystem.IsWindows(), "the scripts run inside the distro; /bin/sh stands in for it");
+
+    /// <summary>A limit coarse enough that <c>du</c>'s block rounding cannot decide an entry's side of it.</summary>
+    private const string LimitKb = "64";
+
+    private static bool IsLink(string path) => File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
+
+    /// <summary>A folder above the limit holding a child above it, one below it and a dot-named one.</summary>
+    private void WriteLargeTree()
+    {
+        Write("node_modules/big/blob.bin", new string('x', 256 * 1024));
+        Write("node_modules/small/index.js", "small");
+        Write("node_modules/.bin/tool", "#!/bin/sh\n");
+    }
 
     private string Write(string relative, string content)
     {

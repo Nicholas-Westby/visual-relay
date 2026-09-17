@@ -9,6 +9,55 @@ public sealed partial class RelayDriver
     /// <summary>How much of the failing command's own output rides in the flag reason.</summary>
     private const int EnvironmentFailureTailChars = 160;
 
+    /// <summary>What a reason built from an operating-system refusal opens with.</summary>
+    private const string RefusedBeforeTestsPrefix = "the run failed before any test started: ";
+
+    /// <summary>
+    /// The operating system's own refusals, as the tools that hit them print them. On i18next
+    /// vitest could not create a file under the snapshot's dependency folder, printed EACCES and
+    /// exited 1 naming no test; "verify failed" then sent Fix-verify hunting for a test to repair,
+    /// and it changed the real checkout's permissions instead.
+    /// </summary>
+    private static readonly string[] EnvironmentRefusals =
+        ["EACCES", "permission denied", "operation not permitted", "read-only file system"];
+
+    /// <summary>
+    /// The reason a red run that named no failing test deserves: the refusal line itself when the
+    /// operating system turned the run away before the suite started, else null (the caller's
+    /// "verify failed"). A run that named a test is never one of these.
+    /// </summary>
+    private static string? RefusedBeforeTestsReason(TestRunResult result)
+    {
+        if (result.ExitCode == 0 || result.TimedOut || string.IsNullOrEmpty(result.Output)
+            || TestFailureIds.Extract(result.Output).Count > 0)
+            return null;
+        foreach (var raw in result.Output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (EnvironmentRefusals.Any(refusal => line.Contains(refusal, StringComparison.OrdinalIgnoreCase)))
+                return RefusedBeforeTestsPrefix + FlagReason.OneLine(line);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The stage's failure output with that refusal named ahead of it, so Fix-verify's input says
+    /// what the flag says instead of leaving the agent to find the line itself.
+    /// </summary>
+    private static string WithRefusedBeforeTests(TestRunResult result, string failureOutput) =>
+        RefusedBeforeTestsReason(result) is { } reason ? reason + "\n\n" + failureOutput : failureOutput;
+
+    /// <summary>
+    /// The stage 10 flag reason. A whole-run reason stands on its own; anything else is the list
+    /// of failing tests the base does not have.
+    /// </summary>
+    private static string VerifyFlagReason(string? newFailures) =>
+        newFailures is null or "verify failed"
+            || newFailures.StartsWith(RefusedBeforeTestsPrefix, StringComparison.Ordinal)
+            ? newFailures ?? "verify failed"
+            : $"new test failures: {newFailures}";
+
     /// <summary>
     /// True when the authoritative gate is red ONLY because the repo guard failed,
     /// while the project's tests passed.

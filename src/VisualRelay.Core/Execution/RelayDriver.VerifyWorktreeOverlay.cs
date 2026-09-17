@@ -12,9 +12,10 @@ public sealed partial class RelayDriver
     /// run in the worktree can resolve its dependencies and read its config. Shared by
     /// the verify snapshot and the pristine-base checkout the guard attribution probe
     /// runs in. Best-effort per entry: a failure warns and moves on. Returns the entries it
-    /// enumerated, so a caller can find what the snapshot inherited (a virtualenv, say).
+    /// enumerated, so a caller can find what the snapshot inherited (a virtualenv, say), and
+    /// the arm that laid them out, which nothing else can tell afterwards.
     /// </summary>
-    private async Task<IReadOnlyList<(string Name, bool IsDirectory)>> OverlayIgnoredEntriesAsync(
+    private async Task<(IReadOnlyList<(string Name, bool IsDirectory)> Entries, string Arm)> OverlayIgnoredEntriesAsync(
         string sourcePath, string worktreePath, string worktreeId, string runId,
         long thresholdBytes, bool cloneOverlay, CancellationToken cancellationToken)
     {
@@ -47,7 +48,7 @@ public sealed partial class RelayDriver
                     ? null
                     : WslTreeCopy.IgnoredEntries(context, source, dest, thresholdBytes, entries.Select(e => e.Name).ToList()),
                 cancellationToken))
-            return entries;
+            return (entries, InDistroOverlayArm);
 
         foreach (var (name, isDirectory) in entries)
         {
@@ -96,6 +97,12 @@ public sealed partial class RelayDriver
             }
         }
 
-        return entries;
+        return (entries, AppOverlayArm);
     }
+
+    /// <summary>The app walked the checkout itself, as it does everywhere but inside the distro.</summary>
+    private const string AppOverlayArm = "app";
+
+    /// <summary>A script inside the distro made the copies, on the Windows arm.</summary>
+    private const string InDistroOverlayArm = "in-distro";
 }

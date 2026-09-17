@@ -137,7 +137,7 @@ public sealed partial class RelayDriver
             worktreePath = await PlanningWorktree.CreateAsync(
                 rootPath, worktreeId, runId, _dependencies.GitInvoker, CancellationToken.None,
                 timeProvider: _dependencies.TimeProvider, commitish: baseSha);
-            var ignoredEntries = await OverlayIgnoredEntriesAsync(
+            var (ignoredEntries, _) = await OverlayIgnoredEntriesAsync(
                 rootPath, worktreePath, worktreeId, runId,
                 IgnoredOverlayCopyMaxBytes, cloneOverlay: true, cancellationToken);
             var searchPaths = await SnapshotSearchPathsAsync(

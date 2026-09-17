@@ -17,10 +17,16 @@ internal static class WslTreeCopy
     private const string FailedPrefix = "vr-overlay-failed ";
 
     /// <summary>
-    /// <c>sh -c &lt;script&gt; vr-overlay &lt;source&gt; &lt;dest&gt; &lt;limit KiB&gt; &lt;name&gt;...</c>: each
-    /// ignored entry below the limit is copied with its modes and links (<c>cp -a</c>); one at or
-    /// above it is linked to the source, as the local overlay does. A destination that already
-    /// exists (the checkout, the uncommitted overlay) is left alone.
+    /// <c>sh -c &lt;script&gt; vr-overlay &lt;source&gt; &lt;dest&gt; &lt;limit KiB&gt; &lt;name&gt;...</c>: the rule
+    /// <c>RelayDriver.OverlayIgnoredDirRecursive</c> applies on the app side, so the two arms lay
+    /// the same checkout out the same way and change together. An entry below the limit is copied
+    /// with its modes and links (<c>cp -a</c>); a large file is linked to the source; a DIRECTORY
+    /// at or above the limit becomes a real directory whose children are copied one by one until
+    /// the entry's copy budget (the same limit) is spent, the rest linked. Linking such a folder
+    /// whole made every path under it the checkout's, which the sandbox mounts read-only for
+    /// verify: vitest could not create <c>node_modules/.vite-temp</c> on i18next, printed EACCES
+    /// and exited before a test ran. A destination that already exists (the checkout, the
+    /// uncommitted overlay) is left alone.
     /// </summary>
     internal const string IgnoredEntriesScript =
         "src=$1; dst=$2; limit=$3; shift 3; for name in \"$@\"; do "
@@ -29,7 +35,16 @@ internal static class WslTreeCopy
         + "mkdir -p \"$(dirname \"$d\")\" || { echo \"" + FailedPrefix + "$name\"; continue; }; "
         + "kb=$(du -sk \"$s\" 2>/dev/null | cut -f1); "
         + "if [ \"${kb:-0}\" -lt \"$limit\" ]; then cp -a \"$s\" \"$d\" || echo \"" + FailedPrefix + "$name\"; "
-        + "else ln -s \"$s\" \"$d\" || echo \"" + FailedPrefix + "$name\"; fi; done";
+        + "elif [ ! -d \"$s\" ]; then ln -s \"$s\" \"$d\" || echo \"" + FailedPrefix + "$name\"; "
+        + "elif ! mkdir \"$d\"; then echo \"" + FailedPrefix + "$name\"; "
+        // The three patterns are every child including the dot-named ones; an unmatched pattern
+        // stays literal in POSIX sh, so each candidate is tested for existence first.
+        + "else copied=0; for c in \"$s\"/* \"$s\"/.[!.]* \"$s\"/..?*; do "
+        + "[ -e \"$c\" ] || [ -L \"$c\" ] || continue; b=${c##*/}; "
+        + "ckb=$(du -sk \"$c\" 2>/dev/null | cut -f1); ckb=${ckb:-0}; "
+        + "if [ \"$ckb\" -lt \"$limit\" ] && [ \"$copied\" -lt \"$limit\" ]; then "
+        + "cp -a \"$c\" \"$d/$b\" && copied=$((copied+ckb)) || echo \"" + FailedPrefix + "$name/$b\"; "
+        + "else ln -s \"$c\" \"$d/$b\" || echo \"" + FailedPrefix + "$name/$b\"; fi; done; fi; done";
 
     /// <summary>
     /// <c>sh -c &lt;script&gt; vr-overlay &lt;source&gt; &lt;dest&gt; &lt;relative path&gt;...</c>: each file is

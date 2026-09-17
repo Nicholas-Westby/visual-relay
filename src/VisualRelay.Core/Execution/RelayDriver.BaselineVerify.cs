@@ -8,7 +8,8 @@ public sealed partial class RelayDriver
     /// <summary>
     /// The failures in <paramref name="workingResult"/> that the run's base commit does not have:
     /// null when there are none, "verify failed" when the base could not be run or the red run
-    /// named no failure. The base runs in its own snapshot, never in the checkout: stashing the
+    /// named no failure, and <see cref="RefusedBeforeTestsReason"/> when that red run was an
+    /// operating-system refusal. The base runs in its own snapshot, never in the checkout: stashing the
     /// checkout for the length of a suite left the task's work in the stash whenever the run died
     /// meanwhile, and ran the base at a different path from the snapshot it was compared with.
     /// </summary>
@@ -19,7 +20,7 @@ public sealed partial class RelayDriver
         var current = TestFailureIds.Extract(workingResult.Output);
         // A red run that names no failing test leaves the base nothing to subtract, so it is not run.
         if (current.Count == 0 && workingResult.ExitCode != 0)
-            return "verify failed";
+            return RefusedBeforeTestsReason(workingResult) ?? "verify failed";
         var baseline = await RunOnTheBaseAsync(rootPath, taskId, runId, runBaseSha, testCommand, ct);
         if (baseline is null || baseline.TimedOut) return "verify failed";
         var onTheBase = TestFailureIds.Extract(baseline.Output);
@@ -81,11 +82,18 @@ public sealed partial class RelayDriver
             worktreePath = await PlanningWorktree.CreateAsync(
                 rootPath, worktreeId, runId, _dependencies.GitInvoker, CancellationToken.None,
                 timeProvider: _dependencies.TimeProvider, commitish: commit);
+            // Announced after the overlay, not before it: the event names the arm that made the
+            // snapshot's copies, and only the overlay knows which one ran.
+            var (ignoredEntries, overlayArm) = await OverlayIgnoredEntriesAsync(
+                rootPath, worktreePath, worktreeId, runId, IgnoredOverlayCopyMaxBytes, cloneOverlay: true, ct);
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow, "info", "verify_snapshot_created", runId, rootPath, taskId, 10,
-                Data: new Dictionary<string, string> { ["snapshot"] = worktreeId, ["worktree"] = worktreePath }), ct);
-            var ignoredEntries = await OverlayIgnoredEntriesAsync(
-                rootPath, worktreePath, worktreeId, runId, IgnoredOverlayCopyMaxBytes, cloneOverlay: true, ct);
+                Data: new Dictionary<string, string>
+                {
+                    ["snapshot"] = worktreeId,
+                    ["worktree"] = worktreePath,
+                    ["overlay"] = overlayArm,
+                }), ct);
             var searchPaths = await SnapshotSearchPathsAsync(
                 rootPath, worktreePath, ignoredEntries, runId, taskId, stageNumber: 10, ct);
             return await RunInSnapshotAsync(worktreePath, testCommand, searchPaths, ct);

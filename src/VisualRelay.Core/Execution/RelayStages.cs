@@ -152,6 +152,10 @@ public static class RelayStages
             "the gate. If a non-test gate is not safely fixable within this task's scope, " +
             "report it explicitly as a non-test gate failure instead of hacking around it. " +
             "Do NOT run the project's broader orchestration gate. " +
+            "An error that comes from the environment (a permission refused on a dependency " +
+            "folder, a missing tool, a failed download) is not this task's to fix. Report it " +
+            "in your summary and stop. Never change file permissions or anything inside a " +
+            "dependency folder, and never repeat a workaround you find in `.relay` logs. " +
             "The harness runs the full gate mechanically; your job is to make it pass cleanly. " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
