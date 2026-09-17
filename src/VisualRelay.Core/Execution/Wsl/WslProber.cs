@@ -5,13 +5,13 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// <summary>
 /// Gathers a <see cref="WslProbe"/> by running wsl.exe through an injected runner
 /// (the delegate owns the process and its environment, including
-/// <c>WSL_UTF8=1</c>; tests script it and never spawn). Six steps: list the
+/// <c>WSL_UTF8=1</c>; tests script it and never spawn). Eight steps: list the
 /// distros (with none listed, <c>--version</c> tells a missing WSL from a missing
 /// distro, and the probe stops); pick the one <c>VR_WSL_DISTRO</c> names, else the default; read
 /// <c>uname -r</c>; resolve nono through a login shell (so a profile-added
 /// <c>~/.cargo/bin</c> counts); read its version and ask it whether Landlock is up;
-/// read the distro user's home; on a usable distro, read the PATH the user's login
-/// shell builds. Every step after the listing runs with the
+/// read the distro user's home; once those hold, read the PATH the user's login
+/// shell builds and resolve git against it. Every step after the listing runs with the
 /// distro selected explicitly. A runner failure never throws out of the probe
 /// (only cancellation does); it is recorded in <see cref="WslProbe.Diagnostics"/>.
 /// </summary>
@@ -122,12 +122,23 @@ public static partial class WslProber
         if (homePath is null)
             notes.Add($"$HOME (exit {home.ExitCode}): {Compact(home.Output)}");
 
-        if (probe.IsUsable)
+        if (probe.LaunchPrerequisitesMet)
         {
             var login = await RunAsync(runWsl, ["-d", distro, "--exec", "sh", "-c", LoginPathScript], ct);
             probe = probe with { UserPath = BetweenMarkers(login.Output) };
             if (probe.UserPath is null)
                 notes.Add($"login shell PATH (exit {login.ExitCode}), launches keep the distro default: {Compact(login.Output)}");
+
+            // Against that PATH, because it is the PATH the routed git launch gets:
+            // every workspace git call on Windows runs inside the distro, and until
+            // now nothing asked whether git was there at all.
+            string[] gitArgv = probe.UserPath is { } userPath
+                ? ["-d", distro, "--exec", "env", $"PATH={userPath}", "sh", "-c", "command -v git"]
+                : ["-d", distro, "--exec", "sh", "-c", "command -v git"];
+            var git = await RunAsync(runWsl, gitArgv, ct);
+            probe = probe with { GitPath = git.ExitCode == 0 ? LastAbsoluteLine(git.Output) : null };
+            if (probe.GitPath is null)
+                notes.Add($"command -v git (exit {git.ExitCode}): {Compact(git.Output)}");
         }
 
         return Finish(probe, notes);

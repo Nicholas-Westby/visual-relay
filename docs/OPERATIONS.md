@@ -73,7 +73,9 @@ For exotic toolchains whose cache paths the baseline profile does not cover, add
 
 Each entry is appended as `-a <path>` to both the agent and verification nono invocations.
 Entries are validated at config load: `..` (path traversal) is rejected; `~` and `$HOME`
-are expanded; and each path must resolve under `$HOME` or the workspace root.
+are expanded; and each path must resolve under `$HOME` or the workspace root. On Windows
+`~` and `$HOME` resolve against the WSL distro user's home, not the Windows profile,
+because that is where the commands run.
 
 ### Windows
 

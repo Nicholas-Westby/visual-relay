@@ -42,7 +42,11 @@ internal sealed class ScriptedWsl
         .On("-d Ubuntu --exec /usr/local/bin/nono --version", 0, "nono 0.75.0\n")
         .On("-d Ubuntu --exec env NONO_NO_UPDATE_CHECK=1 /usr/local/bin/nono setup --check-only", 0, SandboxCheckPassed)
         .On("-d Ubuntu --exec sh -lc printf %s \"$HOME\"", 0, "/home/alice")
-        .On($"-d Ubuntu --exec sh -c {WslProber.LoginPathScript}", 0, LoginPathReply(UserPath));
+        .On($"-d Ubuntu --exec sh -c {WslProber.LoginPathScript}", 0, LoginPathReply(UserPath))
+        .On($"-d Ubuntu --exec env PATH={UserPath} sh -c command -v git", 0, "/usr/bin/git\n")
+        // The git step drops the env prefix when the login PATH could not be read, so
+        // a probe that gets that far still answers on a machine that has git.
+        .On("-d Ubuntu --exec sh -c command -v git", 0, "/usr/bin/git\n");
 
     public ScriptedWsl On(string argv, int exitCode, string output)
     {

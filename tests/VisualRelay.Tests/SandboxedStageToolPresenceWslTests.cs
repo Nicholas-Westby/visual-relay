@@ -23,7 +23,33 @@ public sealed class SandboxedStageToolPresenceWslTests
         Assert.Contains("WSL2", requirement);
         Assert.Contains("nono", requirement);
         Assert.Contains("distro", requirement);
-        Assert.Contains("nono", SandboxedStage.MissingToolsMessage(missing));
+    }
+
+    /// <summary>
+    /// The generic "not installed or not on PATH" line named neither the distro nor
+    /// the fix, while the probe behind the refusal knows exactly which check failed.
+    /// The run gate, bootstrap and create-config now print the one fix table.
+    /// </summary>
+    [Fact]
+    public void MissingToolsMessage_OnWindows_IsTheGatesMessage()
+    {
+        var missing = SandboxedStage.MissingRequiredTools(
+            TestConfig(), pathValue: string.Empty, host: SandboxHost.Windows(null));
+
+        var message = SandboxedStage.MissingToolsMessage(
+            missing, SandboxHost.Windows(null), WslProbeFixtures.GitMissing());
+
+        Assert.Equal(WslGate.Decide(WslProbeFixtures.GitMissing()).Message, message);
+        Assert.Contains("git was not found inside the WSL distro 'Ubuntu'", message);
+        Assert.DoesNotContain("not installed or not on PATH on this machine", message);
+    }
+
+    [Fact]
+    public void MissingToolsMessage_OffWindows_IsStillTheBinaryLine()
+    {
+        var message = SandboxedStage.MissingToolsMessage(["nono"], SandboxHost.Local);
+
+        Assert.Contains("nono is not installed or not on PATH on this machine", message);
     }
 
     [Fact]

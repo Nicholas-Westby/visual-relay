@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -69,8 +70,23 @@ public static partial class SandboxedStage
     // sandbox advisory dump. internal (not private) so the GUI gate
     // (MainWindowViewModel.EnsureRunnableAsync) reuses the exact same copy instead
     // of hand-copying it — both surfaces stay identical.
-    internal static string MissingToolsMessage(IReadOnlyList<string> missing) =>
-        $"{string.Join(" and ", missing)} is not installed or not on PATH on this machine — " +
-        "Visual Relay can't run tasks here. It's set up on the VM, not this host. " +
-        "Install it and retry.";
+    //
+    // On a Windows host the generic line named neither the distro nor the fix, while
+    // the probe behind the refusal knows exactly which check failed; the gate's own
+    // message is rendered instead, so the run gate, bootstrap and create-config all
+    // print the one fix table TROUBLESHOOTING.md documents. The probe is injectable
+    // so the Windows arm is exercised on any OS.
+    internal static string MissingToolsMessage(
+        IReadOnlyList<string> missing, SandboxHost? host = null, WslProbe? probe = null)
+    {
+        if ((host ?? SandboxHost.Current).IsWindows
+            && WslGate.Decide(probe ?? WslContextResolver.UnusableProbe).Message is { } gateMessage)
+        {
+            return gateMessage;
+        }
+
+        return $"{string.Join(" and ", missing)} is not installed or not on PATH on this machine — " +
+            "Visual Relay can't run tasks here. It's set up on the VM, not this host. " +
+            "Install it and retry.";
+    }
 }

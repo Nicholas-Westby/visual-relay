@@ -59,6 +59,11 @@ public sealed class ProjectBootstrapperTests
     [Fact]
     public async Task BootstrapAsync_PlaceholderCommand_IsTriviallyGreenOnThisMachine()
     {
+        // POSIX only: the placeholder leads with `true`, which is a shell builtin or
+        // /usr/bin binary there and does not exist on Windows at all. On Windows the
+        // check runs inside the WSL distro, where it does — or bootstrap refuses to
+        // run and never checks anything, which the refusal facts below cover.
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the placeholder is checked inside the distro on Windows");
         using var repo = TestRepository.Create();
         var validator = new TestCommandValidator(new DirectExecTestRunner(TimeSpan.FromSeconds(5)));
 
@@ -66,6 +71,47 @@ public sealed class ProjectBootstrapperTests
 
         Assert.True(validation.Accepted, validation.RejectionReason);
         Assert.Equal(0, validation.RunResult.ExitCode);
+    }
+
+    /// <summary>
+    /// On Windows every launch goes through the distro. With none resolved, the check
+    /// used to run the operator's own candidate command on the Windows host through
+    /// cmd.exe, unsandboxed, and then persist a command the pipeline could never run.
+    /// Bootstrap now refuses and leaves the folder exactly as it found it.
+    /// </summary>
+    [Fact]
+    public async Task BootstrapAsync_WindowsWithoutADistro_RefusesAndWritesNothing()
+    {
+        var (repo, sim) = CreateSimRepo();
+        var runner = new RecordingTestRunner();
+
+        var result = await ProjectBootstrapper.BootstrapAsync(
+            repo.Root, gitInvoker: sim, validationRunner: runner, host: SandboxHost.Windows(null));
+
+        Assert.NotNull(result.Refusal);
+        Assert.Contains("visual-relay: ", result.Refusal!, StringComparison.Ordinal);
+        Assert.Empty(runner.Calls);
+        Assert.False(Directory.Exists(Path.Combine(repo.Root, ".relay")));
+        Assert.False(Directory.Exists(Path.Combine(repo.Root, ".git")));
+        repo.Dispose();
+    }
+
+    [Fact]
+    public async Task TryUpgrade_WindowsWithoutADistro_LeavesThePlaceholder()
+    {
+        var (repo, sim) = CreateSimRepo();
+        await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
+        File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module example.com/m\n\ngo 1.22\n");
+        var runner = new RecordingTestRunner();
+
+        var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(
+            repo.Root, sim, runner, SandboxHost.Windows(null));
+
+        Assert.False(upgraded);
+        Assert.Empty(runner.Calls);
+        var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(ProjectBootstrapper.PlaceholderTestCommand, loaded.Config.TestCommand);
+        repo.Dispose();
     }
 
     [Fact]

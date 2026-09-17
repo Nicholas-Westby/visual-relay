@@ -25,6 +25,7 @@ public sealed class WslGateDecisionTests
         nameof(WslProbeFixtures.NonoMissing) => WslProbeFixtures.NonoMissing(),
         nameof(WslProbeFixtures.LandlockInactive) => WslProbeFixtures.LandlockInactive(),
         nameof(WslProbeFixtures.HomeUnknown) => WslProbeFixtures.HomeUnknown(),
+        nameof(WslProbeFixtures.GitMissing) => WslProbeFixtures.GitMissing(),
         _ => throw new ArgumentOutOfRangeException(nameof(name), name, null),
     };
 
@@ -43,6 +44,7 @@ public sealed class WslGateDecisionTests
     [InlineData(nameof(WslProbeFixtures.NonoMissing))]
     [InlineData(nameof(WslProbeFixtures.LandlockInactive))]
     [InlineData(nameof(WslProbeFixtures.HomeUnknown))]
+    [InlineData(nameof(WslProbeFixtures.GitMissing))]
     public void EveryFailure_Exits127AndEndsWithTheToolchainConsequence(string fixture)
     {
         var (exitCode, message) = WslGate.Decide(Fixture(fixture));
@@ -154,15 +156,41 @@ public sealed class WslGateDecisionTests
         Assert.Contains("wsl -d Ubuntu", message);
     }
 
+    /// <summary>
+    /// Every workspace git call on Windows runs inside the distro, so a distro
+    /// without git is refused like a missing sandbox, and the fix is the one command
+    /// that installs it THERE, not on Windows.
+    /// </summary>
+    [Fact]
+    public void GitMissing_NamesTheInstallInsideTheDistro()
+    {
+        var (_, message) = WslGate.Decide(WslProbeFixtures.GitMissing());
+
+        Assert.Contains("git was not found inside the WSL distro 'Ubuntu'", message);
+        Assert.Contains("sudo apt install -y git", message);
+        Assert.Contains("wsl -d Ubuntu --exec sh -lc 'command -v git'", message);
+    }
+
     [Fact]
     public void SeveralChecksFailing_TheFirstOneIsNamed()
     {
-        var probe = WslProbeFixtures.NonoMissing() with { LandlockActive = false, DistroHome = null };
+        var probe = WslProbeFixtures.NonoMissing() with { LandlockActive = false, DistroHome = null, GitPath = null };
 
         var (_, message) = WslGate.Decide(probe);
 
         Assert.Contains("nono was not found", message);
         Assert.DoesNotContain(".wslconfig", message);
         Assert.DoesNotContain("home directory", message);
+        Assert.DoesNotContain("git was not found", message);
+    }
+
+    /// <summary>Git is the LAST check, so a missing home is still named ahead of it.</summary>
+    [Fact]
+    public void HomeAndGitBothMissing_TheHomeIsNamed()
+    {
+        var (_, message) = WslGate.Decide(WslProbeFixtures.HomeUnknown() with { GitPath = null });
+
+        Assert.Contains("home directory", message);
+        Assert.DoesNotContain("git was not found", message);
     }
 }

@@ -42,7 +42,9 @@ public sealed class ControlApiBootstrapStatusTests
     public async Task Bootstrap_WhileItRuns_StateIsBusy_AndTheRunCommandsAreRefused()
     {
         using var repo = TestRepository.Create();
-        var held = new TaskCompletionSource();
+        // RunContinuationsAsynchronously: the gate is released from the dispatcher
+        // thread, and an inline resume would re-enter it from under itself.
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var vm = new MainWindowViewModel(repo.Env)
         {
             RootPath = repo.Root,

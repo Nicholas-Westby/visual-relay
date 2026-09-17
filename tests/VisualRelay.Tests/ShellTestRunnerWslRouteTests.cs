@@ -8,8 +8,10 @@ namespace VisualRelay.Tests;
 /// follows the workspace: a repository opened through the distro's UNC share is
 /// validated by <c>/bin/sh -c</c> inside that distro, through the same envelope
 /// the sandboxed launches use (so the workspace binding is loud and a timeout can
-/// stop the Linux tree), with no nono in front. cmd.exe remains only where no
-/// usable distro exists.
+/// stop the Linux tree), with no nono in front. On a Windows host with no usable
+/// distro there is nothing left to fall back to: the command is refused rather than
+/// run on the Windows host through cmd.exe, unsandboxed, and checked where the
+/// pipeline will never run it.
 /// </summary>
 public sealed class ShellTestRunnerWslRouteTests
 {
@@ -37,14 +39,29 @@ public sealed class ShellTestRunnerWslRouteTests
     }
 
     [Fact]
-    public void ResolveLaunch_WindowsWithoutAContext_KeepsTheCmdBatch()
+    public void ResolveLaunch_WindowsWithoutAContext_IsRefused()
     {
-        var launch = ShellTestRunner.ResolveLaunch("echo hi", @"C:\repo", loginShell: false, SandboxHost.Windows(null));
+        var refusal = Assert.Throws<InvalidOperationException>(() =>
+            ShellTestRunner.ResolveLaunch("echo hi", @"C:\repo", loginShell: false, SandboxHost.Windows(null)));
 
-        Assert.Equal("cmd.exe", launch.FileName);
-        Assert.Equal("/c", launch.Arguments[0]);
-        Assert.EndsWith(".cmd", launch.Arguments[1]);
-        Assert.Null(launch.TreeControl);
+        Assert.Contains("visual-relay: ", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("WSL", refusal.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The refusal reaches the caller as an ordinary run result, the way the DrvFs
+    /// refusal does, so nothing spawns and nothing has to catch.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WindowsWithoutAContext_AnswersExit126WithoutSpawning()
+    {
+        var runner = new ShellTestRunner(TimeSpan.FromSeconds(5), loginShell: false, host: SandboxHost.Windows(null));
+
+        var result = await runner.RunAsync(@"C:\repo", "echo hi");
+
+        Assert.Equal(126, result.ExitCode);
+        Assert.False(result.TimedOut);
+        Assert.Contains("visual-relay: ", result.Output, StringComparison.Ordinal);
     }
 
     [Theory]

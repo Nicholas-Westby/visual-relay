@@ -95,11 +95,40 @@ public static class WslContextResolver
         }
     }
 
+    /// <summary>
+    /// The last probe this resolver ran, kept beside the context so a refusal can say
+    /// WHICH check failed. Without it every Windows surface could only report "not
+    /// installed or not on PATH", which names neither the distro nor the fix.
+    /// </summary>
+    public static WslProbe? LastProbe
+    {
+        get { lock (Gate) { return _lastProbe; } }
+    }
+
+    /// <summary>
+    /// The probe that explains a host with NO resolved distro. That is the last one
+    /// this resolver ran, unless it reports a usable distro: a usable probe cannot
+    /// explain a missing context (and in a test process is simply somebody else's
+    /// probe), so the empty one stands in and the gate still names a real first
+    /// failing check rather than deciding there is nothing wrong.
+    /// </summary>
+    public static WslProbe UnusableProbe =>
+        LastProbe is { IsUsable: false } probe ? probe : WslProbe.Empty;
+
+    private static WslProbe? _lastProbe;
+
     /// <summary>The context a usable probe resolves to; null for any unusable probe.</summary>
-    public static WslContext? FromProbe(WslProbe probe) =>
-        probe.IsUsable
+    public static WslContext? FromProbe(WslProbe probe)
+    {
+        lock (Gate)
+        {
+            _lastProbe = probe;
+        }
+
+        return probe.IsUsable
             ? new WslContext(probe.WslExePath!, probe.DistroName!, probe.NonoPath!, probe.DistroHome!, probe.UserPath)
             : null;
+    }
 
     /// <summary>
     /// Probes the real machine: wsl.exe from PATH or the Windows system directory,

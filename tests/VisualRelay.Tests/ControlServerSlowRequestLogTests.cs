@@ -9,7 +9,13 @@ namespace VisualRelay.Tests;
 /// means something is holding that thread. Twice on the Windows arm /state took over
 /// twenty seconds and nothing recorded which request it was; the handler now says so
 /// on stderr, which is the evidence a follow-up would start from.
+/// <para>
+/// Headless, because these routes marshal onto the Avalonia UI thread: without a
+/// dispatcher the first one that does never returns, and the whole suite hangs
+/// there (seen on Windows, where it stopped dead twice in this class).
+/// </para>
 /// </summary>
+[Collection("Headless")]
 public sealed class ControlServerSlowRequestLogTests
 {
     private static async Task<List<string>> InvokeAsync(string method, string path, params int[] millisecondSteps)
@@ -45,7 +51,7 @@ public sealed class ControlServerSlowRequestLogTests
         return log;
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task ARequestOverTheThreshold_LogsOneLineNamingTheMethodAndPath()
     {
         var log = await InvokeAsync("GET", "/state", 3000);
@@ -53,20 +59,20 @@ public sealed class ControlServerSlowRequestLogTests
         Assert.Equal(["vr-control: slow request GET /state took 3000 ms"], log);
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task AFastRequest_LogsNothing()
     {
         Assert.Empty(await InvokeAsync("GET", "/state", 100));
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task ASlowScreenshot_LogsNothing()
     {
         // It renders the window; slow is what it is, not a symptom.
         Assert.Empty(await InvokeAsync("GET", "/screenshot", 9000));
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task AnUnknownRouteThatIsSlow_IsStillLogged()
     {
         var log = await InvokeAsync("POST", "/command/nope", 2500);

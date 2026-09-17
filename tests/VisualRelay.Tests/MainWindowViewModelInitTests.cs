@@ -1,5 +1,6 @@
 using System.Text.Json;
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
@@ -67,6 +68,32 @@ public sealed class MainWindowViewModelInitTests
 
         Assert.True(viewModel.NeedsInitialization);
         Assert.Equal("dotnet test", viewModel.InitTestCommandInput);
+    }
+
+    /// <summary>
+    /// Create config makes the same refusal bootstrap does. On a Windows host with no
+    /// usable distro the validation shell has nowhere to run the command the operator
+    /// typed except the Windows host itself, unsandboxed, and a command accepted
+    /// there could never run in the pipeline.
+    /// </summary>
+    [Fact]
+    public async Task CreateConfig_OnWindowsWithoutADistro_ReportsTheRefusalAndWritesNothing()
+    {
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(null)),
+            InitValidationRunnerFactory = _ => new ScriptedTestRunner(new TestRunResult(0, "ok")),
+        };
+        await viewModel.LoadInitialAsync();
+
+        viewModel.InitTestCommandInput = "dotnet test";
+        await viewModel.CreateConfigCommand.ExecuteAsync(null);
+
+        Assert.Contains("visual-relay: ", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+        Assert.True(viewModel.NeedsInitialization);
     }
 
     [Fact]

@@ -18,13 +18,14 @@ internal static class WslProbeFixtures
     public static WslProbe Usable() => new(
         WslExeFound: true, WslExePath: WslExe, Distros: [Ubuntu, Debian], RequestedDistro: null,
         DistroName: "Ubuntu", IsWsl2: true, KernelRelease: Kernel, NonoPath: "/usr/local/bin/nono",
-        NonoVersion: "nono 0.75.0", LandlockActive: true, DistroHome: "/home/alice", Diagnostics: null);
+        NonoVersion: "nono 0.75.0", LandlockActive: true, DistroHome: "/home/alice", Diagnostics: null)
+    { GitPath = "/usr/bin/git" };
 
     public static WslProbe NoWsl() => WslProbe.Empty;
 
     public static WslProbe InboxStubOnly() => NoDistro() with { WslPlatformMissing = true };
 
-    public static WslProbe NoDistro() => Usable() with { Distros = [], DistroName = null, IsWsl2 = false, KernelRelease = null, NonoPath = null, NonoVersion = null, LandlockActive = false, DistroHome = null };
+    public static WslProbe NoDistro() => Usable() with { Distros = [], DistroName = null, IsWsl2 = false, KernelRelease = null, NonoPath = null, NonoVersion = null, LandlockActive = false, DistroHome = null, GitPath = null };
 
     public static WslProbe RequestedDistroMissing() => NoDistro() with { Distros = [Ubuntu, Debian], RequestedDistro = "Fedora" };
 
@@ -35,4 +36,6 @@ internal static class WslProbeFixtures
     public static WslProbe LandlockInactive() => Usable() with { LandlockActive = false, Diagnostics = "nono setup --check-only (exit 1): nono: Setup error: Landlock is not available: No supported Landlock ABI detected" };
 
     public static WslProbe HomeUnknown() => Usable() with { DistroHome = null };
+
+    public static WslProbe GitMissing() => Usable() with { GitPath = null };
 }

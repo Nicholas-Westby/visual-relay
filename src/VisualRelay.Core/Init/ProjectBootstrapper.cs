@@ -1,5 +1,6 @@
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Init;
@@ -16,7 +17,22 @@ public sealed record ProjectBootstrapResult(
     TestLayoutDetection? TestLayout = null,
     string? FormatNote = null,
     string? TasksDirNote = null,
-    IReadOnlyList<string>? OtherTestCommands = null);
+    IReadOnlyList<string>? OtherTestCommands = null)
+{
+    /// <summary>
+    /// Why bootstrap refused to run at all, or null when it ran. A refusal writes
+    /// nothing: no config, no git repository, no hook. Set on a Windows host with no
+    /// usable WSL distro, where a checked test command would be checked through
+    /// cmd.exe, on the host, unsandboxed, and the pipeline could never run it.
+    /// </summary>
+    public string? Refusal { get; init; }
+
+    /// <summary>A refusal, carrying the gate's message and nothing else.</summary>
+    /// <param name="refusal">Why bootstrap will not run here.</param>
+    /// <returns>A result that wrote nothing.</returns>
+    public static ProjectBootstrapResult Refused(string refusal) =>
+        new(false, false, null, false, string.Empty, string.Empty) { Refusal = refusal };
+}
 
 /// <summary>
 /// One-shot "make this folder runnable by Visual Relay" routine. Detects (or
@@ -68,30 +84,51 @@ public static class ProjectBootstrapper
 
     /// <summary>
     /// The runner every candidate is smoke-validated with: the SAME shell the pipeline
-    /// later runs the command through (<c>/bin/sh -c</c>; on Windows inside the WSL
-    /// distro the workspace lives in, or <c>cmd.exe /c</c> where no distro is
-    /// resolved), so a command with <c>&amp;&amp;</c>, a pipe, a glob or an env-var
-    /// prefix is judged as it will actually behave. Argv-splitting it instead handed
-    /// the operators to the first program as arguments and rejected commands that run
-    /// perfectly well.
+    /// later runs the command through (<c>/bin/sh -c</c>, on Windows inside the WSL
+    /// distro the workspace lives in), so a command with <c>&amp;&amp;</c>, a pipe, a
+    /// glob or an env-var prefix is judged as it will actually behave. Argv-splitting
+    /// it instead handed the operators to the first program as arguments and rejected
+    /// commands that run perfectly well. On a Windows host with no distro there is
+    /// nowhere to run it, and <see cref="RefusalFor"/> stops the caller first.
     /// </summary>
     /// <param name="timeout">Time box for the smoke run.</param>
+    /// <param name="host">Where the shell runs; null uses this machine.</param>
     /// <returns>The validation runner.</returns>
-    public static ITestRunner CreateValidationRunner(TimeSpan timeout) =>
-        new ShellTestRunner(timeout, loginShell: false);
+    public static ITestRunner CreateValidationRunner(TimeSpan timeout, SandboxHost? host = null) =>
+        new ShellTestRunner(timeout, loginShell: false, host: host);
+
+    /// <summary>
+    /// Whether this host cannot check a test command where the pipeline would run it.
+    /// On Windows every launch goes through the WSL distro; with none resolved, a
+    /// check would run on the Windows host, unsandboxed, and the command it accepted
+    /// could never run. Bootstrap then writes nothing at all.
+    /// </summary>
+    /// <param name="host">Where the sandbox launches from.</param>
+    /// <returns>The gate's refusal message, or null when bootstrap may proceed.</returns>
+    internal static string? RefusalFor(SandboxHost host) =>
+        host is { IsWindows: true, Wsl: null }
+            ? WslGate.Decide(WslContextResolver.UnusableProbe).Message
+            : null;
 
     /// <summary>
     /// Makes <paramref name="rootPath"/> runnable by Visual Relay. Idempotent and
     /// safe on an established repo (never injects a commit when HEAD already exists).
+    /// Refuses, writing nothing, where the checked command could not be checked where
+    /// the pipeline runs it.
     /// </summary>
     public static async Task<ProjectBootstrapResult> BootstrapAsync(
         string rootPath,
         IGitInvoker? gitInvoker = null,
         ITestRunner? validationRunner = null,
         int? validationTimeoutMs = null,
+        SandboxHost? host = null,
         CancellationToken cancellationToken = default)
     {
         var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
+        var sandboxHost = host ?? SandboxHost.Current;
+        if (RefusalFor(sandboxHost) is { } refusal)
+            return ProjectBootstrapResult.Refused(refusal);
+
         var timeout = validationTimeoutMs is { } ms ? TimeSpan.FromMilliseconds(ms) : InitValidationTimeout;
 
         // 1. Read the tracked files first: their counts rank the test command candidates, and
@@ -101,7 +138,7 @@ public static class ProjectBootstrapper
         // 1a. Resolve a test command: detect + smoke-validate, else a green placeholder
         //     so an empty/greenfield folder is runnable and the first task can scaffold.
         var (command, usedPlaceholder, setupCheck, otherCommands) = await ResolveTestCommandAsync(
-            rootPath, layout, validationRunner, timeout, cancellationToken);
+            rootPath, layout, validationRunner, timeout, sandboxHost, cancellationToken);
 
         // 2. Write .relay/config.json (also writes .relay/.gitignore; detects guard/format).
         var configPath = RelayConfigWriter.Write(rootPath, command);
@@ -109,7 +146,7 @@ public static class ProjectBootstrapper
         // 2a. A formatter the clean checkout does not already satisfy would reformat the
         //     whole project in every task's commit, so it is left out when its check fails.
         var formatNote = await FormatBaselineCheck.ApplyAsync(
-            rootPath, validationRunner ?? CreateValidationRunner(timeout), cancellationToken);
+            rootPath, validationRunner ?? CreateValidationRunner(timeout, sandboxHost), cancellationToken);
 
         // 2b. A license audit that fails on visible unlicensed files gets a hidden tasks directory.
         var tasksDirNote = LicenseAuditTasksDir.Apply(rootPath);
@@ -147,8 +184,13 @@ public static class ProjectBootstrapper
         string rootPath,
         IGitInvoker gitInvoker,
         ITestRunner? validationRunner = null,
+        SandboxHost? host = null,
         CancellationToken cancellationToken = default)
     {
+        var sandboxHost = host ?? SandboxHost.Current;
+        if (RefusalFor(sandboxHost) is not null)
+            return false;
+
         var loaded = await RelayConfigLoader.TryLoadAsync(rootPath, cancellationToken);
         if (loaded.Status != RelayConfigStatus.Loaded
             || !string.Equals(loaded.Config.TestCommand, PlaceholderTestCommand, StringComparison.Ordinal))
@@ -158,7 +200,7 @@ public static class ProjectBootstrapper
 
         var layout = await TestLayoutDetector.DetectAsync(rootPath, gitInvoker, cancellationToken);
         var (command, usedPlaceholder, _, _) = await ResolveTestCommandAsync(
-            rootPath, layout, validationRunner, UpgradeValidationTimeout, cancellationToken);
+            rootPath, layout, validationRunner, UpgradeValidationTimeout, sandboxHost, cancellationToken);
         if (usedPlaceholder)
         {
             return false; // still no validatable toolchain — leave the placeholder in place
@@ -175,14 +217,14 @@ public static class ProjectBootstrapper
     // pick their own timeout and tests pass a fake.
     private static async Task<(string Command, bool UsedPlaceholder, SetupCheckDiagnostic? SetupCheck, IReadOnlyList<string> OtherCommands)> ResolveTestCommandAsync(
         string rootPath, TestLayoutDetection layout, ITestRunner? validationRunner, TimeSpan validationTimeout,
-        CancellationToken cancellationToken)
+        SandboxHost host, CancellationToken cancellationToken)
     {
         var detected = TestCommandDetector.DetectToolchainCandidates(rootPath, layout.CountsByExtension);
         var candidates = detected.Select(candidate => candidate.Command).ToList();
         var timeoutMs = (int)validationTimeout.TotalMilliseconds;
         if (candidates.Count > 0)
         {
-            var runner = validationRunner ?? CreateValidationRunner(validationTimeout);
+            var runner = validationRunner ?? CreateValidationRunner(validationTimeout, host);
             var validator = new TestCommandValidator(runner);
             var rejections = new List<(string, string, int, bool, string)>();
 

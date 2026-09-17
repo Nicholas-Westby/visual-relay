@@ -34,15 +34,31 @@ public sealed record WslProbe(
     /// </summary>
     public string? UserPath { get; init; }
 
+    /// <summary>
+    /// Where git resolves inside the distro against <see cref="UserPath"/>, or null
+    /// when it does not resolve at all. Every workspace git call on Windows runs in
+    /// the distro with that PATH, so a distro without git is not usable however well
+    /// the sandbox works there.
+    /// </summary>
+    public string? GitPath { get; init; }
+
     /// <summary>Nothing found and nothing probed: what a machine without WSL looks like.</summary>
     public static WslProbe Empty { get; } =
         new(false, null, [], null, null, false, null, null, null, false, null, null);
 
     /// <summary>
-    /// True only when every launch prerequisite holds: wsl.exe, a selected WSL2
+    /// True when everything the SANDBOX launch needs holds: wsl.exe, a selected WSL2
     /// distro, nono resolvable inside it, Landlock active there, and the distro
-    /// user's home (where the guard profile is placed).
+    /// user's home (where the guard profile is placed). Separate from
+    /// <see cref="IsUsable"/> because the login PATH and the git check are read only
+    /// once these hold.
     /// </summary>
-    public bool IsUsable =>
+    public bool LaunchPrerequisitesMet =>
         WslExeFound && DistroName is not null && IsWsl2 && NonoPath is not null && LandlockActive && DistroHome is not null;
+
+    /// <summary>
+    /// True only when the distro can do everything Visual Relay asks of it: the
+    /// launch prerequisites, plus git, because every workspace git call runs there.
+    /// </summary>
+    public bool IsUsable => LaunchPrerequisitesMet && GitPath is not null;
 }

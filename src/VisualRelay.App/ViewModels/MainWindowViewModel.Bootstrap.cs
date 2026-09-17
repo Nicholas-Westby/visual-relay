@@ -51,9 +51,12 @@ public partial class MainWindowViewModel
         {
             var result = BootstrapRunner is { } run
                 ? await run(RootPath)
-                : await ProjectBootstrapper.BootstrapAsync(RootPath, new GitInvoker());
+                : await ProjectBootstrapper.BootstrapAsync(
+                    RootPath, new GitInvoker(), host: await ResolveSandboxHostAsync());
             SetupCheck = result.SetupCheck;
-            outcome = DescribeBootstrap(result);
+            // A refusal wrote nothing, so there is no outcome to describe: the gate's
+            // own message is what the operator has to act on.
+            outcome = result.Refusal ?? DescribeBootstrap(result);
         }
         catch (Exception ex)
         {

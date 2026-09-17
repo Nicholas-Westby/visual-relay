@@ -11,7 +11,15 @@ if (!Directory.Exists(rootPath))
 // Bootstrap makes the folder runnable: detect (or placeholder) a test command, write
 // .relay/config.json, initialize a git repo with a HEAD commit when missing, and install
 // the pre-commit authority hook. An empty/greenfield folder becomes runnable immediately.
-var result = await ProjectBootstrapper.BootstrapAsync(rootPath, new GitInvoker());
+var result = await ProjectBootstrapper.BootstrapAsync(
+    rootPath, new GitInvoker(), host: await SandboxHost.CurrentAsync());
+
+// Nothing was written: this host cannot check a command where the pipeline runs it.
+if (result.Refusal is { } refusal)
+{
+    Console.Error.WriteLine(refusal);
+    return 127;
+}
 
 if (result.HookWarning is not null)
 {

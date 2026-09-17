@@ -194,10 +194,20 @@ public partial class MainWindowViewModel
     {
         var command = InitTestCommandInput.Trim();
 
+        // The same refusal bootstrap makes, and for the same reason: a command checked
+        // on a Windows host with no distro is checked where the pipeline will never
+        // run it, unsandboxed, before anything tells the operator so.
+        var host = await ResolveSandboxHostAsync();
+        if (ProjectBootstrapper.RefusalFor(host) is { } refusal)
+        {
+            StatusText = refusal;
+            return;
+        }
+
         // Smoke-validate before writing — never persist a command that can't start.
         StatusText = "Validating test command (may compile up to 2 min)…";
         var runner = InitValidationRunnerFactory?.Invoke(ProjectBootstrapper.CreateConfigValidationTimeout)
-            ?? ProjectBootstrapper.CreateValidationRunner(ProjectBootstrapper.CreateConfigValidationTimeout);
+            ?? ProjectBootstrapper.CreateValidationRunner(ProjectBootstrapper.CreateConfigValidationTimeout, host);
         var validator = new TestCommandValidator(runner);
         var validation = await validator.ValidateAsync(RootPath, command);
 

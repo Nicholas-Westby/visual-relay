@@ -36,10 +36,11 @@ public sealed class WslProberTests
         Assert.True(probe.LandlockActive);
         Assert.Equal("/home/alice", probe.DistroHome);
         Assert.Equal(ScriptedWsl.UserPath, probe.UserPath);
+        Assert.Equal("/usr/bin/git", probe.GitPath);
     }
 
     [Fact]
-    public async Task HealthyMachine_RunsExactlyTheSevenDocumentedStepsInOrder()
+    public async Task HealthyMachine_RunsExactlyTheEightDocumentedStepsInOrder()
     {
         var wsl = HealthyUbuntu();
 
@@ -54,6 +55,7 @@ public sealed class WslProberTests
             ["-d", "Ubuntu", "--exec", "env", "NONO_NO_UPDATE_CHECK=1", "/usr/local/bin/nono", "setup", "--check-only"],
             ["-d", "Ubuntu", "--exec", "sh", "-lc", "printf %s \"$HOME\""],
             ["-d", "Ubuntu", "--exec", "sh", "-c", WslProber.LoginPathScript],
+            ["-d", "Ubuntu", "--exec", "env", $"PATH={ScriptedWsl.UserPath}", "sh", "-c", "command -v git"],
         ];
         Assert.Equal(expected.Length, wsl.Calls.Count);
         for (var i = 0; i < expected.Length; i++)

@@ -178,10 +178,12 @@ PATH for that session only (no global machine change), and finds that dir again 
 launch. Re-run through `.\visual-relay.cmd`, or add `%LOCALAPPDATA%\visual-relay\dotnet` to your
 PATH for a standalone `dotnet`.
 
-**Task execution is blocked.** The launch gate checks four things — WSL, a WSL2 distro, nono
-inside it, Landlock active there — and names the first one that fails together with its fix.
-There is no opt-out and no unsandboxed fallback; inspection (queue, logs, traces, settings)
-works without any sandbox.
+**Task execution is blocked.** The launch gate checks five things — WSL, a WSL2 distro, nono
+inside it, Landlock active there, and git inside it — and names the first one that fails
+together with its fix. There is no opt-out and no unsandboxed fallback; inspection (queue,
+logs, traces, settings) works without any sandbox. The same message is what `bootstrap` and
+`Create config` print when they refuse, because on a Windows host with no usable distro a
+test command could only be checked on the Windows host, where the pipeline will never run it.
 
 | What the gate says | What to do |
 |--------------------|------------|
@@ -192,6 +194,7 @@ works without any sandbox.
 | nono was not found inside the WSL distro `<name>` | install nono 0.75.0 in the distro (`curl -fsSL https://nono.sh/install.sh \| NONO_VERSION=v0.75.0 sh`, see the README) and check `wsl -d <name> --exec sh -lc 'command -v nono'` |
 | Landlock is not active in the WSL distro `<name>` | remove a custom `kernel=` or `kernelCommandLine=` line from `%UserProfile%\.wslconfig`, then `wsl --update` and `wsl --shutdown`; stock kernels have enabled Landlock since 5.15.57.1 |
 | the home directory of the default user could not be read | run `wsl -d <name>` once so the distro finishes its first-run user setup |
+| git was not found inside the WSL distro `<name>` | install it there (`sudo apt install -y git` on Ubuntu) and check `wsl -d <name> --exec sh -lc 'command -v git'`; every workspace git call runs in the distro, so one without git cannot drive a repository |
 
 Every message ends with the same consequence: the build and test commands of the repository
 you point Visual Relay at run **inside that distro**, so their toolchain must be installed

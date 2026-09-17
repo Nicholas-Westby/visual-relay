@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Domain;
@@ -73,9 +71,16 @@ public sealed class ShellTestRunner(
     {
         if (host.Wsl is not { } context)
         {
+            // On Windows every sandboxed launch and every workspace git call runs
+            // inside the distro, so a command checked here through cmd.exe would be
+            // checked where the pipeline will never run it — and, worse, would run the
+            // user's own test command on the Windows host with no sandbox at all.
+            if (host.IsWindows)
+                throw new InvalidOperationException(WslGate.Decide(WslContextResolver.UnusableProbe).Message!);
+
             // The environment the pipeline gives the command, the user's own from the snapshot: through
             // the dev launcher the check otherwise ran Ocelot's dotnet test under the launcher's nix SDK.
-            var (fileName, arguments) = BuildShellLaunch(command, host.IsWindows, loginShell);
+            var (fileName, arguments) = BuildShellLaunch(command, loginShell);
             var environment = SandboxedStage.BuildTargetCommandEnvironment(
                 RelayConfigLoader.Defaults(command), accessor, processEnv);
             return new SandboxedLaunch(fileName, arguments, environment.Overrides, environment.Remove, null);
@@ -87,33 +92,15 @@ public sealed class ShellTestRunner(
     }
 
     /// <summary>
-    /// Resolves the OS-appropriate native shell launch for a user-authored test
-    /// command. On Unix it is <c>/bin/sh -lc &lt;command&gt;</c> (the command is one
-    /// argv entry the shell parses). On Windows the command is written to a temp
-    /// batch file and run as <c>cmd.exe /c &lt;batch&gt;</c>: passing the command
-    /// itself as an argv entry would let .NET's argv quoting (which cmd.exe does not
-    /// parse the same way) mangle quotes/metacharacters, so the batch file carries
-    /// the command verbatim and only its clean path crosses the command line. This
-    /// is the Windows fallback where no usable distro exists; with one, the command
-    /// runs inside the distro instead. <paramref name="isWindows"/> is injected so the
-    /// dispatch is unit-testable on any OS; <paramref name="loginShell"/> selects
-    /// <c>-lc</c> or <c>-c</c> on Unix.
+    /// The native shell launch for a user-authored test command off Windows:
+    /// <c>/bin/sh -lc &lt;command&gt;</c>, the command being one argv entry the shell
+    /// parses. There used to be a Windows arm that wrote the command to a temp batch
+    /// file and ran it as <c>cmd.exe /c</c>; it ran the user's command on the Windows
+    /// host with no sandbox, and it checked it where the pipeline would never run it,
+    /// so a Windows host without a distro is refused before reaching here.
+    /// <paramref name="loginShell"/> selects <c>-lc</c> or <c>-c</c>.
     /// </summary>
     internal static (string FileName, IReadOnlyList<string> Arguments) BuildShellLaunch(
-        string command, bool isWindows, bool loginShell = true) =>
-        isWindows
-            ? ("cmd.exe", ["/c", WriteWindowsCommandBatch(command)])
-            : ("/bin/sh", [loginShell ? "-lc" : "-c", command]);
-
-    // Materializes the command into a temp .cmd named by its content hash (so an
-    // identical command reuses one file — bounded, race-safe), and returns its path.
-    private static string WriteWindowsCommandBatch(string command)
-    {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(command)))[..16];
-        var path = Path.Combine(Path.GetTempPath(), $"vr-verify-{hash}.cmd");
-        // @echo off keeps the wrapper's output clean; the command's own exit code is
-        // what cmd.exe /c returns.
-        File.WriteAllText(path, "@echo off\r\n" + command + "\r\n");
-        return path;
-    }
+        string command, bool loginShell = true) =>
+        ("/bin/sh", [loginShell ? "-lc" : "-c", command]);
 }

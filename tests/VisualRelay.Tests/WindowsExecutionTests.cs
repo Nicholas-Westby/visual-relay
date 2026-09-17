@@ -3,56 +3,26 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Windows execution tests. Sandboxed runs on Windows go through wsl.exe (see the
-/// WSL launch tests: no cmd.exe batch, and the Linux tree is stopped from inside
-/// the distro rather than through a Windows tree kill). What remains native is the
-/// unsandboxed bootstrap validation where no usable distro exists (a cmd.exe batch),
-/// the host-side tree kill for native children such as the backend process, and
-/// git resolving through the PATHEXT helper. The OS dispatch is a pure helper
-/// asserted on any OS; the real-git and real-shell cases are gated to Windows.
+/// Windows execution tests. Every sandboxed run and every workspace git call on
+/// Windows goes through wsl.exe, and with no usable distro there is no native
+/// fallback at all: a command checked through cmd.exe would be checked where the
+/// pipeline will never run it, and would run the operator's own test command on the
+/// Windows host with no sandbox. What remains native is the host-side tree kill for
+/// native children such as the backend process, and git resolving through the
+/// PATHEXT helper. The launch shape is a pure helper asserted on any OS; the
+/// real-git and real-shell cases are gated to Windows.
 /// </summary>
 public sealed class WindowsExecutionTests
 {
-    // ── ShellTestRunner OS dispatch (pure) ───────────────────────────────
+    // ── ShellTestRunner launch shape (pure) ──────────────────────────────
 
     [Fact]
-    public void BuildShellLaunch_Windows_WritesBatch_PreservingQuotes()
+    public void BuildShellLaunch_UsesBinShLoginC()
     {
-        // A command with quotes/metacharacters must survive verbatim — .NET argv
-        // quoting on the command line would mangle it for cmd.exe.
-        var command = "dotnet test --filter \"Name=X\"";
-        var (fileName, args) = ShellTestRunner.BuildShellLaunch(command, isWindows: true);
-
-        Assert.Equal("cmd.exe", fileName);
-        Assert.Equal("/c", args[0]);
-        Assert.EndsWith(".cmd", args[1]);
-        Assert.Contains(command, File.ReadAllText(args[1]), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void BuildShellLaunch_Unix_UsesBinShLoginC()
-    {
-        var (fileName, args) = ShellTestRunner.BuildShellLaunch("dotnet test", isWindows: false);
+        var (fileName, args) = ShellTestRunner.BuildShellLaunch("dotnet test");
 
         Assert.Equal("/bin/sh", fileName);
         Assert.Equal(new[] { "-lc", "dotnet test" }, args);
-    }
-
-    // ── ShellTestRunner runs a real command through cmd.exe on Windows ────
-
-    [Fact]
-    public async Task ShellTestRunner_OnWindows_WithoutAUsableDistro_RunsCommandViaCmd()
-    {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows cmd.exe execution");
-        using var repo = TestRepository.Create();
-        // No resolved distro: the unsandboxed validation shell stays native. (With
-        // one, a drive-path repository is refused by the DrvFs policy instead.)
-        var runner = new ShellTestRunner(TimeSpan.FromSeconds(30), host: SandboxHost.Windows(null));
-
-        var result = await runner.RunAsync(repo.Root, "echo hello-from-cmd");
-
-        Assert.Equal(0, result.ExitCode);
-        Assert.Contains("hello-from-cmd", result.Output, StringComparison.Ordinal);
     }
 
     // ── Process-tree teardown on timeout (Windows, native children) ──────

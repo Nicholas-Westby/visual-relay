@@ -77,7 +77,7 @@ public sealed partial class TargetRepoMatrixTierATests
     [Fact]
     public void ShellMismatch_PipelineHandsTheWholeChainToBinSh()
     {
-        var (fileName, arguments) = ShellTestRunner.BuildShellLaunch(ChainedScript, isWindows: false);
+        var (fileName, arguments) = ShellTestRunner.BuildShellLaunch(ChainedScript);
 
         Assert.Equal("/bin/sh", fileName);
         Assert.Equal(["-lc", ChainedScript], arguments);

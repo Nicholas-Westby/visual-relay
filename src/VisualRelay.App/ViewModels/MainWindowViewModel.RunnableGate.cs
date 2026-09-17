@@ -20,6 +20,17 @@ public partial class MainWindowViewModel
         // keeps the first gate of a session off the UI thread.
         var host = await ResolveSandboxHostAsync();
 
+        // The sandbox gate comes BEFORE anything that runs a command. The placeholder
+        // upgrade below checks candidate test commands, and on a Windows host with no
+        // distro that check used to run them on the Windows host with no sandbox —
+        // the operator's own project command, executed before the gate that refuses
+        // it had a chance to speak. Refusing first is what closes that window.
+        if (SandboxRefusal(host, RelayConfigLoader.Defaults(string.Empty)) is { } sandboxRefusal)
+        {
+            StatusText = sandboxRefusal;
+            return false;
+        }
+
         // Greenfield: when the test command is still the placeholder and the project
         // has since gained a recognizable toolchain (a scaffold task ran), adopt the
         // real test command before gating. Best-effort: a no-op for normal repos, and
@@ -28,7 +39,8 @@ public partial class MainWindowViewModel
         {
             await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(
                 RootPath, new GitInvoker(),
-                InitValidationRunnerFactory?.Invoke(ProjectBootstrapper.CreateConfigValidationTimeout));
+                InitValidationRunnerFactory?.Invoke(ProjectBootstrapper.CreateConfigValidationTimeout),
+                host);
         }
         catch
         {
@@ -59,11 +71,9 @@ public partial class MainWindowViewModel
         // stage full of nono advisory noise. Reuse the runner's
         // MissingToolsMessage verbatim so both surfaces never drift. PATH comes from
         // the injected accessor when present (tests), else the real process PATH.
-        var missingTools = SandboxedStage.MissingRequiredTools(
-            result.Config, EnvironmentAccessor?.GetEnvironmentVariable("PATH"), host: host);
-        if (missingTools.Count > 0)
+        if (SandboxRefusal(host, result.Config) is { } toolRefusal)
         {
-            StatusText = SandboxedStage.MissingToolsMessage(missingTools);
+            StatusText = toolRefusal;
             return false;
         }
 
@@ -94,6 +104,20 @@ public partial class MainWindowViewModel
     /// <returns>The resolved sandbox host.</returns>
     private Task<SandboxHost> ResolveSandboxHostAsync() =>
         SandboxHostResolver?.Invoke() ?? SandboxHost.CurrentAsync();
+
+    /// <summary>
+    /// Why the sandbox cannot launch here, or null when it can. Asked twice: once
+    /// before anything runs a command, and once against the loaded config.
+    /// </summary>
+    /// <param name="host">The resolved sandbox host.</param>
+    /// <param name="config">The configuration whose launch would be gated.</param>
+    /// <returns>The refusal message, or null.</returns>
+    private string? SandboxRefusal(SandboxHost host, RelayConfig config)
+    {
+        var missing = SandboxedStage.MissingRequiredTools(
+            config, EnvironmentAccessor?.GetEnvironmentVariable("PATH"), host: host);
+        return missing.Count > 0 ? SandboxedStage.MissingToolsMessage(missing, host) : null;
+    }
 
     /// <summary>
     /// Whether git can name a committer in the workspace, asked where that git runs.

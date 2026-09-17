@@ -1,8 +1,11 @@
 using VisualRelay.App.ViewModels;
 using VisualRelay.Cli;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Execution.Wsl;
+using VisualRelay.Core.Init;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -53,10 +56,13 @@ public sealed partial class MainWindowViewModelTests
     /// The gate probes for the sandbox host ONCE and gates on that answer, so the
     /// Windows arm — where the requirement is a WSL2 distro with nono inside it, not
     /// a binary on the Windows PATH — is what the message names. Injected, because
-    /// the real resolution is a wsl.exe probe that only exists on Windows.
+    /// the real resolution is a wsl.exe probe that only exists on Windows. The
+    /// message is the WSL gate's own, naming the first failing check and its fix,
+    /// rather than the generic "not installed or not on PATH" line that named
+    /// neither the distro nor anything to do about it.
     /// </summary>
     [Fact]
-    public async Task EnsureRunnableAsync_WindowsHostWithoutADistro_NamesTheWslRequirement()
+    public async Task EnsureRunnableAsync_WindowsHostWithoutADistro_PrintsTheWslGatesMessage()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -73,7 +79,41 @@ public sealed partial class MainWindowViewModelTests
         var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
 
         Assert.False(runnable);
-        Assert.Contains("WSL2 distro with nono", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.StartsWith("visual-relay: ", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("wsl --install", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("inside the WSL2 distro", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("not installed or not on PATH on this machine", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The sandbox gate runs BEFORE the placeholder upgrade. That upgrade checks
+    /// candidate test commands, and on a Windows host with no distro the check used
+    /// to run the operator's own project command on the Windows host, unsandboxed,
+    /// before the refusal that would have stopped it was ever printed.
+    /// </summary>
+    [Fact]
+    public async Task EnsureRunnableAsync_WindowsHostWithoutADistro_RunsNoCommandBeforeRefusing()
+    {
+        using var repo = TestRepository.Create();
+        await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: new GitSimEngine());
+        File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module example.com/m\n\ngo 1.22\n");
+        var runner = new RecordingTestRunner();
+
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(null)),
+            InitValidationRunnerFactory = _ => runner,
+        };
+        await viewModel.LoadInitialAsync();
+        viewModel.IsHuggingFaceConfigured = true;
+
+        var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
+
+        Assert.False(runnable);
+        Assert.Empty(runner.Calls);
+        var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(ProjectBootstrapper.PlaceholderTestCommand, loaded.Config.TestCommand);
     }
 
     /// <summary>

@@ -1,14 +1,18 @@
-using VisualRelay.Core.Execution.Wsl;
-
-namespace VisualRelay.Cli.Gates;
+namespace VisualRelay.Core.Execution.Wsl;
 
 /// <summary>
-/// The Windows analogue of <see cref="NonoGate"/>: on Windows the sandbox is nono
-/// inside a WSL2 distro, so the launch needs WSL, a WSL2 distro, nono resolvable
-/// inside it and Landlock active there. Pure: decides from a <see cref="WslProbe"/>,
-/// names the FIRST failing check with its exact fix, and always ends with the
-/// toolchain consequence, because the loud part of this design is that a Windows-only
-/// toolchain cannot be driven any more.
+/// The Windows analogue of the CLI's nono gate: on Windows the sandbox is nono
+/// inside a WSL2 distro and every workspace git call runs there too, so the launch
+/// needs WSL, a WSL2 distro, nono resolvable inside it, Landlock active there and
+/// git installed there. Pure: decides from a <see cref="WslProbe"/>, names the FIRST
+/// failing check with its exact fix, and always ends with the toolchain consequence,
+/// because the loud part of this design is that a Windows-only toolchain cannot be
+/// driven any more.
+/// <para>
+/// It lives in the core rather than the CLI because three surfaces print it: the
+/// CLI's gate, the in-app run gate and bootstrap's refusal. One message, one fix
+/// table in TROUBLESHOOTING.md.
+/// </para>
 /// </summary>
 public static class WslGate
 {
@@ -71,8 +75,13 @@ public static class WslGate
                 @"Remove a custom `kernel=` or `kernelCommandLine=` line from %UserProfile%\.wslconfig, then run "
                 + "`wsl --update` and `wsl --shutdown`; the stock WSL2 kernel has enabled Landlock since 5.15.57.1.");
 
-        return ($"the home directory of the default user in the WSL distro '{d}' could not be read.",
-            $"Run `wsl -d {d}` once so the distro finishes its first-run user setup, then retry.");
+        if (p.DistroHome is null)
+            return ($"the home directory of the default user in the WSL distro '{d}' could not be read.",
+                $"Run `wsl -d {d}` once so the distro finishes its first-run user setup, then retry.");
+
+        return ($"git was not found inside the WSL distro '{d}'.",
+            $"Install it there (`sudo apt install -y git` on Ubuntu), then check "
+            + $"`wsl -d {d} --exec sh -lc 'command -v git'`.");
     }
 
     private static string Consequence(string? distro) =>

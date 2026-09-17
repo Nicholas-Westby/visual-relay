@@ -136,7 +136,10 @@ public sealed partial class MainWindowViewModelTests
     public async Task BootstrapProjectCommand_WhileItRuns_IsBusyAndTheStatusNamesTheStep()
     {
         using var repo = TestRepository.Create();
-        var held = new TaskCompletionSource();
+        // RunContinuationsAsynchronously: releasing the gate from the same thread the
+        // command is running on would otherwise resume bootstrap INLINE inside
+        // SetResult, re-entering the dispatcher from under itself.
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
