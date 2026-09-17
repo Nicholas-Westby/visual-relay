@@ -23,6 +23,7 @@ public sealed partial class RelayDriver
         string? worktreePath;
         IReadOnlyList<(string Name, bool IsDirectory)> ignoredEntries = [];
         var overlayArm = AppOverlayArm;
+        string? isolationLost = null;
         var worktreeId = $"{taskId}-verify-s{stageNumber}-a{attempt}";
         try
         {
@@ -35,13 +36,22 @@ public sealed partial class RelayDriver
         {
             throw; // never fall back to the main tree because the run was cancelled
         }
-        catch
+        catch (Exception ex)
         {
             worktreePath = null; // non-git fixture or transient git failure → no isolation
+            isolationLost = ex.Message;
         }
 
         if (worktreePath is null)
         {
+            // A suite that ran against the operator's real checkout must never be a
+            // silent success: whatever the reason, the log says isolation was lost.
+            await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                DateTimeOffset.UtcNow, "warn", "verify_isolation_lost", runId, rootPath, taskId, stageNumber,
+                Data: new Dictionary<string, string>
+                {
+                    ["reason"] = isolationLost ?? "no snapshot could be created",
+                }), cancellationToken);
             var inPlace = await RunTestCommandWithRetryAsync(rootPath, config, cancellationToken, stageNumber, runId, taskId);
             return (inPlace, Array.Empty<string>());
         }

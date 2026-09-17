@@ -119,6 +119,28 @@ inline-capable while `.py` stays gated by path. Re-running `bootstrap` refreshes
 `detectedLanguages` and `inlineTestExtensions`, so record a hand-added extension
 somewhere you will remember.
 
+## A directory with a strange name appeared inside a repository (Windows)
+
+If a repository holds an untracked directory whose *single* name contains backslashes
+and a colon — something like `C:\Users\you\AppData\Local\Temp\visual-relay\wt\…` — that
+is this bug's signature. On ext4 a backslash is an ordinary character and a colon is
+legal, so a Windows path handed to the distro's git is one long **filename**, and git
+created a real worktree under it rather than refusing.
+
+Two things to know before you go looking for it:
+
+- **Read it with `ls -1b`, not `echo`.** That name contains `\v`, `\a` and `\1`, which a
+  shell interprets, so the same directory prints as
+  `C:\Users\you\AppData\Local\Tempisual-relay\wt…` in git's own advice output and in any
+  shell-rendered log. You will be chasing a path that never existed.
+- A stray git index file may be beside it, and `git add -A` will have staged both.
+
+The cause is a mismatch between the distro your workspace path names and the distro
+Visual Relay resolved. That is now refused before a run starts, naming both; if you see
+the refusal, either open the workspace through the resolved distro's share or set
+`VR_WSL_DISTRO` to the one the path names and relaunch. Clean up with
+`git worktree remove --force` on the listed path, or `rm -rf ./'<the exact name>'`.
+
 ## Bootstrap wrote the placeholder on a repository that has tests
 
 The status now names what was tried: `No test command passed the check (<command>:

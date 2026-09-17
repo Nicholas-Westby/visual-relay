@@ -116,7 +116,14 @@ public partial class MainWindowViewModel
     {
         var missing = SandboxedStage.MissingRequiredTools(
             config, EnvironmentAccessor?.GetEnvironmentVariable("PATH"), host: host);
-        return missing.Count > 0 ? SandboxedStage.MissingToolsMessage(missing, host) : null;
+        if (missing.Count > 0)
+            return SandboxedStage.MissingToolsMessage(missing, host);
+
+        // Asked BEFORE any worktree is requested. The distro's git accepts a Windows
+        // temp path as one long filename and creates the worktree inside the
+        // operator's repository, so a mismatch reported afterwards is reported too
+        // late to be worth anything.
+        return WorktreeNamespace.Mismatch(RootPath, host);
     }
 
     /// <summary>

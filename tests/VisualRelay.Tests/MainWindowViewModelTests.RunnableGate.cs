@@ -117,6 +117,35 @@ public sealed partial class MainWindowViewModelTests
     }
 
     /// <summary>
+    /// The gate refuses a distro mismatch BEFORE anything asks for a worktree. The
+    /// distro's git accepts a Windows temp path as one long filename and creates the
+    /// worktree inside the operator's repository, so a mismatch reported afterwards is
+    /// reported too late to be worth anything.
+    /// </summary>
+    [Fact]
+    public async Task EnsureRunnableAsync_ADistroMismatch_RefusesNamingBothDistros()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+
+        var viewModel = new MainWindowViewModel
+        {
+            // The workspace path names one distro; the resolved host is another.
+            RootPath = @"\\wsl.localhost\Ubuntu\home\alice\repo",
+            IsHuggingFaceConfigured = true,
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(
+                new WslContext(@"C:\Windows\System32\wsl.exe", "Debian", "/usr/bin/nono", "/home/alice"))),
+        };
+
+        var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
+
+        Assert.False(runnable);
+        Assert.Contains("'Ubuntu'", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("'Debian'", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A workspace whose git cannot name a committer would run every stage and fail at
     /// the commit (measured in a fresh WSL distro), so the gate refuses before the
     /// baseline guard spends a build, with the identity fix in the status.

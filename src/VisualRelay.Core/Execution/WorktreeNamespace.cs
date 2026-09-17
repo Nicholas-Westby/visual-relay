@@ -37,14 +37,16 @@ public sealed record WorktreeNamespace(string Io, string Git, string? Distro)
     public static WorktreeNamespace For(string rootPath, SandboxHost host) =>
         ServingDistro(rootPath, host) is { } wsl
             ? InDistro(wsl.Distro, $"{wsl.DistroHome.TrimEnd('/')}/.cache/{DirName}")
-            : Local(Path.Combine(Path.GetTempPath(), DirName));
+            : Refused(rootPath, host) ?? Local(Path.Combine(Path.GetTempPath(), DirName));
 
     /// <summary>The directory a temporary git index file for that workspace lives in.</summary>
     /// <param name="rootPath">The workspace root, as VR holds it.</param>
     /// <param name="host">Where the sandbox — and the serving git — runs.</param>
     /// <returns>The directory in both forms.</returns>
     public static WorktreeNamespace TempIndexFor(string rootPath, SandboxHost host) =>
-        ServingDistro(rootPath, host) is { } wsl ? InDistro(wsl.Distro, LinuxTempRoot) : Local(Path.GetTempPath());
+        ServingDistro(rootPath, host) is { } wsl
+            ? InDistro(wsl.Distro, LinuxTempRoot)
+            : Refused(rootPath, host) ?? Local(Path.GetTempPath());
 
     /// <summary>
     /// A throwaway file VR writes and the serving git then reads — the commit
@@ -89,6 +91,51 @@ public sealed record WorktreeNamespace(string Io, string Git, string? Distro)
     /// <returns>The repo-hash namespace.</returns>
     public WorktreeNamespace Worktrees(string repoRoot, bool isRewrite) =>
         Child(isRewrite ? "wt-rewrite" : "wt", RepoHash(repoRoot));
+
+    /// <summary>
+    /// Why the workspace and the git that serves it disagree about which distro they
+    /// are in, or null when they agree.
+    /// <para>
+    /// This is the one state that must never reach git. <c>GitRouting</c> sends every
+    /// call into whatever distro the UNC path names, while this namespace would fall
+    /// back to a Windows temp path — and the distro's git does NOT refuse that path.
+    /// On ext4 a backslash is an ordinary character and a colon is legal, so
+    /// <c>C:\Users\…\Temp\…</c> is one long directory NAME: git creates it INSIDE the
+    /// operator's repository, registers it as a real worktree and exits 0 in about 45
+    /// milliseconds. Nothing throws, so nothing retries, nothing is logged, and the
+    /// catch written for this case never fires — verify then runs the project's suite
+    /// against the real checkout while the Windows half of the app watches an empty
+    /// temp directory. Measured on a real Windows box, 2026-09-17.
+    /// </para>
+    /// </summary>
+    /// <param name="rootPath">The workspace root, as VR holds it.</param>
+    /// <param name="host">Where the sandbox — and the serving git — runs.</param>
+    /// <returns>The reason, or null when there is no mismatch.</returns>
+    public static string? Mismatch(string rootPath, SandboxHost host)
+    {
+        if (!WslPath.TryParseUnc(rootPath, out var distro, out _))
+            return null;
+        if (host.Wsl is not { } wsl)
+        {
+            return $"The workspace is served by the WSL distro '{distro}', but no usable distro was "
+                + "resolved, so Visual Relay cannot place a run's worktrees where that git can see "
+                + "them. Fix the distro (see TROUBLESHOOTING.md), or open a workspace on this host.";
+        }
+
+        return distro.Equals(wsl.Distro, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"The workspace path names the WSL distro '{distro}' but Visual Relay resolved '{wsl.Distro}'. "
+                + $"Its git would run in '{distro}' while a run's worktrees went somewhere '{distro}' cannot "
+                + $"see. Open the workspace through the '{wsl.Distro}' share, or set "
+                + $"{WslProber.DistroEnvVar}={distro} and relaunch.";
+    }
+
+    // A mismatch is refused rather than quietly served from a Windows temp path.
+    // Throwing here is the backstop: the run gate asks Mismatch first, so an operator
+    // is told before a run starts and never after a worktree has appeared in their
+    // repository.
+    private static WorktreeNamespace? Refused(string rootPath, SandboxHost host) =>
+        Mismatch(rootPath, host) is { } reason ? throw new InvalidOperationException(reason) : null;
 
     private static WorktreeNamespace Local(string path) => new(path, path, null);
 
