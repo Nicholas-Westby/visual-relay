@@ -49,14 +49,19 @@ public sealed partial class RelayDriver
         manifest.Clear();
         var raw = ReadStringArray(json, "manifest").Distinct(StringComparer.Ordinal).ToList();
         var dropped = new List<string>();
-        var clean = new List<string>();
+        var kept = new List<string>();
         foreach (var e in raw)
         {
             if (IsPathUnderDirectory(rootPath, e, config.TasksDir))
                 dropped.Add(e);
-            else if (WorktreeFilter.NormalizeRepoRelativePath(e) is { Length: > 0 } path)
-                clean.Add(path);
+            else
+                kept.Add(e);
         }
+
+        // An entry written as an absolute path resolves to the name the model meant
+        // when it is under the workspace, and is a reported drop when it is not.
+        var clean = await ResolvePathEntriesAsync(
+            rootPath, runId, taskId, stage.Number, "manifest", kept, ledger, cancellationToken);
 
         manifest.AddRange(clean.Distinct(StringComparer.Ordinal));
         if (dropped.Count > 0)

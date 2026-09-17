@@ -122,7 +122,12 @@ public sealed partial class RelayDriver
         // targeted command and the audit have to see the same paths it does —
         // otherwise a file the filter keeps is classified suspect, gated under a
         // name no command can resolve, and audited under a third.
-        var testFiles = WorktreeFilter.NormalizeTestFileList(ReadStringArray(json, "testFiles"));
+        // An entry written as an absolute path resolves against the workspace; one
+        // that names a file outside it is a reported drop, not a test file counted
+        // under a name nothing can resolve.
+        var testFiles = await ResolvePathEntriesAsync(
+            rootPath, runId, taskId, stage.Number, "testFiles",
+            ReadStringArray(json, "testFiles"), ledger, cancellationToken);
 
         // ── Step 1: Discard all non-testFiles edits ──────────────────
         // WorktreeFilter reverts tracked production-file changes to HEAD

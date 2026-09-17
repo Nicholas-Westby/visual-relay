@@ -136,10 +136,15 @@ public sealed partial class RelayDriver
             && TryParseContractJson(rr.Json, out var rj, out _))
         {
             manifest.Clear();
-            manifest.AddRange(ReadStringArray(rj, "manifest")
-                .Distinct(StringComparer.Ordinal)
-                .Where(e => !IsPathUnderDirectory(rootPath, e, config.TasksDir))
-                .Select(e => e.StartsWith('+') ? e[1..] : e));
+            // The same resolution stage 4's first manifest gets: this list used to
+            // have only its '+' stripped, so a rooted entry went through untouched
+            // and a "./" one arrived as a second name for a file already listed.
+            manifest.AddRange(await ResolvePathEntriesAsync(
+                rootPath, runId, taskId, stage.Number, "manifest",
+                ReadStringArray(rj, "manifest")
+                    .Distinct(StringComparer.Ordinal)
+                    .Where(e => !IsPathUnderDirectory(rootPath, e, config.TasksDir)),
+                ledger, cancellationToken));
             await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
             return (rr.Json, cd, ud);
         }

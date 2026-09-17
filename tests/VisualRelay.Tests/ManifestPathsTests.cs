@@ -1,0 +1,86 @@
+using VisualRelay.Core.Execution;
+
+namespace VisualRelay.Tests;
+
+/// <summary>
+/// The plan lists the files a task will touch and Author-tests lists the test files
+/// it wrote; both are repo-relative by contract. A model that writes an absolute path
+/// instead used to have its leading slash trimmed, leaving a relative name that exists
+/// nowhere — the file then dropped out of the commit, the red gate and the test count
+/// with nothing logged. An absolute path under the workspace now resolves to the name
+/// the model meant, and any other one is a reported drop.
+/// </summary>
+public sealed class ManifestPathsTests
+{
+    [Fact]
+    public void TryResolve_ARootedPathUnderTheRoot_IsMadeRelative()
+    {
+        Assert.True(ManifestPaths.TryResolve("/repo", "/repo/src/x.rs", out var repoRelative, out var rejection));
+        Assert.Equal("src/x.rs", repoRelative);
+        Assert.Null(rejection);
+    }
+
+    [Fact]
+    public void TryResolve_AWindowsDriveForm_IsMadeRelativeToo()
+    {
+        // A drive letter is never a repo-relative first segment on any host, so this
+        // resolves textually and the fact runs on macOS as well as Windows.
+        Assert.True(ManifestPaths.TryResolve(@"C:\repo", @"C:\repo\src\x.cs", out var repoRelative, out _));
+        Assert.Equal("src/x.cs", repoRelative);
+    }
+
+    [Fact]
+    public void TryResolve_ARootedPathOutsideTheRoot_IsRejectedWithTheReason()
+    {
+        Assert.False(ManifestPaths.TryResolve("/repo", "/elsewhere/src/x.rs", out var repoRelative, out var rejection));
+        Assert.Equal(string.Empty, repoRelative);
+        Assert.Equal("absolute path outside the workspace", rejection);
+    }
+
+    [Fact]
+    public void TryResolve_ADotDotEscapeOutOfTheRoot_IsRejected()
+    {
+        Assert.False(ManifestPaths.TryResolve("/repo", "/repo/../secrets.env", out _, out var rejection));
+        Assert.Equal("absolute path outside the workspace", rejection);
+    }
+
+    [Theory]
+    [InlineData("+src/new.rs", "src/new.rs")]
+    [InlineData("./src/x.rs", "src/x.rs")]
+    [InlineData(@"src\x.rs", "src/x.rs")]
+    [InlineData("src/dir/", "src/dir")]
+    public void TryResolve_ARelativePath_IsNormalizedAsBefore(string entry, string expected)
+    {
+        Assert.True(ManifestPaths.TryResolve("/repo", entry, out var repoRelative, out var rejection));
+        Assert.Equal(expected, repoRelative);
+        Assert.Null(rejection);
+    }
+
+    [Fact]
+    public void TryResolve_APlusOnAnAbsolutePath_StillResolves()
+    {
+        // The Plan stage marks a new file with a leading '+'.
+        Assert.True(ManifestPaths.TryResolve("/repo", "+/repo/src/new.rs", out var repoRelative, out _));
+        Assert.Equal("src/new.rs", repoRelative);
+    }
+
+    [Fact]
+    public void NormalizeRepoRelativePath_KeepsALeadingSlash()
+    {
+        // Trimming it is what turned /Users/me/repo/src/x.rs into a name that exists
+        // nowhere. Keeping it means a rooted path can never pass as relative again.
+        Assert.Equal("/repo/src/x.rs", WorktreeFilter.NormalizeRepoRelativePath("/repo/src/x.rs"));
+    }
+
+    [Fact]
+    public void ResolveAll_SplitsTheResolvedFromTheDropped()
+    {
+        var (resolved, dropped) = ManifestPaths.ResolveAll(
+            "/repo", ["/repo/src/a.rs", "src/b.rs", "/elsewhere/c.rs", ""]);
+
+        Assert.Equal(["src/a.rs", "src/b.rs"], resolved);
+        var drop = Assert.Single(dropped);
+        Assert.Equal("/elsewhere/c.rs", drop.Entry);
+        Assert.Equal("absolute path outside the workspace", drop.Reason);
+    }
+}

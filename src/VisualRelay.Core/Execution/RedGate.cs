@@ -19,15 +19,16 @@ public static class RedGate
     /// raw, that difference put a DECLARED TEST in the strip set and the gate then
     /// stashed the very test it was about to run.
     /// </summary>
+    /// <param name="rootPath">The workspace both lists were written against.</param>
     /// <param name="manifest">The plan's manifest.</param>
     /// <param name="testFiles">The test files stage 5 declared.</param>
-    /// <returns>The normalized paths to strip.</returns>
-    public static IReadOnlyList<string> ComputeStripSet(IReadOnlyList<string> manifest, IReadOnlyList<string> testFiles)
+    /// <returns>The normalized paths to strip, never a rooted one.</returns>
+    public static IReadOnlyList<string> ComputeStripSet(
+        string rootPath, IReadOnlyList<string> manifest, IReadOnlyList<string> testFiles)
     {
-        var tests = WorktreeFilter.NormalizeTestFileList(testFiles).ToHashSet(StringComparer.Ordinal);
-        return [.. manifest
-            .Select(WorktreeFilter.NormalizeRepoRelativePath)
-            .Where(file => file.Length > 0 && !tests.Contains(file))];
+        var tests = WorktreeFilter.NormalizeTestFileList(rootPath, testFiles).ToHashSet(StringComparer.Ordinal);
+        return [.. ManifestPaths.ResolveAll(rootPath, manifest).Resolved
+            .Where(file => !tests.Contains(file))];
     }
 
     public static string StashTag(string taskId, string nonce) => $"{TagPrefix}:{taskId}:{nonce}";

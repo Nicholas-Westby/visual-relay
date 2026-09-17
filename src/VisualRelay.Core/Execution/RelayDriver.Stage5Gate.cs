@@ -44,7 +44,7 @@ public sealed partial class RelayDriver
             return (placeholder, null);
         }
 
-        var stripSet = RedGate.ComputeStripSet(manifest, testFiles);
+        var stripSet = RedGate.ComputeStripSet(rootPath, manifest, testFiles);
         var gate = await AuthorTestGate.RunAsync(rootPath, taskId, runId, manifest, testFiles, command,
             _dependencies.TestRunner, _dependencies.GitInvoker, cancellationToken);
         if (gate.Error is not null)

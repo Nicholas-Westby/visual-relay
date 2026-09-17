@@ -16,7 +16,7 @@ internal static class AuthorTestGate
         CancellationToken cancellationToken)
     {
         var tag = RedGate.StashTag(taskId, runId);
-        var stripSet = RedGate.ComputeStripSet(manifest, testFiles);
+        var stripSet = RedGate.ComputeStripSet(rootPath, manifest, testFiles);
         var stashed = false;
         var restore = RedGateRestoreResult.Absent;
         TestRunResult? result;

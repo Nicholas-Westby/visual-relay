@@ -27,6 +27,7 @@ public sealed class RedGateTests
     public void ComputeStripSet_ExcludesAuthoredTestFiles()
     {
         var stripSet = RedGate.ComputeStripSet(
+            "/repo",
             ["src/app.cs", "tests/app.tests.cs", "src/extra.cs"],
             ["tests/app.tests.cs"]);
 
@@ -44,9 +45,28 @@ public sealed class RedGateTests
     public void ComputeStripSet_NormalizesBothSides_SoOneFileIsNeverTwoPaths()
     {
         var stripSet = RedGate.ComputeStripSet(
+            "/repo",
             ["./src/app.cs", @"src\extra.cs", "./tests/app.tests.cs", "+src/new.cs", "src/dir/"],
             ["tests/app.tests.cs"]);
 
         Assert.Equal(["src/app.cs", "src/extra.cs", "src/new.cs", "src/dir"], stripSet);
+    }
+
+    /// <summary>
+    /// A rooted path in the strip set is a file nothing can resolve: git would be
+    /// handed an absolute pathspec for a file it is meant to find inside the
+    /// workspace. Both lists reach here already resolved, so one that survives is a
+    /// bug and is left out rather than stashed under a name that names nothing.
+    /// </summary>
+    [Fact]
+    public void ComputeStripSet_NeverHoldsARootedPath()
+    {
+        var stripSet = RedGate.ComputeStripSet(
+            "/repo",
+            ["/repo/src/app.cs", "/elsewhere/src/stray.cs", @"C:\other\win.cs", "src/plain.cs"],
+            []);
+
+        Assert.Equal(["src/app.cs", "src/plain.cs"], stripSet);
+        Assert.DoesNotContain(stripSet, path => path.StartsWith('/') || path.Contains(':', StringComparison.Ordinal));
     }
 }

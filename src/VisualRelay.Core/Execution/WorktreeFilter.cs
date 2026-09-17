@@ -22,10 +22,18 @@ internal static partial class WorktreeFilter
 
     /// <summary>
     /// Normalize a repo-relative path: strip leading <c>+</c>, replace <c>\</c>
-    /// with <c>/</c>, trim leading <c>./</c> or <c>/</c>, trim trailing <c>/</c>.
+    /// with <c>/</c>, trim leading <c>./</c>, trim trailing <c>/</c>.
     /// internal because every reader of a model-written path list — the manifest
     /// stage 4 adopts and the strip set the red gate computes included — has to
     /// agree with this filter on when two names are one file.
+    /// <para>
+    /// A leading <c>/</c> is deliberately KEPT. Trimming it turned an absolute path
+    /// into a relative name that exists nowhere, and the file then dropped out of the
+    /// commit, the red gate and the test count with nothing logged. A rooted path is
+    /// resolved (or reported) by <see cref="ManifestPaths.TryResolve"/> before it ever
+    /// reaches here, so one that survives to this method is a bug, and it stays
+    /// visibly rooted rather than passing as relative.
+    /// </para>
     /// </summary>
     /// <param name="path">The path as the stage wrote it.</param>
     /// <returns>The normalized path; empty when nothing is left.</returns>
@@ -36,7 +44,6 @@ internal static partial class WorktreeFilter
         path = path.Replace('\\', '/');
         if (path.StartsWith("./", StringComparison.Ordinal))
             path = path[2..];
-        path = path.TrimStart('/');
         path = path.TrimEnd('/');
         return path;
     }
@@ -44,12 +51,14 @@ internal static partial class WorktreeFilter
     /// <summary>
     /// The declared test-file list as this filter reads it, so every other reader
     /// of the list — the scope check, the strip set, the targeted command and the
-    /// diff audit — can agree with what was kept and what was reverted.
+    /// diff audit — can agree with what was kept and what was reverted. Takes the
+    /// workspace because an entry written as an absolute path resolves against it.
     /// </summary>
+    /// <param name="rootPath">The workspace the stage ran against.</param>
     /// <param name="testFiles">The list exactly as the stage declared it.</param>
-    /// <returns>The same entries, normalized, with blanks dropped.</returns>
-    internal static IReadOnlyList<string> NormalizeTestFileList(IReadOnlyList<string> testFiles) =>
-        [.. testFiles.Select(NormalizeRepoRelativePath).Where(path => path.Length > 0)];
+    /// <returns>The same entries, resolved, with blanks and rejects dropped.</returns>
+    internal static IReadOnlyList<string> NormalizeTestFileList(string rootPath, IReadOnlyList<string> testFiles) =>
+        ManifestPaths.ResolveAll(rootPath, testFiles).Resolved;
 
     /// <summary>
     /// Discard every dirty tracked and new untracked file that is <b>not</b>

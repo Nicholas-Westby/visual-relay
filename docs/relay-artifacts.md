@@ -40,12 +40,13 @@ in `red`, `unproven` with a reason, or a flag, and says so in `run.log`.
 
 | Event | Level | Data | When |
 | --- | --- | --- | --- |
-| `verify_result` | info | `command` (the TARGETED command, or the whole suite when the project has no `{files}` form), `exitCode` (absent when nothing ran), `check`, `reason`, `strippedFiles` (comma-joined, may be empty), `scope`, `treeHash`, `outputFile` | Once per gate run, the same record stages 9-11 emit. `Attempt` is the stage attempt, so a re-ask leaves two. |
+| `verify_result` | info | `command` (the TARGETED command, or the whole suite when the project has no `{files}` form), `exitCode` (absent when nothing ran), `check`, `reason`, `strippedFiles` (comma-joined, may be empty), `scope`, `treeHash`, `outputFile` | Once per gate run, the same record stages 9-11 emit. `Attempt` is the attempt of the stage invocation the gate belongs to: a re-ask (5) or an escalation (11) leaves one record per attempt, stage 10's gate carries the number the stage then runs as, and each commit-gate run (12) takes a fresh one. |
 | `author_test_scope_suspect` | warn | `files`, `scope` | A declared test file is neither a recognized test path nor an inline-capable extension. The entry is kept; this says it was believed, not verified. |
 | `author_test_gate_unusable` | warn | `command`, `reason`, `exitCode` and `outputTail` when a command ran | Exit 127, "no tests found/collected", or the bootstrap placeholder. |
 | `author_test_audit` | info | `mode`, `hunks` (count), `files`, `reasons` (clipped to 240 characters), or `error` when the call failed | One cheap-tier read of the stage's own diff, when `authorTests.diffAudit` asks for it. |
 | `author_test_reask` | info | `reason`, `files`; a second one carrying `result: invalid` when the re-asked stage answered unusably | The one re-ask: either the tests passed with the implementation still in place and a declared file can carry implementation, or the audit reported a hunk. `result: invalid` says the first pass's outcome stands, which is why there is no second gate record. |
 | `author_test_unproven` | warn | `reason` | The stage's final check is `unproven`. |
+| `path_entry_dropped` | warn | `list` (`manifest` or `testFiles`), `entry` (the path exactly as the stage wrote it), `reason` | A model-written path named a location outside the workspace. Both lists are repo-relative by contract; an absolute path under the workspace resolves to the name it meant, and any other one is dropped here rather than silently mangled into a name that exists nowhere. The stage that read the list is on the event. |
 
 `scope` reads `path=separate;path=inline-capable;path=suspect` — how each declared
 file was classified from `testPaths` and `authorTests.inlineTestExtensions` (see
