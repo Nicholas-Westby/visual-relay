@@ -18,8 +18,8 @@ This spec replaces the per-file half of
 `per-file-test-commands-for-dotnet-go-and-node` (2026-09-11), which prescribed
 a shell snippet per toolchain (a `FullyQualifiedName~` loop for dotnet, a
 `dirname` loop for go) and a rewrite of the node form. Do it after
-`bootstrap-asks-the-model-when-no-test-command-passes`, whose proposer seam
-and sandboxed check it reuses.
+`bootstrap-asks-the-model-when-no-test-command-passes`, whose proposer (a
+small agent run with the normal tools) and sandboxed check it reuses.
 
 ## Evidence
 
@@ -82,11 +82,12 @@ and sandboxed check it reuses.
 3. Bootstrap proves before it writes. After `testCmd` is accepted:
    - the table has a form: prove it through the same runner the test command
      was checked with; proven, write it;
-   - the table has none, or its form was rejected: ask the proposer (the seam
-     from the companion task) for a per-file command, showing it `testCmd`,
-     the project's own script text when `testCmd` is a package-manager script,
-     the two test file paths, and any rejected form with its output; prove
-     each answer under the sandboxed runner, up to three answers;
+   - the table has none, or its form was rejected: run the proposer from the
+     companion task with a second question and the contract `{ "testFileCmd":
+     string }`. It is given `testCmd`, the two test file paths and any
+     rejected form with its output, and it can read the project's own scripts
+     and try its answer itself. Prove each answer under the sandboxed runner,
+     two rounds at most;
    - nothing proven: write `testFileCmd: null`. The gate then runs the whole
      suite and says so, which is slower and still correct.
    The placeholder upgrade (`UpsertResolvedToolchain`) goes through the same
@@ -101,8 +102,8 @@ and sandboxed check it reuses.
    proof applies only to what bootstrap itself is about to write.
 6. Table upkeep, small: delete the `mix test` form nothing can reach. The
    jest and vitest replacement stays as the table's first guess; the proof now
-   catches the projects it is wrong for, and the proposer, shown the project's
-   own script, supplies the form that keeps its flags.
+   catches the projects it is wrong for, and the proposer, which can read the
+   project's own script, supplies the form that keeps its flags.
 7. Docs: `docs/OPERATIONS.md` gains "Per-file test commands": what `{files}`
    receives, that bootstrap proves the command on real test files, and that
    null means the whole suite. `TROUBLESHOOTING.md`'s `gate command unusable`
@@ -118,10 +119,11 @@ and sandboxed check it reuses.
 - `ProjectBootstrapperPerFileTests` (fake runner, scripted proposer): the
   table's form proven is written with source `Table`; the table's form
   rejected and a proposal proven writes the proposal with source `Proposed`,
-  and the proposer's prompt held the rejected form, its output and the script
-  text; three rejected proposals write null with source `None`; no test files
-  writes the table's form with source `Unproven`; a null proposer with no
-  table form writes null; the proposal ran through the sandboxed runner only.
+  and the proposer was handed `testCmd`, the test files and the rejected form
+  with its output; two rejected proposals write null with source `None`; no
+  test files writes the table's form with source `Unproven`; a null proposer
+  with no table form writes null; the proposal ran through the sandboxed
+  runner only.
 - `RelayConfigWriterTests.PerFileCommand`: an existing operator-written
   `testFileCmd` survives the placeholder upgrade untouched.
 - `TestCommandDetectorTests.PerFileForm`: `mix test` has no form any more.
