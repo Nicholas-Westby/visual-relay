@@ -5,6 +5,19 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Init;
 
+/// <summary>Where the written test command came from.</summary>
+public enum TestCommandSource
+{
+    /// <summary>A built-in candidate from the marker-file table, which passed its check.</summary>
+    Detected,
+
+    /// <summary>A model proposed it after reading the repository, and it passed the same check.</summary>
+    Proposed,
+
+    /// <summary>Nothing passed, so the no-op placeholder was written.</summary>
+    Placeholder,
+}
+
 /// <summary>Outcome of bootstrapping a target folder for Visual Relay.</summary>
 public sealed record ProjectBootstrapResult(
     bool GitInitialized,
@@ -27,12 +40,26 @@ public sealed record ProjectBootstrapResult(
     /// </summary>
     public string? Refusal { get; init; }
 
+    /// <summary>Where <see cref="TestCommand"/> came from, so the status can say so.</summary>
+    public TestCommandSource TestCommandSource { get; init; } = TestCommandSource.Placeholder;
+
     /// <summary>A refusal, carrying the gate's message and nothing else.</summary>
     /// <param name="refusal">Why bootstrap will not run here.</param>
     /// <returns>A result that wrote nothing.</returns>
     public static ProjectBootstrapResult Refused(string refusal) =>
         new(false, false, null, false, string.Empty, string.Empty) { Refusal = refusal };
 }
+
+/// <summary>
+/// Asks for a test command when none of bootstrap's own candidates passed. Injected so
+/// bootstrap stays testable and so a machine with no provider key simply passes null
+/// and keeps today's placeholder.
+/// </summary>
+/// <param name="attempts">What was tried, and how it failed.</param>
+/// <param name="cancellationToken">Cancellation.</param>
+/// <returns>The proposed command, or null.</returns>
+public delegate Task<string?> ProposeTestCommand(
+    IReadOnlyList<CommandAttempt> attempts, CancellationToken cancellationToken);
 
 /// <summary>
 /// One-shot "make this folder runnable by Visual Relay" routine. Detects (or
@@ -42,7 +69,7 @@ public sealed record ProjectBootstrapResult(
 /// placeholder test command is later upgraded to the real one once the project's
 /// toolchain exists (see <see cref="TryUpgradePlaceholderTestCommandAsync"/>).
 /// </summary>
-public static class ProjectBootstrapper
+public static partial class ProjectBootstrapper
 {
     /// <summary>
     /// Trivially-green test command written when no toolchain can be detected yet.
@@ -98,18 +125,34 @@ public static class ProjectBootstrapper
         new ShellTestRunner(timeout, loginShell: false, host: host);
 
     /// <summary>
-    /// Whether this host cannot check a test command where the pipeline would run it.
-    /// On Windows every launch goes through the WSL distro; with none resolved, a
-    /// check would run on the Windows host, unsandboxed, and the command it accepted
-    /// could never run. Bootstrap then writes nothing at all.
+    /// The runner a PROPOSAL is checked with: the sandbox wrapper the pipeline will run
+    /// the command under anyway, which is the right place for a command written by a
+    /// model that has been reading an unfamiliar repository. Built-in candidates keep
+    /// the bare shell they have always used.
     /// </summary>
+    /// <param name="proposal">The proposed command.</param>
+    /// <param name="host">Where the sandbox launches from.</param>
+    /// <returns>The runner to check it with.</returns>
+    internal static ITestRunner CreateProposalRunner(string proposal, SandboxHost host) =>
+        new SandboxedTestRunner(
+            new ShellTestRunner(ProposalValidationTimeout, loginShell: false, host: host),
+            RelayConfigLoader.Defaults(proposal));
+
+    /// <summary>A proposal may build a project it has never built; two minutes matches the manual path.</summary>
+    private static readonly TimeSpan ProposalValidationTimeout = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Whether this host cannot check a test command where the pipeline would run it.
+    /// On Windows every launch goes through the WSL distro; with none resolved, a check
+    /// would run on the Windows host, unsandboxed, and the command it accepted could
+    /// never run. Bootstrap then writes nothing at all.
     /// <para>
-    /// Callers PASS the host; the parameter defaults to the local host rather than
-    /// this machine's, so a test that says nothing about where it runs behaves the
-    /// same on every platform instead of being refused only on Windows. Every
-    /// production caller passes the resolved host, which
-    /// <c>SplitGuardVerificationTests</c> pins.
+    /// Callers PASS the host; the parameter defaults to the LOCAL host rather than this
+    /// machine's, so a test that says nothing about where it runs behaves the same on
+    /// every platform instead of being refused only on Windows. Every production caller
+    /// passes the resolved host, which <c>BootstrapHostGuardTests</c> pins.
     /// </para>
+    /// </summary>
     /// <param name="host">Where the sandbox launches from.</param>
     /// <returns>The gate's refusal message, or null when bootstrap may proceed.</returns>
     internal static string? RefusalFor(SandboxHost host) =>
@@ -129,6 +172,8 @@ public static class ProjectBootstrapper
         ITestRunner? validationRunner = null,
         int? validationTimeoutMs = null,
         SandboxHost? host = null,
+        ProposeTestCommand? proposeCommand = null,
+        Func<string, ITestRunner>? proposalRunner = null,
         CancellationToken cancellationToken = default)
     {
         var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
@@ -144,8 +189,8 @@ public static class ProjectBootstrapper
 
         // 1a. Resolve a test command: detect + smoke-validate, else a green placeholder
         //     so an empty/greenfield folder is runnable and the first task can scaffold.
-        var (command, usedPlaceholder, setupCheck, otherCommands) = await ResolveTestCommandAsync(
-            rootPath, layout, validationRunner, timeout, sandboxHost, cancellationToken);
+        var (command, usedPlaceholder, setupCheck, otherCommands, source) = await ResolveTestCommandAsync(
+            rootPath, layout, validationRunner, timeout, sandboxHost, proposeCommand, proposalRunner, cancellationToken);
 
         // 2. Write .relay/config.json (also writes .relay/.gitignore; detects guard/format).
         var configPath = RelayConfigWriter.Write(rootPath, command);
@@ -174,7 +219,8 @@ public static class ProjectBootstrapper
         // is the operator's call.
         return new ProjectBootstrapResult(
             gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath,
-            setupCheck, layout, formatNote, tasksDirNote, otherCommands);
+            setupCheck, layout, formatNote, tasksDirNote, otherCommands)
+        { TestCommandSource = source };
     }
 
     /// <summary>
@@ -192,6 +238,8 @@ public static class ProjectBootstrapper
         IGitInvoker gitInvoker,
         ITestRunner? validationRunner = null,
         SandboxHost? host = null,
+        ProposeTestCommand? proposeCommand = null,
+        Func<string, ITestRunner>? proposalRunner = null,
         CancellationToken cancellationToken = default)
     {
         var sandboxHost = host ?? SandboxHost.Local;
@@ -206,8 +254,8 @@ public static class ProjectBootstrapper
         }
 
         var layout = await TestLayoutDetector.DetectAsync(rootPath, gitInvoker, cancellationToken);
-        var (command, usedPlaceholder, _, _) = await ResolveTestCommandAsync(
-            rootPath, layout, validationRunner, UpgradeValidationTimeout, sandboxHost, cancellationToken);
+        var (command, usedPlaceholder, _, _, _) = await ResolveTestCommandAsync(
+            rootPath, layout, validationRunner, UpgradeValidationTimeout, sandboxHost, proposeCommand, proposalRunner, cancellationToken);
         if (usedPlaceholder)
         {
             return false; // still no validatable toolchain — leave the placeholder in place
@@ -219,52 +267,4 @@ public static class ProjectBootstrapper
         return true;
     }
 
-    // Detect candidates and return the first that smoke-validates; otherwise the
-    // placeholder. The runner/timeout are injectable so callers (init vs. upgrade)
-    // pick their own timeout and tests pass a fake.
-    private static async Task<(string Command, bool UsedPlaceholder, SetupCheckDiagnostic? SetupCheck, IReadOnlyList<string> OtherCommands)> ResolveTestCommandAsync(
-        string rootPath, TestLayoutDetection layout, ITestRunner? validationRunner, TimeSpan validationTimeout,
-        SandboxHost host, CancellationToken cancellationToken)
-    {
-        var detected = TestCommandDetector.DetectToolchainCandidates(rootPath, layout.CountsByExtension);
-        var candidates = detected.Select(candidate => candidate.Command).ToList();
-        var timeoutMs = (int)validationTimeout.TotalMilliseconds;
-        if (candidates.Count > 0)
-        {
-            var runner = validationRunner ?? CreateValidationRunner(validationTimeout, host);
-            var validator = new TestCommandValidator(runner);
-            var rejections = new List<(string, string, int, bool, string)>();
-
-            foreach (var candidate in detected)
-            {
-                var result = await validator.ValidateAsync(rootPath, candidate.Command, cancellationToken);
-                if (result.Accepted)
-                {
-                    // Another toolchain's command is a suite Verify will not run, so the operator hears of it.
-                    List<string> others =
-                    [
-                        .. detected.Where(other => other.Toolchain != candidate.Toolchain && !other.IsGuess)
-                            .Select(other => other.Command),
-                    ];
-                    return (candidate.Command, false, null, others);
-                }
-
-                rejections.Add((
-                    candidate.Command,
-                    result.RejectionReason ?? "unknown",
-                    result.RunResult.ExitCode,
-                    result.RunResult.TimedOut,
-                    result.RunResult.Output));
-            }
-
-            // All candidates rejected — summarize the highest-ranked one; the artifact keeps them all.
-            // The last was often a guess from a tests folder: luxon's summary named pytest, not jest.
-            var first = rejections[0];
-            var diag = SetupCheckDiagnostic.FromFailedValidation(
-                rootPath, first.Item1, timeoutMs, first.Item3, first.Item4, first.Item5, rejections);
-            return (PlaceholderTestCommand, true, diag, []);
-        }
-
-        return (PlaceholderTestCommand, true, null, []);
-    }
 }

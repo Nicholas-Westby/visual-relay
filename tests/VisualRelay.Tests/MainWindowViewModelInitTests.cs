@@ -136,21 +136,40 @@ public sealed class MainWindowViewModelInitTests
         Assert.True(root.TryGetProperty("authorTests", out _));
     }
 
+    /// <summary>
+    /// The manual action asks the same proposer bootstrap falls back to — an agent run
+    /// that reads the project — rather than the old single prompt carrying a list of
+    /// the root's entry NAMES, which could not show a nested test project or a script's
+    /// text.
+    /// </summary>
     [Fact]
-    public async Task FindTestCommand_PopulatesInputFromFinder()
+    public async Task FindTestCommand_PopulatesInputFromTheProposer()
     {
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
-            TestCommandFinder = new LlmTestCommandFinder((_, _) => Task.FromResult("go test ./..."))
+            TestCommandProposerFor = (_, _) => Task.FromResult<string?>("go test ./..."),
         };
         await viewModel.LoadInitialAsync();
 
         await viewModel.FindTestCommandCommand.ExecuteAsync(null);
 
         Assert.Equal("go test ./...", viewModel.InitTestCommandInput);
+    }
+
+    [Fact]
+    public async Task FindTestCommand_WithNoProposerAvailable_SaysSoRatherThanFailing()
+    {
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, IsHuggingFaceConfigured = false };
+        await viewModel.LoadInitialAsync();
+
+        await viewModel.FindTestCommandCommand.ExecuteAsync(null);
+
+        Assert.Contains("enter the command manually", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.InitTestCommandInput);
     }
 
     [Fact]

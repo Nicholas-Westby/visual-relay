@@ -1,6 +1,10 @@
 using CommunityToolkit.Mvvm.Input;
+using VisualRelay.App.Services;
+using VisualRelay.Core.Agent;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
+using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -30,6 +34,38 @@ public partial class MainWindowViewModel
     // bootstrap is still running can be asserted.
     public Func<string, Task<ProjectBootstrapResult>>? BootstrapRunner { get; init; }
 
+    // Injectable proposer seam, so a test scripts what the model would answer. Null →
+    // the real agent run.
+    internal ProposeTestCommand? TestCommandProposerFor { get; init; }
+
+    /// <summary>
+    /// The proposer bootstrap falls back to when none of its own candidates passed: a
+    /// small agent run with the normal tool catalog, so it can read the project's CI
+    /// configuration and scripts and try its answer before giving it. Null on a machine
+    /// with no provider key, where the fallback is skipped rather than started and
+    /// failed, and null where the sandbox cannot run, because the agent's commands need it.
+    /// </summary>
+    /// <param name="host">Where the sandbox launches from.</param>
+    /// <returns>The proposer, or null when one cannot be built here.</returns>
+    private ProposeTestCommand? BuildTestCommandProposer(SandboxHost host)
+    {
+        if (TestCommandProposerFor is { } injected)
+            return injected;
+        if (!IsHuggingFaceConfigured)
+            return null;
+
+        var config = RelayConfigLoader.Defaults(ProjectBootstrapper.PlaceholderTestCommand);
+        if (SandboxedStage.MissingRequiredTools(config, host: host).Count > 0)
+            return null;
+
+        return async (attempts, ct) =>
+        {
+            var sink = new ObservableRelayEventSink(HandleRelayEvent);
+            var runner = SubagentRunnerFactory.Create(config, sink, Env, VerboseSandboxDiagnostics);
+            return await TestCommandProposer.RunAsync(RootPath, attempts, config, runner, ct);
+        };
+    }
+
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 
     // Makes an empty/greenfield folder runnable in one action: git init + a HEAD
@@ -49,10 +85,12 @@ public partial class MainWindowViewModel
         StatusText = "Bootstrapping: checking test commands";
         try
         {
+            var host = await ResolveSandboxHostAsync();
             var result = BootstrapRunner is { } run
                 ? await run(RootPath)
                 : await ProjectBootstrapper.BootstrapAsync(
-                    RootPath, new GitInvoker(), host: await ResolveSandboxHostAsync());
+                    RootPath, new GitInvoker(), host: host,
+                    proposeCommand: BuildTestCommandProposer(host));
             SetupCheck = result.SetupCheck;
             // A refusal wrote nothing, so there is no outcome to describe: the gate's
             // own message is what the operator has to act on.
@@ -88,14 +126,43 @@ public partial class MainWindowViewModel
         // A foreign hook's warning follows the test command sentence instead of replacing it: luxon's
         // husky hook once hid that bootstrap had written the placeholder.
         var headline = result.UsedPlaceholderTestCommand
-            ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
-              + "scaffolds the project; the real test command is adopted automatically once a toolchain appears."
-            : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}.{DescribeOtherTestCommands(result)}";
+            ? $"Project bootstrapped — {gitNote}{DescribePlaceholder(result)}"
+            : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}{DescribeSource(result)}.{DescribeOtherTestCommands(result)}";
         var warning = result.HookWarning is { } hookWarning ? " " + hookWarning : string.Empty;
         var notes = string.Concat(new[] { result.FormatNote, result.TasksDirNote }.OfType<string>().Select(note => " " + note));
         return headline + warning + " " + DescribeTestLayout(result.TestLayout) + notes
                + " Config written to .relay/config.json and left uncommitted.";
     }
+
+    /// <summary>
+    /// A command a model wrote is worth flagging even though it passed the same check
+    /// a built-in candidate has to: the operator should look at it once.
+    /// </summary>
+    private static string DescribeSource(ProjectBootstrapResult result) =>
+        result.TestCommandSource == TestCommandSource.Proposed
+            ? " (proposed by the model and checked; review it in .relay/config.json)"
+            : string.Empty;
+
+    /// <summary>
+    /// The placeholder headline. The scaffolding advice is for a GREENFIELD folder;
+    /// on a repository that HAS source files it was misleading, because the honest
+    /// answer is that nothing tried passed and here is what was tried. At most three
+    /// attempts are named; the log has the rest.
+    /// </summary>
+    private static string DescribePlaceholder(ProjectBootstrapResult result)
+    {
+        if (result.SetupCheck?.Rejections is not { Count: > 0 } rejections)
+        {
+            return "placeholder test command set. Add a task that scaffolds the project; "
+                + "the real test command is adopted automatically once a toolchain appears.";
+        }
+
+        var named = string.Join("; ", rejections.Take(3).Select(r => $"{r.Candidate}: {FirstLine(r.Reason)}"));
+        return $"No test command passed the check ({named}). Set testCmd in .relay/config.json.";
+    }
+
+    private static string FirstLine(string text) =>
+        text.Split('\n')[0].Trim();
 
     // Another toolchain's test command is a suite Verify will not run; naming it lets the operator
     // notice when bootstrap validated the wrong one.

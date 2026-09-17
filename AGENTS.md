@@ -115,7 +115,9 @@ Endpoints:
   commands are fire-and-forget (like a click) — poll `/state` to follow progress. Names:
   `bootstrap` (greenfield setup — git init + an EMPTY HEAD commit when missing, a runnable
   `.relay/config.json` with a placeholder test command when no toolchain is detected,
-  and the pre-commit hook; the config is written but never committed, and the placeholder
+  and the pre-commit hook. When none of its built-in candidates passes it asks a small
+  agent run for one and keeps the answer only if it passes the same check, saying so in
+  the status; the config is written but never committed, and the placeholder
   is upgraded to the real test command automatically once the project gains a
   toolchain. Its outcome — including the note that the config was left uncommitted,
   and any warning about a pre-commit hook it refused to overwrite — is left in

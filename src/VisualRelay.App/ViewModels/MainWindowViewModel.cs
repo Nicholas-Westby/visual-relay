@@ -201,12 +201,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 
-    // Injectable so tests can supply a fake completer; the default asks the
-    // frontier tier's provider directly.
-    public LlmTestCommandFinder TestCommandFinder { get; init; } =
-        new(new ProviderTestCommandCompleter(
-            LiveProviderTransport.CreateDefault(), new SystemEnvironmentAccessor()).CompleteAsync);
-
     // Banner: "Control API unavailable — port <N> in use by another process".
     // App.axaml.cs sets it from ControlServer.IsAvailable after Start().
     [ObservableProperty]

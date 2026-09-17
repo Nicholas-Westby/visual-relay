@@ -104,6 +104,34 @@ commands run inside the distro, so a Windows-only toolchain is not supported. Se
 [TROUBLESHOOTING.md](../TROUBLESHOOTING.md) for the gate's messages and the runtime
 verification checklist.
 
+## How bootstrap finds the test command
+
+Three steps, in order, and nothing is written until something passes a real run:
+
+1. **Built-in candidates.** A table of marker files (`package.json`, `Cargo.toml`,
+   `*.sln` …) yields candidate commands. Each is run once in your checkout and the
+   first that passes is kept.
+2. **The proposer.** When every candidate is rejected — or the table recognises no
+   marker in a folder that *does* hold tracked source files — a small agent run is
+   asked for the command. It gets the commands already tried with their exit codes and
+   output, and it has the normal tool catalog, so it can read the CI configuration, the
+   README and the scripts they point at, and try its answer before giving it. Its
+   answer is then checked exactly as a built-in candidate is, under the sandbox the
+   pipeline will run the command through anyway. At most two rounds; a repeated answer
+   ends it.
+3. **The placeholder.** If nothing passes, `testCmd` is the no-op placeholder and the
+   status says what was tried rather than offering scaffolding advice. A genuinely
+   greenfield folder (no tracked source files) skips step 2 entirely and keeps that
+   advice, because there it is the right advice.
+
+The proposer costs one cheap-tier agent run of at most 30 turns, and only on a
+repository the table could not handle. Its trace and report land in
+`.relay/bootstrap/`, and every rejection — built-in and proposed alike — is written to
+`.relay/setup-check.log`. A machine with no provider key skips step 2 rather than
+failing at it. A command that came from step 2 says so in the status, so you can look
+at it once: `testCmd: <command> (proposed by the model and checked; review it in
+.relay/config.json)`.
+
 ## Author-test gating
 
 Whether a test can be told from an implementation by its path is a property of the

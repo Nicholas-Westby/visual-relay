@@ -164,17 +164,30 @@ public partial class MainWindowViewModel
         });
     }
 
+    /// <summary>
+    /// One way to ask. This used to send a list of the root's first hundred entry NAMES
+    /// in a single prompt, which cannot show a nested test project, a script's text or
+    /// what CI runs. It now uses the same proposer bootstrap falls back to: an agent
+    /// run that reads the project and can try its answer.
+    /// </summary>
     [RelayCommand]
     private async Task FindTestCommandAsync()
     {
-        StatusText = "Asking the frontier model for the test command…";
+        StatusText = "Asking the model for the test command…";
         try
         {
-            var command = await TestCommandFinder.FindAsync(RootPath);
+            var host = await ResolveSandboxHostAsync();
+            if (BuildTestCommandProposer(host) is not { } propose)
+            {
+                StatusText = "Can't ask the model here — set a provider key, or enter the command manually.";
+                return;
+            }
+
+            var command = await propose([], CancellationToken.None);
             if (!string.IsNullOrWhiteSpace(command))
             {
                 InitTestCommandInput = command.Trim();
-                StatusText = "Detected a test command — review it, then Create config.";
+                StatusText = "Proposed a test command — review it, then Create config.";
             }
             else
             {

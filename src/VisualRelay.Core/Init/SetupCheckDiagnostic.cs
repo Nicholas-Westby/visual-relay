@@ -20,6 +20,13 @@ public sealed record SetupCheckDiagnostic(
     string? ArtifactPath,
     DateTimeOffset CapturedUtc)
 {
+    /// <summary>
+    /// Every command that was tried and refused, in the order they were tried, so the
+    /// operator can be told what was attempted rather than only that nothing worked.
+    /// Proposals join this list beside the built-in candidates.
+    /// </summary>
+    public IReadOnlyList<(string Candidate, string Reason)> Rejections { get; init; } = [];
+
     private const int ArtifactTailCapBytes = 64 * 1024; // 64 KB
     private const int StateTailCapChars = 4096;         // 4 KB for /state
 
@@ -124,7 +131,12 @@ public sealed record SetupCheckDiagnostic(
             TimedOut: timedOut,
             OutputTail: CapForState(output),
             ArtifactPath: artifactPath,
-            CapturedUtc: DateTimeOffset.UtcNow);
+            CapturedUtc: DateTimeOffset.UtcNow)
+        {
+            Rejections = allRejections is null
+                ? []
+                : [.. allRejections.Select(r => (r.Candidate, r.Reason))],
+        };
     }
 
     /// <summary>

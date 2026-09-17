@@ -119,6 +119,21 @@ inline-capable while `.py` stays gated by path. Re-running `bootstrap` refreshes
 `detectedLanguages` and `inlineTestExtensions`, so record a hand-added extension
 somewhere you will remember.
 
+## Bootstrap wrote the placeholder on a repository that has tests
+
+The status now names what was tried: `No test command passed the check (<command>:
+<why>; …). Set testCmd in .relay/config.json.` The full list, including anything the
+model proposed, is in `.relay/setup-check.log`.
+
+Read the first rejection's own output before anything else — it usually names the
+thing in the way (a project that has to be excluded, a runner that found no tests).
+If a provider key is set, a model was also asked and its answer was run and rejected
+too; its turns are under `.relay/bootstrap/`. If no key is set, that step was skipped
+entirely, and setting one may be enough.
+
+Whatever you conclude, the fix is the same: put the working command in `testCmd`
+yourself. Bootstrap never overwrites a command you wrote.
+
 ## Reset left files in the working tree
 
 `reset-selected` puts the tree back to the run base and deletes the untracked files
