@@ -60,6 +60,11 @@ public sealed partial class RelayDriver
         var runsExecuted = 0;
         SetupCheckResults? lastAttemptSetupChecks = null;
         var verifySignatures = new List<(string Reason, string OutputPath, string TreeHash)>();
+        // What the tree already held before this loop touched it. Stages 7 and 8 ran
+        // before Verify, so anything this loop adds on top is unreviewed until the
+        // green attempt compares the two listings.
+        var changesBeforeFixVerify = await WorktreeChanges.ListAsync(
+            rootPath, config.TasksDir, _dependencies.GitInvoker, cancellationToken);
         for (var run = 1; run <= maxRuns; run++)
         {
             var tier = StageEscalation.TierForRun(stage.Tier, run);
@@ -230,7 +235,12 @@ public sealed partial class RelayDriver
                 sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
 
             if (check == "green")
-                return (null, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+            {
+                var unreviewedOutcome = await ReviewFixVerifyEditsAsync(
+                    rootPath, runId, taskId, taskDirectory, config, stage, input, ledger,
+                    statusEntries, manifest, changesBeforeFixVerify, body, cancellationToken);
+                return (unreviewedOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+            }
 
             // No early non-convergence bail: a higher tier (next run) may change the
             // verdict even when the tree/failure looks unchanged, so spend every run.
