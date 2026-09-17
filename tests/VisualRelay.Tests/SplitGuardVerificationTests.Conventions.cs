@@ -269,4 +269,16 @@ public sealed partial class SplitGuardVerificationTests
         Assert.Empty(violations);
     }
 
+    /// <summary>The screenshot tool must read no wall clock: a render that stamps the current time made every committed README image differ from the next render of the same commit.</summary>
+    [Fact]
+    public void ScreenshotTool_ReadsNoWallClock()
+    {
+        var program = File.ReadAllText(
+            Path.Combine(RepoRoot, "tools", "VisualRelay.Screenshots", "Program.cs"));
+
+        foreach (var clock in new[] { "UtcNow", "DateTimeOffset.Now", "DateTime.Now" })
+        {
+            Assert.DoesNotContain(clock, program, StringComparison.Ordinal);
+        }
+    }
 }

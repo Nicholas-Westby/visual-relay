@@ -125,7 +125,7 @@ To run the main test suite:
 ```
 
 Or for the more involved checks (runs the file-size guard, format verification, build,
-test suite, and the README screenshot render):
+test suite, and the screenshot determinism check):
 
 ```bash
 ./visual-relay check
@@ -143,7 +143,7 @@ The code is mostly C# and the UI is built with [Avalonia](https://avaloniaui.net
 - `./visual-relay install-hooks` - installs pre-commit hooks.
 - `./visual-relay test` - runs the test suite.
 - `./visual-relay test serial` - runs the test suite, one test at a time.
-- `./visual-relay check` - runs the file-size guard, format verification, build, the test suite, and the README screenshot render.
+- `./visual-relay check` - runs the file-size guard, format verification, build, the test suite, and the screenshot determinism check.
 
 ## Learn more
 

@@ -20,7 +20,7 @@ exempt from those contextual checks. See `docs/commit-messages.md`.
 - Build, run, and test through the single entry point: `./visual-relay build`,
   `./visual-relay test`, `./visual-relay launch`.
 - Run the full gate before considering work done: `./visual-relay check`
-  (file-size guard, format verification, build, tests, screenshot render).
+  (file-size guard, format verification, build, tests, screenshot determinism check).
 - Keep C# and Avalonia XAML source files under 300 lines (the C# file-size guard
   in `tools/VisualRelay.Guards`, run by `./visual-relay check`).
 - Shell scripts are shfmt-formatted (tabs, no custom style flags). Apply with
@@ -176,7 +176,9 @@ Homebrew formula:
 - `./visual-relay run-task <path> <task>` — runs a single task headlessly through the
   full Relay pipeline (runs `tools/VisualRelay.RunTask`).
 - `./visual-relay screenshot` — renders README screenshots via Avalonia Headless
-  (runs `tools/VisualRelay.Screenshots`).
+  (runs `tools/VisualRelay.Screenshots`). This is how `docs/images/` is refreshed:
+  deliberately, by running the verb after a UI change and committing both PNGs.
+  `check` renders into scratch and only proves the render is deterministic.
 
 These require a .NET SDK and a full source checkout. Brew-installed users only have
 `launch` and `init`.

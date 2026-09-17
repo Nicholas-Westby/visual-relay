@@ -24,6 +24,19 @@ var scratchRoot = Path.GetFullPath(Path.Combine(".relay", "scratch", "screenshot
 Directory.CreateDirectory(scratchRoot);
 Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", Path.Combine(scratchRoot, ".config"));
 
+// Pin the zone beside the config home, for the same reason: RelayEvent.TimeLabel
+// formats through ToLocalTime, so the run-log clocks read differently on every
+// machine. The runtime caches the local zone on first use, so TZ is set before
+// anything formats a time and the cache is cleared in case something already did.
+Environment.SetEnvironmentVariable("TZ", "UTC");
+TimeZoneInfo.ClearCachedData();
+
+// The render is a pure function of the commit: every timestamp comes from this
+// instant, never the wall clock. Reading the clock stamped the six run-log rows
+// with the current second, so any two renders of the same commit differed and
+// the committed README images were whatever somebody last forgot to revert.
+var renderedAt = new DateTimeOffset(2026, 9, 11, 10, 46, 0, TimeSpan.Zero);
+
 // The selected task's markdown, held as a literal so SeedActivity can restore it
 // post-Show without re-reading the file — selecting the task promotes it to the
 // nested layout, which deletes the flat llm-tasks/<id>.md path.
@@ -59,7 +72,7 @@ await session.Dispatch(async () =>
     };
     window.Show();
     await Task.Delay(100);
-    SeedActivity(viewModel, demoTaskMarkdown);
+    SeedActivity(viewModel, demoTaskMarkdown, renderedAt);
     var frame = window.CaptureRenderedFrame();
     if (frame is null)
     {
@@ -106,7 +119,7 @@ static MainWindowViewModel BuildViewModel(string root, string demoTaskMarkdown)
     viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding", costUsd: 0.0018, seconds: 64, stages: 12));
     viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware", costUsd: 0.0121, seconds: 284, stages: 12));
     viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test", costUsd: 0.0032, seconds: 95, stages: 12));
-    viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "the stage stalled", costUsd: 0.0009, seconds: 31, stages: 2));
+    viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "verify red after 3 attempts", costUsd: 0.0009, seconds: 31, stages: 2));
     // Give one demo card a DayHeader so the screenshot exercises the day-header
     // row (archive view shows grouped day headers like "Today ($1.04)").
     viewModel.Tasks[1].DayHeader = "Today ($1.04)";
@@ -128,17 +141,18 @@ static MainWindowViewModel BuildViewModel(string root, string demoTaskMarkdown)
 // Seeds the stage board so its cards exercise the current status-row + metrics
 // layout: a Done card reads "Completed in 19s" with a "cost  turns  test" metric
 // line, and the active card ticks "Running {elapsed}".
-static void SeedStages(MainWindowViewModel viewModel)
+static void SeedStages(MainWindowViewModel viewModel, DateTimeOffset renderedAt)
 {
     ApplyDoneStage(viewModel.Stages[0], "19s", "$0.00", "6t", 3);   // Ideate
     ApplyDoneStage(viewModel.Stages[1], "22s", "$0.01", "11t", 4);  // Research
     viewModel.Stages[1].IsSelected = true;
 
-    // Mark Diagnose running ~42s ago so the status row shows the live "Running 42s"
-    // tick (StatusLabel reads MarkRunning's elapsed, not the DurationLabel).
+    // Mark Diagnose running 42s before the pinned instant so the status row shows
+    // the "Running 42s" tick (StatusLabel reads MarkRunning's elapsed, not the
+    // DurationLabel). The label is relative, so it is stable text.
     var diagnose = viewModel.Stages[2];
-    diagnose.MarkRunning(DateTimeOffset.UtcNow.AddSeconds(-42));
-    diagnose.RefreshElapsed(DateTimeOffset.UtcNow);
+    diagnose.MarkRunning(renderedAt.AddSeconds(-42));
+    diagnose.RefreshElapsed(renderedAt);
     diagnose.CostLabel = "$0.01";
     diagnose.TurnsLabel = "7t";
 }
@@ -170,30 +184,34 @@ static TaskRowViewModel DemoTask(string root, string id, string? reviewReason = 
 // markdown/context detail, the stage board, and the Activity column's default Run
 // Log tab (stage lifecycle events with model/time/cost data plus the Commands-tab
 // trace entries) — so the right-hand panel reads as active, not empty.
-static void SeedActivity(MainWindowViewModel viewModel, string demoTaskMarkdown)
+static void SeedActivity(MainWindowViewModel viewModel, string demoTaskMarkdown, DateTimeOffset now)
 {
-    var now = DateTimeOffset.UtcNow;
     var root = viewModel.RootPath;
     var taskId = viewModel.SelectedTask?.Id ?? "add-multiply-helper";
 
     viewModel.SelectedTaskMetricLabel = "12 stages  2m 18s  $0.07";
     viewModel.SelectedTaskMarkdown = demoTaskMarkdown;
     viewModel.SelectedTaskContext = "### logs/app.log\n12:04:41 [plan] 3 edits planned across 3 files\n13:08:54 [implement] stage complete in 28s";
-    SeedStages(viewModel);
+    SeedStages(viewModel, now);
 
+    // The Tier field carries the tier; the model key carries the priced model
+    // alias, which is what a real stage_done writes (RelayDriver.Events puts
+    // cost.Model there). The rows used to read "model: cheap", a tier name no
+    // event has ever carried under that key.
+    const string model = "deepseek-flash";
     viewModel.Events.Clear();
     viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-2), "info", "stage_start", "demo", root, taskId, 3, "balanced",
-        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced" })));
+        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = model })));
     viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-7), "info", "trace", "demo", root, taskId, 3, "balanced",
         Data: new Dictionary<string, string> { ["title"] = "read_file", ["time"] = "1s", ["cost"] = "$0.00" })));
     viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-22), "info", "stage_done", "demo", root, taskId, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.01" })));
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = model, ["time"] = "22s", ["cost"] = "$0.01" })));
     viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-24), "info", "stage_report", "demo", root, taskId, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.01" })));
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = model, ["time"] = "22s", ["cost"] = "$0.01" })));
     viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-30), "warn", "tests_red", "demo", root, taskId, 2, "cheap",
         Data: new Dictionary<string, string> { ["reason"] = "2 failing before implementation", ["time"] = "4s" })));
     viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-45), "info", "stage_done", "demo", root, taskId, 1, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Ideate", ["model"] = "cheap", ["time"] = "19s", ["cost"] = "$0.00" })));
+        Data: new Dictionary<string, string> { ["name"] = "Ideate", ["model"] = model, ["time"] = "19s", ["cost"] = "$0.00" })));
 
     viewModel.TraceEntries.Clear();
     viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "Research", "rg \"COMMANDS|add\" src tests", 2));

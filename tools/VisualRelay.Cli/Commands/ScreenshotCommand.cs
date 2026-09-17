@@ -2,7 +2,9 @@ namespace VisualRelay.Cli.Commands;
 
 /// <summary>
 /// <c>screenshot</c>: renders the two README screenshots via the Screenshots
-/// tool (Avalonia Headless) — main, then compact at 1060x720.
+/// tool (Avalonia Headless) — main, then compact at 1060x720. This verb is the
+/// deliberate refresh of <c>docs/images/</c>; <c>check</c> renders into scratch
+/// and only proves the render is deterministic, so it never dirties the tree.
 /// </summary>
 public static class ScreenshotCommand
 {
