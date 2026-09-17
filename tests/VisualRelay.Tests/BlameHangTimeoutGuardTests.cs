@@ -84,6 +84,32 @@ public sealed class BlameHangTimeoutGuardTests
         Assert.DoesNotContain("--blame-hang-timeout 30s", content, StringComparison.Ordinal);
     }
 
+    // ── no process dumps: every hint carries --blame-hang-dump-type none ──
+
+    /// <summary>
+    /// Following the tool's own advice used to write full process dumps: one pair of
+    /// hung runs on the Windows box produced 10 files totalling 5 GB. This repo's own
+    /// testCmd already passes <c>--blame-hang-dump-type none</c>; every place that
+    /// tells a human to run blame-hang has to pass it too, because the blamed test
+    /// name is all anyone wants and the dumps are pure cost.
+    /// </summary>
+    [Theory]
+    [InlineData("AGENTS.md")]
+    [InlineData("TROUBLESHOOTING.md")]
+    [InlineData("tools/VisualRelay.Cli/TestRunner.cs")]
+    [InlineData("tools/VisualRelay.Cli/Commands/CheckCommand.cs")]
+    public void EveryBlameHangHint_AsksForNoDump(string relativePath)
+    {
+        var path = Path.Combine(RepoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.True(File.Exists(path), $"Missing: {path}");
+        var content = File.ReadAllText(path);
+
+        foreach (var line in content.Split('\n').Where(l => l.Contains("--blame-hang ", StringComparison.Ordinal)))
+        {
+            Assert.Contains("--blame-hang-dump-type none", line, StringComparison.Ordinal);
+        }
+    }
+
     // ── -m:1 preservation: must NOT be removed ───────────────────
 
     [Fact]
