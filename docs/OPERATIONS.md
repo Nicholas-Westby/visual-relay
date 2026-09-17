@@ -132,6 +132,27 @@ failing at it. A command that came from step 2 says so in the status, so you can
 at it once: `testCmd: <command> (proposed by the model and checked; review it in
 .relay/config.json)`.
 
+## Per-file test commands
+
+`testFileCmd` is what the author-tests gate runs, with `{files}` replaced by the
+space-joined paths of the test files that stage just wrote. It exists so the gate runs
+those files rather than the whole suite.
+
+Bootstrap proves the command before writing it. It substitutes up to two of the
+repository's own test files — the smallest, so the proof is quick — and requires a
+clean run: the command must contain `{files}`, must actually run tests, and must exit
+0. Visual Relay is for repositories whose suite is green, so an existing test file run
+alone passes; anything else means the form is wrong. The runner table's form is tried
+first, then a model is asked for one, and each answer goes through the same proof.
+
+`testFileCmd: null` means nothing passed its proof. That is not a failure: the gate
+falls back to `testCmd` and runs the whole suite, which is slower and still correct,
+and the run log says so. A repository with no test file at all gets the table's form
+written unproven, because there is nothing to prove it with.
+
+A `testFileCmd` you wrote yourself is never proven, replaced or removed. The proof
+applies only to what bootstrap itself is about to write.
+
 ## Author-test gating
 
 Whether a test can be told from an implementation by its path is a property of the

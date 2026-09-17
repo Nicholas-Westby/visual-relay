@@ -66,6 +66,27 @@ public partial class MainWindowViewModel
         };
     }
 
+    /// <summary>
+    /// The same proposer, asked the per-file question. Built from the same conditions,
+    /// so a machine that cannot ask for one cannot ask for the other either.
+    /// </summary>
+    /// <param name="host">Where the sandbox launches from.</param>
+    /// <returns>The per-file proposer, or null when one cannot be built here.</returns>
+    private ProposePerFileCommand? BuildPerFileProposer(SandboxHost host)
+    {
+        if (BuildTestCommandProposer(host) is null)
+            return null;
+
+        var config = RelayConfigLoader.Defaults(ProjectBootstrapper.PlaceholderTestCommand);
+        return async (testCommand, testFiles, rejectedForm, ct) =>
+        {
+            var sink = new ObservableRelayEventSink(HandleRelayEvent);
+            var runner = SubagentRunnerFactory.Create(config, sink, Env, VerboseSandboxDiagnostics);
+            return await TestCommandProposer.RunPerFileAsync(
+                RootPath, testCommand, testFiles, rejectedForm, config, runner, ct);
+        };
+    }
+
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 
     // Makes an empty/greenfield folder runnable in one action: git init + a HEAD
@@ -90,7 +111,8 @@ public partial class MainWindowViewModel
                 ? await run(RootPath)
                 : await ProjectBootstrapper.BootstrapAsync(
                     RootPath, new GitInvoker(), host: host,
-                    proposeCommand: BuildTestCommandProposer(host));
+                    proposeCommand: BuildTestCommandProposer(host),
+                    proposePerFile: BuildPerFileProposer(host));
             SetupCheck = result.SetupCheck;
             // A refusal wrote nothing, so there is no outcome to describe: the gate's
             // own message is what the operator has to act on.
@@ -130,9 +152,24 @@ public partial class MainWindowViewModel
             : $"Project bootstrapped — {gitNote}testCmd: {result.TestCommand}{DescribeSource(result)}.{DescribeOtherTestCommands(result)}";
         var warning = result.HookWarning is { } hookWarning ? " " + hookWarning : string.Empty;
         var notes = string.Concat(new[] { result.FormatNote, result.TasksDirNote }.OfType<string>().Select(note => " " + note));
-        return headline + warning + " " + DescribeTestLayout(result.TestLayout) + notes
+        return headline + warning + DescribePerFileCommand(result) + " " + DescribeTestLayout(result.TestLayout) + notes
                + " Config written to .relay/config.json and left uncommitted.";
     }
+
+    /// <summary>
+    /// What the author-tests gate will run on every task, and whether anything proved
+    /// it. The gate ran this command on files a task had just written with nothing ever
+    /// having run it first, so a wrong form made the gate fail for the wrong reason.
+    /// </summary>
+    private static string DescribePerFileCommand(ProjectBootstrapResult result) =>
+        result.PerFileCommandSource switch
+        {
+            PerFileCommandSource.Table => " testFileCmd proven on the repository's own test files.",
+            PerFileCommandSource.Proposed => " testFileCmd proposed by the model and proven on the repository's own test files.",
+            PerFileCommandSource.Unproven => " testFileCmd written unproven: the repository has no test file to prove it with.",
+            _ when result.UsedPlaceholderTestCommand => string.Empty,
+            _ => " No per-file test command passed its proof; the author-tests gate will run the whole suite.",
+        };
 
     /// <summary>
     /// A command a model wrote is worth flagging even though it passed the same check

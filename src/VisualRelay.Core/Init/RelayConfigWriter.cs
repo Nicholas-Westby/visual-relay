@@ -10,7 +10,8 @@ namespace VisualRelay.Core.Init;
 // as Incomplete, which is the deliberate exhaustion signal.
 public static partial class RelayConfigWriter
 {
-    public static string Write(string rootPath, string? testCommand)
+    public static string Write(
+        string rootPath, string? testCommand, string? perFileCommand = null, bool perFileDecided = false)
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
@@ -35,7 +36,11 @@ public static partial class RelayConfigWriter
         // deliberate "Incomplete" exhaustion signal and must not gain one.
         if (testCommand is not null)
         {
-            var perFile = TestCommandDetector.PerFileForm(testCommand, rootPath);
+            // perFileDecided: the caller PROVED a form (or proved that none passed), so
+            // its answer stands even when that answer is null. Without the distinction a
+            // proof that rejected every form silently fell back to the very form it had
+            // just rejected.
+            var perFile = perFileDecided ? perFileCommand : TestCommandDetector.PerFileForm(testCommand, rootPath);
             json["testFileCmd"] = perFile is not null ? JsonValue.Create(perFile) : null;
         }
 
@@ -65,7 +70,8 @@ public static partial class RelayConfigWriter
     /// present. Preserves every other key (tierProfiles, …) so an upgrade never
     /// clobbers settings the operator changed after bootstrap.
     /// </summary>
-    public static void UpsertResolvedToolchain(string rootPath, string testCommand)
+    public static void UpsertResolvedToolchain(
+        string rootPath, string testCommand, string? perFileCommand = null, bool perFileDecided = false)
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
@@ -74,10 +80,19 @@ public static partial class RelayConfigWriter
         json["testCmd"] = testCommand;
 
         // Re-derive testFileCmd from the now-real testCmd, so the upgraded config
-        // carries no placeholder targeted command. Mirrors Write: the toolchain's
-        // real per-file form, or null when it has none.
-        var perFile = TestCommandDetector.PerFileForm(testCommand, rootPath);
-        json["testFileCmd"] = perFile is not null ? JsonValue.Create(perFile) : null;
+        // carries no placeholder targeted command — but ONLY when there is nothing
+        // there. After a greenfield bootstrap this key is null (the placeholder has no
+        // per-file form), so any value present came from the operator, and neither the
+        // table nor the proof may replace or remove it.
+        if (json["testFileCmd"] is null)
+        {
+            // perFileDecided: the caller PROVED a form, or proved that none passed, so
+            // its answer stands even when that answer is null. Without the distinction a
+            // proof that rejected every form silently fell back to the very form it had
+            // just rejected.
+            var perFile = perFileDecided ? perFileCommand : TestCommandDetector.PerFileForm(testCommand, rootPath);
+            json["testFileCmd"] = perFile is not null ? JsonValue.Create(perFile) : null;
+        }
 
         // Now that a real toolchain exists, fill in the format/guard commands —
         // but never overwrite values the operator already set.

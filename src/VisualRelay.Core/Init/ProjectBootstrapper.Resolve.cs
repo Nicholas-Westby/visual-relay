@@ -11,6 +11,14 @@ namespace VisualRelay.Core.Init;
 /// </summary>
 public static partial class ProjectBootstrapper
 {
+    /// <summary>The repository's tracked files, or none when it is not a repository yet.</summary>
+    private static async Task<IReadOnlyList<string>> TrackedPathsAsync(
+        string rootPath, IGitInvoker git, CancellationToken cancellationToken)
+    {
+        var (exitCode, output, timedOut) = await git.RunAsync(rootPath, ["ls-files", "-z"], cancellationToken);
+        return exitCode != 0 || timedOut ? [] : GitPathOutput.SplitNulRecords(output);
+    }
+
     // Detect candidates and return the first that smoke-validates; otherwise the
     // placeholder. The runner/timeout are injectable so callers (init vs. upgrade)
     // pick their own timeout and tests pass a fake.
@@ -128,4 +136,65 @@ public static partial class ProjectBootstrapper
 
         return null;
     }
+
+    /// <summary>
+    /// The per-file command bootstrap is about to write, proven on real test files.
+    /// The author-tests gate runs ONLY the test files a task wrote, through this
+    /// command, and nothing ever ran it before the first task depended on it: where the
+    /// table's form was wrong the gate then failed for the wrong reason, and a red that
+    /// comes from a broken command is not proof that the new tests fail.
+    /// <para>
+    /// The table's form is tried first, then the proposer is asked with a second
+    /// question. Nothing proven means null, and the gate runs the whole suite and says
+    /// so, which is slower and still correct. With no test file in the repository there
+    /// is nothing to prove with, so the table's form is written unproven.
+    /// </para>
+    /// </summary>
+    private static async Task<(string? Command, PerFileCommandSource Source)> ResolvePerFileCommandAsync(
+        string rootPath,
+        string testCommand,
+        IReadOnlyList<string> trackedPaths,
+        ITestRunner? validationRunner,
+        SandboxHost host,
+        ProposePerFileCommand? proposePerFile,
+        Func<string, ITestRunner>? proposalRunner,
+        List<(string, string, int, bool, string)> rejections,
+        CancellationToken cancellationToken)
+    {
+        var tableForm = TestCommandDetector.PerFileForm(testCommand, rootPath);
+        var testFiles = PerFileCommandProof.ChooseTestFiles(rootPath, trackedPaths, null);
+        if (testFiles.Count == 0)
+            return (tableForm, PerFileCommandSource.Unproven);
+
+        var runner = validationRunner ?? CreateValidationRunner(UpgradeValidationTimeout, host);
+        if (tableForm is not null)
+        {
+            var proof = await PerFileCommandProof.ProveAsync(
+                rootPath, tableForm, testFiles, runner, cancellationToken);
+            if (proof.Proven)
+                return (tableForm, PerFileCommandSource.Table);
+            rejections.Add((tableForm, proof.Reason ?? "unknown", 0, false, proof.OutputHead));
+        }
+
+        if (proposePerFile is null)
+            return (null, PerFileCommandSource.None);
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var round = 0; round < 2; round++)
+        {
+            var proposal = await proposePerFile(testCommand, testFiles, tableForm, cancellationToken);
+            if (string.IsNullOrWhiteSpace(proposal) || !seen.Add(proposal))
+                break;
+
+            var checkRunner = proposalRunner?.Invoke(proposal) ?? CreateProposalRunner(proposal, host);
+            var proof = await PerFileCommandProof.ProveAsync(
+                rootPath, proposal, testFiles, checkRunner, cancellationToken);
+            if (proof.Proven)
+                return (proposal, PerFileCommandSource.Proposed);
+            rejections.Add((proposal, proof.Reason ?? "unknown", 0, false, proof.OutputHead));
+        }
+
+        return (null, PerFileCommandSource.None);
+    }
 }
+

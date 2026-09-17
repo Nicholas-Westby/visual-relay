@@ -5,19 +5,6 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Init;
 
-/// <summary>Where the written test command came from.</summary>
-public enum TestCommandSource
-{
-    /// <summary>A built-in candidate from the marker-file table, which passed its check.</summary>
-    Detected,
-
-    /// <summary>A model proposed it after reading the repository, and it passed the same check.</summary>
-    Proposed,
-
-    /// <summary>Nothing passed, so the no-op placeholder was written.</summary>
-    Placeholder,
-}
-
 /// <summary>Outcome of bootstrapping a target folder for Visual Relay.</summary>
 public sealed record ProjectBootstrapResult(
     bool GitInitialized,
@@ -42,6 +29,9 @@ public sealed record ProjectBootstrapResult(
 
     /// <summary>Where <see cref="TestCommand"/> came from, so the status can say so.</summary>
     public TestCommandSource TestCommandSource { get; init; } = TestCommandSource.Placeholder;
+
+    /// <summary>Where the written per-file command came from, or None when none was written.</summary>
+    public PerFileCommandSource PerFileCommandSource { get; init; } = PerFileCommandSource.None;
 
     /// <summary>A refusal, carrying the gate's message and nothing else.</summary>
     /// <param name="refusal">Why bootstrap will not run here.</param>
@@ -174,6 +164,7 @@ public static partial class ProjectBootstrapper
         SandboxHost? host = null,
         ProposeTestCommand? proposeCommand = null,
         Func<string, ITestRunner>? proposalRunner = null,
+        ProposePerFileCommand? proposePerFile = null,
         CancellationToken cancellationToken = default)
     {
         var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
@@ -192,8 +183,17 @@ public static partial class ProjectBootstrapper
         var (command, usedPlaceholder, setupCheck, otherCommands, source) = await ResolveTestCommandAsync(
             rootPath, layout, validationRunner, timeout, sandboxHost, proposeCommand, proposalRunner, cancellationToken);
 
+        // 1b. Prove the per-file form on real test files before writing it. The gate
+        //     runs it on every task and nothing ever ran it first.
+        var perFileRejections = new List<(string, string, int, bool, string)>();
+        var (perFileCommand, perFileSource) = usedPlaceholder
+            ? (null, PerFileCommandSource.None)
+            : await ResolvePerFileCommandAsync(
+                rootPath, command, await TrackedPathsAsync(rootPath, gi, cancellationToken), validationRunner,
+                sandboxHost, proposePerFile, proposalRunner, perFileRejections, cancellationToken);
+
         // 2. Write .relay/config.json (also writes .relay/.gitignore; detects guard/format).
-        var configPath = RelayConfigWriter.Write(rootPath, command);
+        var configPath = RelayConfigWriter.Write(rootPath, command, perFileCommand, perFileDecided: !usedPlaceholder);
 
         // 2a. A formatter the clean checkout does not already satisfy would reformat the
         //     whole project in every task's commit, so it is left out when its check fails.
@@ -220,7 +220,7 @@ public static partial class ProjectBootstrapper
         return new ProjectBootstrapResult(
             gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath,
             setupCheck, layout, formatNote, tasksDirNote, otherCommands)
-        { TestCommandSource = source };
+        { TestCommandSource = source, PerFileCommandSource = perFileSource };
     }
 
     /// <summary>
@@ -240,6 +240,7 @@ public static partial class ProjectBootstrapper
         SandboxHost? host = null,
         ProposeTestCommand? proposeCommand = null,
         Func<string, ITestRunner>? proposalRunner = null,
+        ProposePerFileCommand? proposePerFile = null,
         CancellationToken cancellationToken = default)
     {
         var sandboxHost = host ?? SandboxHost.Local;
@@ -261,7 +262,10 @@ public static partial class ProjectBootstrapper
             return false; // still no validatable toolchain — leave the placeholder in place
         }
 
-        RelayConfigWriter.UpsertResolvedToolchain(rootPath, command);
+        var (perFileCommand, _) = await ResolvePerFileCommandAsync(
+            rootPath, command, await TrackedPathsAsync(rootPath, gitInvoker, cancellationToken), validationRunner,
+            sandboxHost, proposePerFile, proposalRunner, [], cancellationToken);
+        RelayConfigWriter.UpsertResolvedToolchain(rootPath, command, perFileCommand, perFileDecided: true);
         RelayConfigWriter.UpsertAuthorTests(rootPath, layout);
 
         return true;

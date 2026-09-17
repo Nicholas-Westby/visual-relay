@@ -79,7 +79,7 @@ continues (Verify still gates the end result). The reason names what to fix:
 |--------|---------------|------------|
 | `no test files declared` | The stage returned an empty `testFiles`, so there was nothing to gate. | Fine for a docs-only or config-only change; otherwise the task needs a test. |
 | `placeholder test command` | `testCmd` is the bootstrap placeholder: it exits 0 having run nothing. | Set a real `testCmd` in `.relay/config.json`, or re-run `bootstrap` once the project has a toolchain. |
-| `gate command unusable` | The command exited 127 (not found) or reported that it collected no tests. | Check `testFileCmd`: its `{files}` expansion must name runnable test files for this project. |
+| `gate command unusable` | The command exited 127 (not found) or reported that it collected no tests. | Check `testFileCmd`: its `{files}` expansion must name runnable test files for this project. Bootstrap proves that command on real test files before writing it (see [Per-file test commands](docs/OPERATIONS.md)), so this usually means the command was edited by hand or the project changed under it. |
 | `no implementation to strip` | The new tests pass against the current code, and nothing outside them could be taken away to make them fail. | So either the behaviour already exists (regression coverage, which is fine) or the tests do not exercise the change. Read the stage-5 diff to tell which. |
 | `green before implementation` | The tests passed with everything still in place, and at least one declared test file can carry implementation. The stage was re-asked once and still came back green. | Read the stage-5 diff: the change was probably implemented inside the test file, or the tests do not exercise it. |
 

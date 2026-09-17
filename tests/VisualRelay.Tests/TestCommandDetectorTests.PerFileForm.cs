@@ -21,7 +21,6 @@ public sealed partial class TestCommandDetectorTests
     [InlineData("npx mocha --require ts-node/register", "npx mocha --require ts-node/register {files}")]
     [InlineData("phpunit", "phpunit {files}")]
     [InlineData("vendor/bin/phpunit --colors=never", "vendor/bin/phpunit --colors=never {files}")]
-    [InlineData("mix test", "mix test {files}")]
     public void PerFileForm_ARunnerTakingPaths_KeepsItsCommandAndGainsTheToken(string command, string expected) =>
         Assert.Equal(expected, TestCommandDetector.PerFileForm(command));
 

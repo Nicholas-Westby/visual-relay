@@ -132,18 +132,93 @@ internal static class TestCommandProposer
         return text.ToString();
     }
 
+    /// <summary>
+    /// The same proposer, asked the per-file question: the command that runs JUST the
+    /// named test files. It is given the whole-suite command, the files the proof will
+    /// use and any rejected form, so it can read the project's own scripts and answer
+    /// with a form that keeps their flags — which is what the table's one-shot
+    /// replacement throws away.
+    /// </summary>
+    internal static async Task<string?> RunPerFileAsync(
+        string rootPath,
+        string testCommand,
+        IReadOnlyList<string> testFiles,
+        string? rejectedForm,
+        RelayConfig config,
+        ISubagentRunner runner,
+        CancellationToken ct)
+    {
+        var traceDirectory = Path.Combine(rootPath, ".relay", "bootstrap");
+        Directory.CreateDirectory(traceDirectory);
+
+        var input = new StringBuilder();
+        input.AppendLine($"The whole-suite test command for this repository is `{testCommand}`.");
+        input.AppendLine();
+        input.AppendLine("Give the command that runs ONLY the named test files, with a `{files}` token");
+        input.AppendLine("where their space-joined paths go. It will be checked by running it on these:");
+        foreach (var file in testFiles)
+            input.AppendLine($"- `{file}`");
+        if (rejectedForm is not null)
+        {
+            input.AppendLine();
+            input.AppendLine($"`{rejectedForm}` was tried and did not run them.");
+        }
+
+        var invocation = new StageInvocation(
+            Stage: new RelayStageDefinition(
+                Number: 0,
+                Name: "PerFileCommandProposer",
+                Tier: "cheap",
+                Kind: "llm",
+                Files: "some",
+                Commands: "all",
+                SystemPrompt:
+                    "Find the shell command that runs ONLY the given test files of this project, once, "
+                    + "and exits. Keep the flags and configuration the project's own test script uses: a "
+                    + "dropped --config or an env prefix makes the command fail before any test runs. Put "
+                    + "a {files} token where the space-joined file paths belong. You may run commands to "
+                    + "check your answer. Do NOT edit, create or delete any file.",
+                OutputContract: """{ "testFileCmd": string, "evidence": string }"""),
+            Tier: "cheap",
+            RunId: "bootstrap-perfile-" + DateTimeOffset.UtcNow.Ticks,
+            TargetRoot: rootPath,
+            TaskName: "per-file-test-command",
+            TaskInput: input.ToString(),
+            LedgerSoFar: string.Empty,
+            Manifest: [],
+            LogSources: [],
+            TraceDirectory: traceDirectory,
+            ReportFile: Path.Combine(traceDirectory, "per-file-command.report.json"),
+            MaxTurns: MaxTurns,
+            AbsoluteCeilingMs: config.SubagentTimeoutMilliseconds);
+
+        try
+        {
+            var result = await runner.RunAsync(invocation, ct);
+            return result.IsValid ? ReadCommand(result.Json, "testFileCmd") : null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>The first 30 lines: enough for a runner's refusal, short of a whole suite's output.</summary>
     private static string HeadOf(string output) =>
         string.Join('\n', output.Split('\n').Take(30)).TrimEnd();
 
-    private static string? ReadCommand(string? json)
+    private static string? ReadCommand(string? json, string key = "testCmd")
     {
         if (string.IsNullOrWhiteSpace(json))
             return null;
         try
         {
             using var document = JsonDocument.Parse(json);
-            return document.RootElement.TryGetProperty("testCmd", out var command)
+            return document.RootElement.TryGetProperty(key, out var command)
                 && command.GetString() is { } text
                 && !string.IsNullOrWhiteSpace(text)
                     ? text.Trim()

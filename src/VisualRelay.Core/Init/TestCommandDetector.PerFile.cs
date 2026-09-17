@@ -88,9 +88,6 @@ public static partial class TestCommandDetector
         // bun test a.ts b.ts
         if (runner is "bun" && tokens is [_, "test", ..])
             return true;
-        // mix test test/a_test.exs
-        if (IsNamed(runner, "mix") && tokens is [_, "test", ..])
-            return true;
         // pytest tests/a.py, .venv/bin/pytest tests/a.py
         if (IsNamed(runner, "pytest"))
             return true;
