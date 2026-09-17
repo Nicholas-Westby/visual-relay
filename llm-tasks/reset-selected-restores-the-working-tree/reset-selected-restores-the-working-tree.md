@@ -3,9 +3,11 @@
 Reset promises a flagged task a fresh start: the run directory is archived,
 the task lists as Pending, the next run begins at stage 1. It says nothing
 about the working tree, and the tree is where the flagged run's edits live.
-Every other exit from a flagged run resets the tree to the run base: a flag
-inside a drain (`ResetAndLogAsync`), a cancel (`RestoreRunBaseAsync`). Reset
-does not, and it also archives the two files the resetter would need
+Two exits from a flagged run reset the tree to the run base: a flag inside a
+drain (`ResetAndLogAsync`) and a cancel (`RestoreRunBaseAsync`). A flagged
+single-task run leaves its edits in the tree, and Reset, the command an
+operator reaches for to clear them, does not reset it either. Reset also
+archives the two files the resetter would need
 (`pre-run-untracked.txt`, `run-base.txt`), so after a reset nothing can put the
 tree back. In the validation this showed as staged work left behind after
 `reset-selected`, which the operator had to `git reset -q && git checkout -- .`
@@ -26,19 +28,30 @@ failed, leaving a staged tree and no commit. Both halves close here.
   "When stage 12 is Flagged, the commit already landed … Skip the reset", logged
   as `reset-skipped-commit-flagged` in `.relay/<drainRunId>.log`
   (`Logging/DrainSummaryLog.cs:24-26`). The check reads `status[11].Status ==
-  "Flagged"` and never asks whether HEAD moved. Both drain phases call it for
-  every other flagged outcome (`RelayQueueController.cs:159` plan, `:255`
-  execute), and `run-selected` and `resume` are single-task drains
-  (`ViewModels/MainWindowViewModel.Execution.cs:93-129`).
+  "Flagged"` and never asks whether HEAD moved. Only the execute phase of a
+  drain (Run All) calls it (`RelayQueueController.cs:255`); since 7a7dc226 a
+  planning flag leaves the checkout alone.
+- Corrected on 2026-09-17: `run-selected` and `resume` are NOT drains. They
+  build a driver directly (`ViewModels/MainWindowViewModel.Execution.cs:53-58`,
+  `MainWindowViewModel.RunOne.cs:42-86`) and never reach `ResetAndLogAsync`.
+  The driver's flag path saves the work into the bundle and leaves the tree as
+  it is (`RelayDriver.Events.cs:146-150`); only a cancel resets it
+  (`RelayDriver.Cancel.cs:124-128`). So after any flagged single-task run the
+  run's edits stay in the checkout, Reset is the operator's only tool for
+  clearing them, and today it does not. A resume copes with either state: when
+  the edits are still there, the restore's `cherry-pick -n` refuses, no file is
+  unmerged, and the restore reports success
+  (`FlaggedWorkStore.Restore.cs:70-89`).
 - `ViewModels/MainWindowViewModel.Reset.cs:9-25` `ResetSelectedTaskAsync`:
   confirm, `RelayTaskRepository.ResetTask` (`Tasks/RelayTaskRepository.Reset.cs:12-21`,
   one `Directory.Move` of `.relay/<task>/` to `.relay/<task>.reset-<stamp>/`),
   `RemoveFromSeen`, reload. No git call. The confirm text (`:16`) promises
   "it won't be lost" and "start fresh from stage 1"; it says nothing about the
   tree.
-- The retired spec `llm-tasks/completed/10-reset-flagged-task-button/DONE-10-reset-flagged-task-button.md:24-28`
-  records why the bundle matters: a post-flag reset once deleted three authored
-  test files and the bundle was their only record.
+- The retired spec for the reset button (`10-reset-flagged-task-button`, in
+  the history before 09e55431) records why the bundle matters: a post-flag
+  reset once deleted three authored test files and the bundle was their only
+  record.
 
 ## Current state (researched at d5bf93cc)
 

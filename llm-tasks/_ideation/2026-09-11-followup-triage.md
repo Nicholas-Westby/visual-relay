@@ -2,34 +2,38 @@
 
 Where every open item from the 2026-09-10/11 session went. Items are numbered
 as in the brief (`followups-brief.md`); each maps to the task under
-`llm-tasks/` that carries it, or is dropped with the reason. Twelve tasks
-carry twenty-three items. The task runner skips this directory.
+`llm-tasks/` that carries it, or says why it has none. The task runner skips
+this directory: it is a record, not a task.
+
+Revised on 2026-09-17 after the task list was pruned: specs already done were
+deleted, the Windows items overtaken by the real Windows PC runs were dropped,
+and language-specific specs were replaced by general ones.
 
 | # | Item (short) | Carried by |
 | --- | --- | --- |
 | 1 | `reset-selected` leaves the flagged run's staged work in the tree | `reset-selected-restores-the-working-tree` |
 | 2 | Bootstrap's smoke run dirties the target tree (insta `.snap.new`) | `bootstrap-smoke-leaves-the-tree-clean` |
-| 3 | No `testFileCmd` seeded for cargo, go, dotnet | `per-file-test-commands-for-dotnet-go-and-node` (cargo stays null, by decision) |
-| 4 | Dead rspec/phpunit/mix forms; jest/vitest forms drop the project's flags | `per-file-test-commands-for-dotnet-go-and-node` |
-| 5 | Should a red gate suppress the audit's re-ask | `stage-five-gate-corrections` (decided: no; pinned with the reason) |
+| 3 | No `testFileCmd` seeded for cargo, go, dotnet | `prove-the-per-file-test-command-at-bootstrap` (one general mechanism instead of a snippet per toolchain) |
+| 4 | Dead rspec/phpunit/mix forms; jest/vitest forms drop the project's flags | rspec and phpunit rules landed (fbf242f7, 87d053a1); the rest in `prove-the-per-file-test-command-at-bootstrap` |
+| 5 | Should a red gate suppress the audit's re-ask | Nothing to do. Decided: no; `RelayDriverStage5AuditTests.Stage5_AuditReportsAHunk_ReasksExactlyOnce` already pins it |
 | 6 | Advisory calls get the write-capable tool set | `advisory-calls-answer-in-one-tool-less-turn` |
-| 7 | Absolute manifest entries silently mangled | `stage-five-gate-corrections` |
-| 8 | `verify_result.attempt` diverges from trace attempts on stages 10/11 | `stage-five-gate-corrections` |
+| 7 | Absolute manifest entries silently mangled | `absolute-plan-paths-resolve-or-are-reported` |
+| 8 | `verify_result.attempt` diverges from trace attempts on stages 10/11 | Done in bc714feb; the one docs sentence left rides with `absolute-plan-paths-resolve-or-are-reported` |
 | 9 | The `[Fact]` count baseline in a 300-line file | `retire-the-fact-count-baseline` |
 | 10 | `create-task` while the archive view shows | `create-task-switches-to-the-queue-view` |
-| 11 | A stage answer lacking a required contract key is flagged, not re-asked | `re-ask-once-when-a-contract-key-is-missing` |
+| 11 | A stage answer lacking a required contract key is flagged, not re-asked | Done in a9ff2fa2; spec deleted 2026-09-17 |
 | 12 | `reasoning_effort: none` for one-shot advisory calls | `advisory-calls-answer-in-one-tool-less-turn` |
 | 13 | README screenshots stale; `check` regenerates and the diff is reverted | `render-readme-screenshots-deterministically` |
-| 14 | The Windows runtime verification (the big one) | `verify-the-windows-arm-on-a-hosted-runner` |
+| 14 | The Windows runtime verification (the big one) | Dropped 2026-09-17: the real Windows PC runs of 2026-09-13/14 overtook the hosted-runner plan. `TROUBLESHOOTING.md` still calls the checklist unverified |
 | 15 | The WSL gate never checks `git` inside the distro | `close-the-windows-entry-point-gaps` |
-| 16 | `sandboxExtraAllowPaths` resolved against the Windows profile | `close-the-windows-entry-point-gaps` |
-| 17 | `open-folder` bypasses the folder-pick policy | `close-the-windows-entry-point-gaps` |
+| 16 | `sandboxExtraAllowPaths` resolved against the Windows profile | Done in d3415218 |
+| 17 | `open-folder` bypasses the folder-pick policy | Done in 8a7a8bfa |
 | 18 | Bootstrap without a usable distro smoke-runs through `cmd.exe` | `close-the-windows-entry-point-gaps` |
-| 19 | `SandboxHost.Current` read synchronously on driver threads | `finish-the-wsl-process-model` |
-| 20 | A `wsl.exe` per CPU sample | `finish-the-wsl-process-model` (throttled, not streamed) |
-| 21 | Git in the distro has no tree control; a timed-out git is orphaned | `finish-the-wsl-process-model` |
-| 22 | The flagged-work bundle path assumes the root is the top level | `finish-the-wsl-process-model` (computed against the top level; proven on git 2.50.1) |
-| 23 | The probe workflow's action majors were never resolved | `verify-the-windows-arm-on-a-hosted-runner` (measured 2026-09-11: `checkout@v7`, `upload-artifact@v7`, `setup-dotnet@v6` all exist) |
+| 19 | `SandboxHost.Current` read synchronously on driver threads | Dropped 2026-09-17 with 20 to 22: code-reading findings that two days of real Windows runs did not hit |
+| 20 | A `wsl.exe` per CPU sample | Dropped (the sampler itself changed in 7b7af51d) |
+| 21 | Git in the distro has no tree control; a timed-out git is orphaned | Dropped |
+| 22 | The flagged-work bundle path assumes the root is the top level | Dropped |
+| 23 | The probe workflow's action majors were never resolved | Dropped with 14 (measured 2026-09-11: all three majors exist; the workflow was never dispatched) |
 
 ## Dropped, with agreement
 
@@ -44,18 +48,9 @@ carry twenty-three items. The task runner skips this directory.
 1. `retire-the-fact-count-baseline` first: every other task adds facts to the
    families it counts, and each would otherwise need a dated bump in a file
    with no room.
-2. `stage-five-gate-corrections`, `per-file-test-commands-for-dotnet-go-and-node`
-   and `re-ask-once-when-a-contract-key-is-missing` next; they change what
-   the three validation repositories record and are worth one more run of
-   the nine tasks together.
-3. `advisory-calls-answer-in-one-tool-less-turn`, `create-task-switches-to-the-queue-view`,
-   `reset-selected-restores-the-working-tree`, `bootstrap-smoke-leaves-the-tree-clean`
-   and `render-readme-screenshots-deterministically` are independent of each
-   other and of the above.
-4. Windows: `close-the-windows-entry-point-gaps` and `finish-the-wsl-process-model`
-   before `verify-the-windows-arm-on-a-hosted-runner`, so the one dispatch
-   measures the arm as it will ship; the runner task does not strictly
-   depend on either.
+2. `bootstrap-asks-the-model-when-no-test-command-passes` before
+   `prove-the-per-file-test-command-at-bootstrap`, which reuses its seam.
+3. The rest are independent of each other.
 
 ## Decisions taken while writing, so nobody re-litigates them
 
@@ -64,15 +59,11 @@ carry twenty-three items. The task runner skips this directory.
   turn calling it, c68fd37d).
 - The audit's re-ask is not suppressed by a red gate: a red earned by a hunk
   that does not compile is not proof.
-- `sandboxExtraAllowPaths` on Windows: `~/…` resolves against the distro
-  home; a `/`-rooted entry is rejected with the hint to write it as `~/…`.
-- The CPU sampler behind wsl.exe is throttled to one `ps` per 15 s, not
-  replaced by a streaming process.
-- The flagged-work bundle's fetch argument is computed with
-  `git rev-parse --show-prefix`; refusing a non-top-level root is a separate
-  gate question and stays open.
 - `check` never writes `docs/images/`; `./visual-relay screenshot` is the
   deliberate refresh, and `check` proves the render is deterministic.
-- `MntPolicy` is decided by verdict parity on DrvFs alone; timings inform the
-  warning text, not the decision.
-- The workflow's action majors stay as majors.
+- Visual Relay is a general-purpose tool (2026-09-17): a spec that teaches it
+  one language's project files or one tool's cache folders is a sign to look
+  for a general mechanism instead.
+- Visual Relay is for repositories whose suite is already green (2026-09-17):
+  failures a repository has on its base commit are fixed before it is used,
+  not worked around by the pipeline.

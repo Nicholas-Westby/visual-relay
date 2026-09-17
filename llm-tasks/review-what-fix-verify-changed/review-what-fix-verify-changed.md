@@ -18,6 +18,11 @@ PC at `~/vr-eval/i18next-run1-evidence`, the commit kept on branch
   8157f31 with four files including `vitest.config.mts`.
 - Task 1 (skipOnVariables): the same pin appeared in its Fix-verify attempt 2
   and was in the flagged-work snapshot (f6c8674, three files).
+- What pushed the agents there was three time-zone failures the clone already
+  had on its base commit, which Visual Relay does not set out to handle (it is
+  for repositories whose suite is green). The gap does not depend on that: a
+  Fix-verify agent facing any red suite may edit a file the plan never listed,
+  and nothing looks at the edit.
 
 ## Current state (researched at 37403a8a)
 
@@ -60,15 +65,20 @@ PC at `~/vr-eval/i18next-run1-evidence`, the commit kept on branch
 
 ## Verification (through the control API)
 
-Mac: in a small vitest repo with one test that fails only outside UTC on the
-base commit (so baseline subtraction does not apply to a new failure the task
-creates), create a task whose natural fix is in source; if Fix-verify pins the
-time zone, expect `fix_verify_unreviewed_edits paths=vitest.config.mts` and
-either a second review or a flag naming the file. Put the event line in the
-commit body.
+Mac: a small repository whose suite is green, in which one value is asserted
+by a test in a file far from its source (a default page size checked in
+`tests/legacy-defaults.test.js`, say). Create a task that changes the value
+and whose text names only the source file and its own test. Verify goes red on
+the distant test, and Fix-verify has to edit a file the plan never listed.
+Expected: `fix_verify_unreviewed_edits paths=tests/legacy-defaults.test.js`,
+one extra review call on that file's diff alone, and a commit when it passes.
+If the plan listed the distant test after all, the run proves the other
+branch (no event, no extra call); run it once more with the file name left
+out of the task text. Put the event line in the commit body.
 
 ## Out of scope
 
-Baseline subtraction in Fix-verify and its prompt rules
-(`subtract-base-failures-in-fix-verify`), which should make such edits rarer
-but cannot prevent them.
+The Fix-verify prompt rule about environment errors
+(`copy-ignored-folders-the-same-way-inside-wsl` carries it); failures a
+repository already has on its base commit (not something Visual Relay sets
+out to handle).

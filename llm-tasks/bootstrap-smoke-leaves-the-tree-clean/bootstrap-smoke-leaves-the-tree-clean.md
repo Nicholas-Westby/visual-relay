@@ -51,6 +51,12 @@ and the report says what was reverted.
   its own `TestCommandValidator`), and the placeholder upgrade
   (`MainWindowViewModel.RunnableGate.cs:29`,
   `ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync`).
+- Added on 2026-09-17: since 78099040 bootstrap makes one more run in the
+  tree. `FormatBaselineCheck.ApplyAsync` (`Init/ProjectBootstrapper.cs:111-112`)
+  runs the project's formatter check through a runner from the same factory,
+  so it must get the same wrapped runner, and whatever it leaves behind
+  belongs in the same report. The line numbers below predate about a hundred
+  commits; refresh them before starting.
 - The before/after pattern already exists for the verify suite:
   `RelayDriver.VerifyWorktree.cs:18` `RunIsolatedVerifyAsync` captures
   `CaptureDirtySetAsync` (`:186`, `git ls-files --others --exclude-standard -z`)
