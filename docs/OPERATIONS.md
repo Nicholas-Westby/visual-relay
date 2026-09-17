@@ -153,6 +153,13 @@ written unproven, because there is nothing to prove it with.
 A `testFileCmd` you wrote yourself is never proven, replaced or removed. The proof
 applies only to what bootstrap itself is about to write.
 
+What a passed proof does and does not say: it says the command ran the two files it was
+given and exited 0. It does not say the command generalises. A model asked for a form on
+a single-package Go module answered `go test {files} main.go`, which was right for that
+module and right in the proof, and would be wrong for any file outside that package.
+Read the written command once; the proof is a filter on obvious mistakes, not a
+guarantee about files it never saw.
+
 ## Author-test gating
 
 Whether a test can be told from an implementation by its path is a property of the
