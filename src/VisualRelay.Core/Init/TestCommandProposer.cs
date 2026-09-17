@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Costs;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Init;
@@ -51,13 +54,15 @@ internal static class TestCommandProposer
     /// <param name="config">The configuration the run's budgets come from.</param>
     /// <param name="runner">The agent to run.</param>
     /// <param name="ct">Cancellation.</param>
+    /// <param name="sink">Where the run's cost is reported; null skips the report.</param>
     /// <returns>The proposed command, or null.</returns>
     internal static async Task<string?> RunAsync(
         string rootPath,
         IReadOnlyList<CommandAttempt> attempts,
         RelayConfig config,
         ISubagentRunner runner,
-        CancellationToken ct)
+        CancellationToken ct,
+        IRelayEventSink? sink = null)
     {
         var traceDirectory = Path.Combine(rootPath, ".relay", "bootstrap");
         Directory.CreateDirectory(traceDirectory);
@@ -97,6 +102,13 @@ internal static class TestCommandProposer
         catch
         {
             return null;
+        }
+        finally
+        {
+            // Reported whatever the run produced: the provider was paid for a run that
+            // answered nothing exactly as it was paid for one that answered.
+            await PublishCostAsync(
+                sink, rootPath, invocation.RunId, invocation.Stage.Name, invocation.ReportFile);
         }
 
         return result.IsValid ? ReadCommand(result.Json) : null;
@@ -146,7 +158,8 @@ internal static class TestCommandProposer
         string? rejectedForm,
         RelayConfig config,
         ISubagentRunner runner,
-        CancellationToken ct)
+        CancellationToken ct,
+        IRelayEventSink? sink = null)
     {
         var traceDirectory = Path.Combine(rootPath, ".relay", "bootstrap");
         Directory.CreateDirectory(traceDirectory);
@@ -205,6 +218,53 @@ internal static class TestCommandProposer
         {
             return null;
         }
+        finally
+        {
+            await PublishCostAsync(
+                sink, rootPath, invocation.RunId, invocation.Stage.Name, invocation.ReportFile);
+        }
+    }
+
+    /// <summary>
+    /// Publishes what a proposer run cost, as a <c>stage_done</c> so the running total
+    /// counts it. Measured on Windows: a 15-turn, 24-tool-call proposer ran for 96
+    /// seconds and <c>/state.sessionCostUsd</c> read 0 before, during and after, because
+    /// only <c>stage_done</c> carries a cost and nothing outside the twelve stages
+    /// published one. An operator — or a script — gating on that field would have
+    /// concluded nothing had been spent.
+    /// </summary>
+    /// <param name="sink">Where the event goes; null skips the report.</param>
+    /// <param name="rootPath">The workspace, for the event.</param>
+    /// <param name="runId">The proposer run's id.</param>
+    /// <param name="stageName">Which proposer ran.</param>
+    /// <param name="reportFile">The run's report, which carries the measured usage.</param>
+    internal static async Task PublishCostAsync(
+        IRelayEventSink? sink, string rootPath, string runId, string stageName, string reportFile)
+    {
+        if (sink is null || !File.Exists(reportFile))
+            return;
+
+        RelayCostEstimate estimate;
+        try
+        {
+            estimate = RelayCostEstimator.EstimateReport(reportFile);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        await sink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "info", "stage_done", runId, rootPath, stageName, 0, "cheap",
+            Data: new Dictionary<string, string>
+            {
+                ["name"] = stageName,
+                // Formatted as the driver formats it, so both parse the same way and a
+                // fraction of a cent is not rounded away into a zero.
+                ["costUsd"] = estimate.CostUsd.ToString(CultureInfo.InvariantCulture),
+                ["model"] = estimate.Model,
+                ["turns"] = estimate.Turns.ToString(CultureInfo.InvariantCulture),
+            }));
     }
 
     /// <summary>The first 30 lines: enough for a runner's refusal, short of a whole suite's output.</summary>

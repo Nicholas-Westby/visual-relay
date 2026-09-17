@@ -62,7 +62,7 @@ public partial class MainWindowViewModel
         {
             var sink = new ObservableRelayEventSink(HandleRelayEvent);
             var runner = SubagentRunnerFactory.Create(config, sink, Env, VerboseSandboxDiagnostics);
-            return await TestCommandProposer.RunAsync(RootPath, attempts, config, runner, ct);
+            return await TestCommandProposer.RunAsync(RootPath, attempts, config, runner, ct, sink);
         };
     }
 
@@ -83,7 +83,7 @@ public partial class MainWindowViewModel
             var sink = new ObservableRelayEventSink(HandleRelayEvent);
             var runner = SubagentRunnerFactory.Create(config, sink, Env, VerboseSandboxDiagnostics);
             return await TestCommandProposer.RunPerFileAsync(
-                RootPath, testCommand, testFiles, rejectedForm, config, runner, ct);
+                RootPath, testCommand, testFiles, rejectedForm, config, runner, ct, sink);
         };
     }
 
