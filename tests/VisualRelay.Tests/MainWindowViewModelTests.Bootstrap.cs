@@ -121,6 +121,63 @@ public sealed partial class MainWindowViewModelTests
 
     private const string ConfigNote = "Config written to .relay/config.json and left uncommitted.";
 
+    private static ProjectBootstrapResult BootstrapSucceeded() =>
+        new(GitInitialized: false, HookInstalled: true, HookWarning: null,
+            UsedPlaceholderTestCommand: false, TestCommand: "npm test",
+            ConfigPath: ".relay/config.json");
+
+    /// <summary>
+    /// Bootstrap runs every candidate test command and the formatter check, which on a
+    /// large project takes minutes. A script driving the app over the control API read
+    /// isBusy=false and the idle queue line the whole time, so it could not tell that
+    /// bootstrap was running and run-all was not refused.
+    /// </summary>
+    [Fact]
+    public async Task BootstrapProjectCommand_WhileItRuns_IsBusyAndTheStatusNamesTheStep()
+    {
+        using var repo = TestRepository.Create();
+        var held = new TaskCompletionSource();
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            BootstrapRunner = async _ =>
+            {
+                await held.Task;
+                return BootstrapSucceeded();
+            },
+        };
+        await viewModel.LoadInitialAsync();
+
+        var running = viewModel.BootstrapProjectCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsBusy);
+        Assert.Equal("Bootstrapping: checking test commands", viewModel.StatusText);
+        Assert.False(viewModel.BootstrapProjectCommand.CanExecute(null));
+
+        held.SetResult();
+        await running;
+
+        Assert.False(viewModel.IsBusy);
+        Assert.Contains(ConfigNote, viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BootstrapProjectCommand_WhenItThrows_EndsNotBusy()
+    {
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            BootstrapRunner = _ => throw new InvalidOperationException("no git"),
+        };
+        await viewModel.LoadInitialAsync();
+
+        await viewModel.BootstrapProjectCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsBusy);
+        Assert.Equal("Bootstrap failed: no git", viewModel.StatusText);
+    }
+
     [Fact]
     public async Task EnsureRunnableAsync_UpgradesPlaceholder_WhenToolchainAppears()
     {

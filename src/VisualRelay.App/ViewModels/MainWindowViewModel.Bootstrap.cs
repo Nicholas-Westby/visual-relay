@@ -25,6 +25,11 @@ public partial class MainWindowViewModel
     // runs inside a WSL distro) to a refusal or null. Null → GitIdentityGate with real git.
     public Func<string, bool, Task<string?>>? GitIdentityCheck { get; init; }
 
+    // Injectable bootstrap seam: (root path) → the outcome. Null → ProjectBootstrapper
+    // with real git. Tests inject one they can hold open, so what /state reports while
+    // bootstrap is still running can be asserted.
+    public Func<string, Task<ProjectBootstrapResult>>? BootstrapRunner { get; init; }
+
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 
     // Makes an empty/greenfield folder runnable in one action: git init + a HEAD
@@ -36,9 +41,17 @@ public partial class MainWindowViewModel
     private async Task BootstrapProjectAsync()
     {
         string outcome;
+        // Bootstrap runs every test command candidate and the formatter check, which
+        // takes minutes on a large project. Without this a polling script read
+        // isBusy=false and the idle queue line the whole time, and run-all was not
+        // refused. The existing refusals key on IsBusy, so they now cover bootstrap.
+        IsBusy = true;
+        StatusText = "Bootstrapping: checking test commands";
         try
         {
-            var result = await ProjectBootstrapper.BootstrapAsync(RootPath, new GitInvoker());
+            var result = BootstrapRunner is { } run
+                ? await run(RootPath)
+                : await ProjectBootstrapper.BootstrapAsync(RootPath, new GitInvoker());
             SetupCheck = result.SetupCheck;
             outcome = DescribeBootstrap(result);
         }
@@ -47,6 +60,12 @@ public partial class MainWindowViewModel
             SetupCheck = null;
             StatusText = $"Bootstrap failed: {ex.Message}";
             return;
+        }
+        finally
+        {
+            // Before the refresh below, so it takes its ordinary idle branch and the
+            // closing sentence is still written last.
+            IsBusy = false;
         }
 
         await RefreshAsync();

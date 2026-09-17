@@ -119,7 +119,9 @@ Endpoints:
   is upgraded to the real test command automatically once the project gains a
   toolchain. Its outcome — including the note that the config was left uncommitted,
   and any warning about a pre-commit hook it refused to overwrite — is left in
-  `/state.statusText`), `run-all`, `run-selected`,
+  `/state.statusText`. It runs each candidate test command and the formatter check, so
+  it can take minutes: `/state.isBusy` is true for as long as it runs and the commands
+  that refuse a busy app refuse it), `run-all`, `run-selected`,
   `resume`, `cancel`, `refresh`, `pause-toggle`, `archive-toggle`,
   `new-task`, `follow-running`, `edit`, `rewrite-selected`, `cancel-rewrite`,
   `revert-rewrite`, `mark-done`, `reset-selected`, plus property actions

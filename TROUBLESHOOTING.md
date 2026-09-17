@@ -119,6 +119,20 @@ inline-capable while `.py` stays gated by path. Re-running `bootstrap` refreshes
 `detectedLanguages` and `inlineTestExtensions`, so record a hand-added extension
 somewhere you will remember.
 
+## `vr-control: slow request ...` on the app's stderr
+
+The control server writes that line for any request other than `GET /screenshot`
+that took longer than two seconds, naming the method, the path and the
+milliseconds. Every command and `/state` are serialized on the UI thread, so a
+slow one means something was holding that thread at that moment, not that the
+network was slow. `/screenshot` is exempt: it renders the window and is slow by
+nature.
+
+Treat the line as the starting point of a report, not a fault in itself: note
+the request it names and read the run log around that timestamp to see what the
+app was doing. A slow `/state` right after `cancel` was seen twice on Windows
+and has no reproduction yet.
+
 ## A target repo already tracks `.relay` run artifacts
 
 Older versions force-added each run's bookkeeping (ledger, seals, manifest,

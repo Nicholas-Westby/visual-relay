@@ -6,14 +6,31 @@ namespace VisualRelay.App.Services;
 public sealed partial class ControlServer
 {
     /// <summary>
+    /// How long a request may take before the handler says so on stderr. /state and
+    /// every command run on the UI thread, so a slow one means something is holding
+    /// that thread; twice on Windows /state took over 20 seconds and nothing recorded
+    /// which request it was.
+    /// </summary>
+    internal const int SlowRequestThresholdMs = 2000;
+
+    /// <summary>
     /// Creates a transport-agnostic <see cref="RequestDelegate"/> that handles
     /// every control API route. Both the Kestrel host and in-memory tests share
     /// this single handler factory — no sockets, no ports, no HttpListener.
+    /// The clock and the log sink are injectable so the timing can be tested
+    /// without a slow request.
     /// </summary>
-    public static RequestDelegate BuildHandler(ControlApi api, ControlServerOptions options)
+    public static RequestDelegate BuildHandler(
+        ControlApi api,
+        ControlServerOptions options,
+        Func<DateTimeOffset>? now = null,
+        Action<string>? log = null)
     {
+        var clock = now ?? (() => DateTimeOffset.UtcNow);
+        var write = log ?? Console.Error.WriteLine;
         return async (context) =>
         {
+            var started = clock();
             try
             {
                 await RouteAsync(context, api, options);
@@ -21,6 +38,20 @@ public sealed partial class ControlServer
             catch (Exception ex)
             {
                 await TryWriteErrorAsync(context, ex);
+            }
+
+            // After the response, so the log line never delays the caller.
+            // /screenshot renders a window and is slow by nature, so it is exempt.
+            var path = context.Request.Path.Value ?? "/";
+            if (path == ControlRoutes.Screenshot.Path)
+            {
+                return;
+            }
+
+            var elapsed = (clock() - started).TotalMilliseconds;
+            if (elapsed > SlowRequestThresholdMs)
+            {
+                write($"vr-control: slow request {context.Request.Method} {path} took {(long)elapsed} ms");
             }
         };
     }
