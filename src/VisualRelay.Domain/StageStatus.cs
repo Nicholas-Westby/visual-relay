@@ -58,6 +58,16 @@ public static class StageStatusRecord
     /// attempts caps the added wait at about 30 ms.
     /// </para>
     /// <para>
+    /// Four is enough for THIS contention, not for any. Verified on Windows at a
+    /// plan-phase cadence, one writer against a handful of readers: 10 runs of the
+    /// concurrency test, 0 writer failures, against 10 of 10 red before the retry
+    /// existed. Under the zero-delay hammer four attempts WOULD start dropping updates,
+    /// and that is the designed behaviour at that load rather than a fault to chase.
+    /// Raise the count on measured numbers if a real workload shows residual failures;
+    /// do not raise it on reasoning, because the cost of being wrong that way is
+    /// starvation rather than staleness.
+    /// </para>
+    /// <para>
     /// A run that still cannot replace drops the update rather than failing. This file
     /// is bookkeeping; one stage of staleness until the next write beats killing the
     /// task that produced it.
