@@ -14,7 +14,22 @@ namespace VisualRelay.Core.Execution;
 /// </summary>
 public sealed record SandboxHost(bool IsWindows, WslContext? Wsl)
 {
-    /// <summary>nono runs on this machine.</summary>
+    /// <summary>
+    /// nono runs on this machine, AND this machine is not Windows. The record is
+    /// <c>IsWindows: false</c>, and every launch site reads that as a statement about
+    /// the platform rather than as the absence of one: on Windows it is a false
+    /// statement, the launch takes the POSIX branch and starts <c>/bin/sh</c>, which is
+    /// not there (<c>ShellTestRunnerWslRouteTests.ResolveLaunch_LocalHost_IsBinSh</c>
+    /// pins that behaviour).
+    /// <para>
+    /// So it is not a neutral default, and there is no neutral value here. A caller
+    /// that wants "whatever this machine is" wants <see cref="Current"/> or
+    /// <see cref="CurrentAsync"/>; a test that wants to stop a probe wants the host for
+    /// the platform it is running on, which on Windows means one WITH a distro. Chosen
+    /// as a safe-looking default in a test, this cost two rounds of Windows failures
+    /// that looked like the flake it had just replaced.
+    /// </para>
+    /// </summary>
     public static SandboxHost Local { get; } = new(false, null);
 
     /// <summary>nono runs inside the distro of <paramref name="wsl"/>; null when no usable distro was resolved.</summary>
