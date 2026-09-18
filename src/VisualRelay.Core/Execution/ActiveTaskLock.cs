@@ -68,11 +68,22 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
                 await claim.WriteAsync(payload, cancellationToken);
                 return new ActiveTaskLock(activeDir, nonce);
             }
-            catch (IOException) when (attempt < Attempts && ReclaimedStaleClaim(infoPath))
+            // Both arms name UnauthorizedAccessException, which does NOT derive from
+            // IOException. CreateNew reports an existing target as IOException normally,
+            // but as UnauthorizedAccessException when that target is DELETE-PENDING on
+            // Windows — precisely the state TryDelete leaves it in while another handle
+            // is still open, so it is the reclaim path that produces it. Measured there:
+            // 28 escapes in four seconds, all from this FileStream. A delete-pending
+            // claim is a HELD claim, so treating it as one keeps the semantics and only
+            // changes a crash into the refusal that was always intended. The other two
+            // methods in this file already named it; only the claim did not.
+            catch (Exception ex) when (
+                ex is IOException or UnauthorizedAccessException
+                && attempt < Attempts && ReclaimedStaleClaim(infoPath))
             {
                 // The holder was provably gone and its claim is cleared; race for it again.
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 throw new InvalidOperationException("relay: another task is already active");
             }

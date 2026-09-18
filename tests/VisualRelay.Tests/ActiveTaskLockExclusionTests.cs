@@ -77,4 +77,36 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
         // standing between that and a green suite.
         Assert.Equal(1, peak);
     }
+
+    /// <summary>
+    /// The contract is that acquiring either returns a lock or REFUSES; a raw filesystem
+    /// exception is neither. Measured on Windows: <c>FileMode.CreateNew</c> reports an
+    /// existing target as IOException normally but as UnauthorizedAccessException when
+    /// that target is delete-pending, which is the state the reclaim path leaves it in,
+    /// and 28 callers in four seconds crashed out where a refusal was intended.
+    /// <para>
+    /// Delete-pending does not exist on POSIX, so this reaches the same catch by the
+    /// other route available here — a claim directory that cannot be written to. It pins
+    /// the contract rather than reproducing their case; only Windows can do that.
+    /// </para>
+    /// </summary>
+    [Fact]
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    public async Task WhenTheClaimCannotBeCreatedAtAll_ItRefusesRatherThanThrowingRaw()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "mode bits are the POSIX route to an unwritable claim");
+        var activeDir = Path.Combine(_root, ".relay", "ACTIVE");
+        Directory.CreateDirectory(activeDir);
+        File.SetUnixFileMode(activeDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => ActiveTaskLock.AcquireAsync(_root, "task", CancellationToken.None));
+        }
+        finally
+        {
+            File.SetUnixFileMode(activeDir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
 }
