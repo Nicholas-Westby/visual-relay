@@ -91,10 +91,18 @@ public sealed class WslContextResolverTests
                 Enumerable.Range(0, 8).Select(_ => Task.Run(
                     WslContextResolver.ProbedForTestsAsync, TestContext.Current.CancellationToken)));
 
-            Assert.Equal(1, probes);
+            // Named, because the two probe-count checks are otherwise indistinguishable
+            // in a failure and this test has failed twice on Windows without either of us
+            // being able to say which line went. Duration used to separate the cases — a
+            // real six-step probe is hundreds of milliseconds — but a later failure came
+            // in at 47 ms against passes spanning 10 to 67 ms, so that signal does not
+            // survive at this scale and the values have to carry it instead.
+            Assert.True(probes == 1, $"eight callers should share one probe; ran {probes}");
             Assert.All(asked, context => Assert.Equal("Ubuntu", context!.Distro));
-            Assert.Same(asked[0], await WslContextResolver.ProbedForTestsAsync());
-            Assert.Equal(1, probes);
+            var again = await WslContextResolver.ProbedForTestsAsync();
+            Assert.True(ReferenceEquals(asked[0], again),
+                "a later caller got a different context, so the memo was replaced mid-test");
+            Assert.True(probes == 1, $"the memo should still hold; ran {probes} probes in total");
         }
         finally
         {

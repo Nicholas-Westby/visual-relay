@@ -20,17 +20,23 @@ public static class WslContextResolver
 {
     private static readonly TimeSpan ProbeStepTimeout = TimeSpan.FromSeconds(60);
     private static readonly object Gate = new();
-    private static Func<CancellationToken, Task<WslProbe>> _prober = ProbeAsync;
-    private static Lazy<Task<WslContext?>> _probed = NewProbe();
+    private static Lazy<Task<WslContext?>> _probed = NewProbe(ProbeAsync);
     private static WslContext? _override;
 
     // The one probe, memoized as a TASK both accessors share. It is started on the
     // thread pool because the blocking accessor is reachable from the UI thread:
     // probing inline would make the UI thread the continuation its own awaits are
     // queued to, and the wait would never end.
-    private static Lazy<Task<WslContext?>> NewProbe() =>
+    // The prober is CAPTURED here rather than looked up when the memo first resolves.
+    // It used to be read from a shared field inside this lambda, outside the lock that
+    // wrote it and long after the memo was built, so the memo was not bound to the
+    // prober installed with it: whatever was current at first resolution won. A test
+    // that installed a fixture and a caller that resolved after something restored the
+    // real prober would disagree about which one ran, and the fixture's own counter
+    // would never move. Capturing binds the two together and retires the field.
+    private static Lazy<Task<WslContext?>> NewProbe(Func<CancellationToken, Task<WslProbe>> prober) =>
         new(
-            () => Task.Run(async () => FromProbe(await _prober(CancellationToken.None).ConfigureAwait(false))),
+            () => Task.Run(async () => FromProbe(await prober(CancellationToken.None).ConfigureAwait(false))),
             LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>
@@ -100,8 +106,7 @@ public static class WslContextResolver
     {
         lock (Gate)
         {
-            _prober = prober ?? ProbeAsync;
-            _probed = NewProbe();
+            _probed = NewProbe(prober ?? ProbeAsync);
         }
     }
 
