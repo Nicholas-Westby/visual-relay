@@ -15,9 +15,9 @@ internal static class WslProbeFixtures
     private static readonly WslDistro Ubuntu = new("Ubuntu", 2, true, "Running");
     private static readonly WslDistro Debian = new("Debian", 1, false, "Stopped");
 
-    public static WslProbe Usable() => new(
+    public static WslProbe Usable(string distroName = "Ubuntu") => new(
         WslExeFound: true, WslExePath: WslExe, Distros: [Ubuntu, Debian], RequestedDistro: null,
-        DistroName: "Ubuntu", IsWsl2: true, KernelRelease: Kernel, NonoPath: "/usr/local/bin/nono",
+        DistroName: distroName, IsWsl2: true, KernelRelease: Kernel, NonoPath: "/usr/local/bin/nono",
         NonoVersion: "nono 0.75.0", LandlockActive: true, DistroHome: "/home/alice", Diagnostics: null)
     { GitPath = "/usr/bin/git" };
 

@@ -34,6 +34,19 @@ public static class WslContextResolver
             LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>
+    /// The memo, read under the same lock that replaces it. The field was written
+    /// under <c>Gate</c> and read outside it at every call site, so a caller could
+    /// resolve a STALE Lazy: on Windows that is the real six-step wsl.exe probe, run
+    /// after a test had already installed a fixture prober. Measured there, the probe
+    /// test failed taking 468 ms against a 9 ms baseline — the duration of a real
+    /// probe rather than of a memo read, which is what identified this.
+    /// </summary>
+    private static Lazy<Task<WslContext?>> Probed
+    {
+        get { lock (Gate) { return _probed; } }
+    }
+
+    /// <summary>
     /// The resolved context, blocking on the one probe when it is still running.
     /// Prefer <see cref="TryGetCurrentAsync"/> anywhere an await is possible.
     /// </summary>
@@ -45,7 +58,7 @@ public static class WslContextResolver
                 return _override;
         }
 
-        return OperatingSystem.IsWindows() ? _probed.Value.GetAwaiter().GetResult() : null;
+        return OperatingSystem.IsWindows() ? Probed.Value.GetAwaiter().GetResult() : null;
     }
 
     /// <summary>
@@ -65,7 +78,7 @@ public static class WslContextResolver
         if (!OperatingSystem.IsWindows())
             return null;
 
-        return await _probed.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await Probed.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -84,7 +97,7 @@ public static class WslContextResolver
     }
 
     /// <summary>The memoized probe task, platform checks and override skipped.</summary>
-    internal static Task<WslContext?> ProbedForTestsAsync() => _probed.Value;
+    internal static Task<WslContext?> ProbedForTestsAsync() => Probed.Value;
 
     /// <summary>Sets (or with null clears) the override that <see cref="TryGetCurrent"/> returns first.</summary>
     public static void Override(WslContext? context)

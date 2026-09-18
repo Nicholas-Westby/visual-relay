@@ -101,4 +101,34 @@ public sealed class WslContextResolverTests
             WslContextResolver.UseProberForTests(null);
         }
     }
+
+    /// <summary>
+    /// A prober installed while callers are already asking must be the one they get.
+    /// The memo field was written under the lock and read outside it, so a reader could
+    /// resolve the PREVIOUS Lazy — on Windows the real wsl.exe probe — after a fixture
+    /// had replaced it. This drives the swap and the reads together; it cannot make a
+    /// stale read certain, so it is a guard on the contract rather than a reproduction.
+    /// </summary>
+    [Fact]
+    public async Task AProberInstalledWhileCallersAsk_IsTheOneTheyGet()
+    {
+        try
+        {
+            for (var round = 0; round < 40; round++)
+            {
+                var distro = $"Round{round}";
+                WslContextResolver.UseProberForTests(
+                    _ => Task.FromResult(WslProbeFixtures.Usable(distro)));
+
+                var asked = await Task.WhenAll(Enumerable.Range(0, 8)
+                    .Select(_ => Task.Run(WslContextResolver.ProbedForTestsAsync)));
+
+                Assert.All(asked, context => Assert.Equal(distro, context!.Distro));
+            }
+        }
+        finally
+        {
+            WslContextResolver.UseProberForTests(null);
+        }
+    }
 }
