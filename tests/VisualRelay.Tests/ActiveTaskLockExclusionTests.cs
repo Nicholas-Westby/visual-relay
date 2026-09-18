@@ -109,4 +109,45 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
     }
+
+    /// <summary>
+    /// The shape that produced the escapes: callers acquiring and releasing repeatedly,
+    /// so one caller's release is deleting the claim directory while another is creating
+    /// its claim inside it. Measured on Windows, that race is where the crashes came
+    /// from — creating against a deleting parent gave 2485 DirectoryNotFound, 158
+    /// IOException and 97 UnauthorizedAccess in 2.5 s, against 3 for racing the file's
+    /// own deletion. Nothing may escape acquiring, and two callers may never be in.
+    /// <para>
+    /// It does not isolate the vanished-directory branch from the refusing one: both
+    /// leave the caller outside the lock, and only the message differs. It guards the
+    /// class, which is that a contended lock answers rather than throws.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task CallersChurningTheLock_NeverEscapeAndNeverOverlap()
+    {
+        int other = 0, peak = 0, live = 0, acquired = 0;
+
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(i => Task.Run(async () =>
+        {
+            for (var round = 0; round < 25; round++)
+            {
+                try
+                {
+                    await using var held = await ActiveTaskLock.AcquireAsync(
+                        _root, $"task-{i}", CancellationToken.None);
+                    Interlocked.Increment(ref acquired);
+                    InterlockedMax(ref peak, Interlocked.Increment(ref live));
+                    Interlocked.Decrement(ref live);
+                }
+                catch (InvalidOperationException) { }
+                catch { Interlocked.Increment(ref other); }
+            }
+        })));
+
+        Assert.Equal(0, other);
+        Assert.Equal(1, peak);
+        // The churn has to actually reach the lock, or the test proves nothing.
+        Assert.True(acquired > 0, "no caller ever acquired, so nothing was exercised");
+    }
 }

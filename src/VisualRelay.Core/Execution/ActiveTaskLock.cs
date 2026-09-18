@@ -68,15 +68,28 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
                 await claim.WriteAsync(payload, cancellationToken);
                 return new ActiveTaskLock(activeDir, nonce);
             }
+            // The previous holder's Release is deleting this directory out from under
+            // the claim. A directory marked for deletion still satisfies
+            // Directory.CreateDirectory — it exists — while refusing file creation
+            // inside it, which is why creating the directory above does not shield this
+            // line. The lock is FREE in that case rather than held, so recreate and race
+            // for it again instead of answering "already active", which would be the
+            // opposite of the truth. Must precede the arms below: this derives from
+            // IOException.
+            catch (DirectoryNotFoundException) when (attempt < Attempts)
+            {
+                Directory.CreateDirectory(activeDir);
+            }
             // Both arms name UnauthorizedAccessException, which does NOT derive from
-            // IOException. CreateNew reports an existing target as IOException normally,
-            // but as UnauthorizedAccessException when that target is DELETE-PENDING on
-            // Windows — precisely the state TryDelete leaves it in while another handle
-            // is still open, so it is the reclaim path that produces it. Measured there:
-            // 28 escapes in four seconds, all from this FileStream. A delete-pending
-            // claim is a HELD claim, so treating it as one keeps the semantics and only
-            // changes a crash into the refusal that was always intended. The other two
-            // methods in this file already named it; only the claim did not.
+            // IOException. Racing that same parent deletion is what produces it, measured
+            // on Windows over 2.5 s: creating against a deleting PARENT gave 2485
+            // DirectoryNotFound, 158 IOException and 97 UnauthorizedAccess, while racing
+            // the FILE's own deletion gave 3 in twice as many attempts — about thirty
+            // times less per attempt. So the source is the release path, not the reclaim
+            // path, and a claim that cannot be created for any of those reasons is one
+            // this caller does not hold. The other two methods in this file already named
+            // UnauthorizedAccessException; only the claim did not. Measured effect of
+            // naming it: 28 escapes in four seconds became 0.
             catch (Exception ex) when (
                 ex is IOException or UnauthorizedAccessException
                 && attempt < Attempts && ReclaimedStaleClaim(infoPath))
