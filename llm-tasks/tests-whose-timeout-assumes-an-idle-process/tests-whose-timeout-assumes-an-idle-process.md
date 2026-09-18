@@ -46,16 +46,28 @@ creates threads on demand; above it, it adds roughly two per second while it
 hill-climbs, so once every thread is blocked the work that would release them waits
 on that trickle.
 
-`95ca6494` raises the floor to 8x processor count in the test module initializer.
-Whether it fixes this is **UNRESOLVED**, and the spec should not be read as saying it
-does. What is established:
+`95ca6494` raises the floor to 8x processor count in the test module initializer. It was
+measured, 18 runs per condition on Windows and 6 per condition on macOS, with the columns
+declared usable from within-condition noise BEFORE any comparison and p50 held back as a
+control. Result: a **small, consistent, directional improvement and no harm**.
 
-- no measured harm, on two machines and after an earlier harm finding was withdrawn
-  (it used a confounded baseline, and an independent test on the arm chosen to detect
-  the cost found no degradation in any column);
-- no proven benefit: the failure tally is uninformative under the agreed rule that
-  clustered failures count as one episode, and the quantile comparison was at or
-  beyond the resolution of 18 runs per condition.
+  Windows, usable columns only, control clean:
+    p50   1.00x   all values tied, test undefined — the control did not move
+    >1s   0.98x   2% fewer tests over one second
+    >2s   0.93x   7% fewer tests over two seconds
+  Every column that FAILED the noise rule pointed the same way: 0.88x to 0.95x.
+  macOS, on a machine with no starvation to relieve, found no degradation in any
+  column — the predicted cost of a raised floor did not appear.
+
+What that does NOT establish, and must not be read as: it does not explain the flakes.
+A 2-7% shift in how many tests cross a one- or two-second line is nowhere near enough to
+turn 3 failures in 18 runs into 0. The failure tally was uninformative by prior agreement
+(3 failures forming 2 clusters against 0, p=0.486), so the flake question is still open
+and this change is not its answer.
+
+Read the significance as direction, not as odds: the 18 runs per side are consecutive
+rather than independent, and the observed failures clustered, so the same autocorrelation
+inflates those z-scores.
 
 ## Prescribed approach
 
