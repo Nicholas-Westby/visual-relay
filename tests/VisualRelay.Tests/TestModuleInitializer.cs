@@ -42,5 +42,39 @@ internal static class TestModuleInitializer
         Directory.CreateDirectory(tempDir);
         Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", tempDir);
         RedirectedXdgConfigHome = tempDir;
+        RaiseThreadPoolFloor();
+    }
+
+    /// <summary>
+    /// Lets the thread pool add threads immediately instead of at its injection rate.
+    /// <para>
+    /// Below the minimum the pool creates a thread on demand; above it, it adds roughly
+    /// two per second while it hill-climbs. The suite runs 2.0x processor count in
+    /// parallel and much of what it does BLOCKS a pool thread — file IO, waiting on a
+    /// spawned process, an Avalonia async-void continuation posted back from a pool
+    /// thread. Once every thread is blocked, work that would release them sits in the
+    /// queue for seconds, which is a deadlock in all but name and resolves only as the
+    /// pool trickles threads in.
+    /// </para>
+    /// <para>
+    /// That is the shape already recorded in <c>IsolatedCollectionDefinition</c>:
+    /// measured on Windows in a parallel full run, a child process that exited 0.55 s in
+    /// was reported back at 6.1 s. The same starvation expires a 5 s wait for a settings
+    /// window and a 5 s loopback request whose own listener needs a pool thread to
+    /// accept. Roughly one Windows full run in five fails one of five tests this way,
+    /// and none of them reproduces in isolation, because isolation removes the cause.
+    /// </para>
+    /// <para>
+    /// This is a CANDIDATE fix, not a proven one: it cannot be reproduced on macOS, so
+    /// the test of it is whether that rate falls. Raising the floor only — never
+    /// lowering it — so a host that already asked for more keeps what it asked for.
+    /// </para>
+    /// </summary>
+    private static void RaiseThreadPoolFloor()
+    {
+        ThreadPool.GetMinThreads(out var workers, out var completionPorts);
+        var wanted = Math.Max(workers, Environment.ProcessorCount * 8);
+        var wantedPorts = Math.Max(completionPorts, Environment.ProcessorCount * 8);
+        ThreadPool.SetMinThreads(wanted, wantedPorts);
     }
 }
