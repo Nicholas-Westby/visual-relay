@@ -103,6 +103,32 @@ to see it: at 22% before, distinguishing "fixed" from "less often" needs more th
 - p50 is a useful control precisely because it cannot move: 57% of tests finish in under
   a millisecond and never touch the pool.
 
+## If you build an instrument to measure this
+
+Five instruments were written for this question in one afternoon and all five were
+wrong at least once. Four failed toward silence or a plausible wrong answer:
+
+  a relative output path         wrote nowhere; caught by an absence of output
+  a sort on undated filenames    right data filed under the wrong condition
+  an ordering rule on timestamps the matched control ran LAST, so "later means after"
+                                 inverted every sample while looking perfectly sorted
+  a glob delete on an empty dir  aborted the whole run with exit 0 and no output
+
+The usual defences catch those: is the output the shape you expected before you ran it;
+verify the property rather than the commit; read which tests failed, not how many.
+
+The fifth failed the other way and no defence above would have caught it. A rank test
+with no tie handling reported the control as moving at z=+5.13 when all 36 values were
+identical — a catastrophic-looking control failure produced by arithmetic, which would
+have caused a clean result to be discarded as contaminated. It was caught only because
+z=+5.13 and a ratio of exactly 1.00x cannot both be true.
+
+So add this check: **when an instrument produces an alarming result, test it against the
+other numbers that same instrument produced before acting on it.** A control that fails
+while the quantity it controls for is exactly zero is not a control failure, it is an
+arithmetic failure. Every other guard here defends against believing a result you want;
+this one defends against discarding a result you do not.
+
 ## Rejected alternatives
 
 - **Raising the 5s deadlines.** Moves the race. See above.
