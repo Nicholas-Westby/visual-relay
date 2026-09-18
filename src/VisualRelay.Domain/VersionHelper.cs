@@ -70,13 +70,19 @@ public static class VersionHelper
         if (text is not null && TryParse(text, out var current))
         {
             var bumped = Format(current + 1);
-            File.WriteAllText(path, bumped + Environment.NewLine);
+            // "\n", never Environment.NewLine: this file is tracked and .gitattributes
+            // says `* text=auto eol=lf`. On Windows CRLF is written, `git add` normalises
+            // it to LF, and the working tree keeps CRLF — so VERSION shows as modified
+            // from then on and never stops. Measured there: writing the SAME content back
+            // with CRLF and nothing else is enough to make git report the file changed.
+            // The pre-commit hook bumps this on every commit, so the dirt is permanent.
+            File.WriteAllText(path, bumped + "\n");
             return bumped;
         }
 
         // Seed with 0.1
         const string seed = "0.1";
-        File.WriteAllText(path, seed + Environment.NewLine);
+        File.WriteAllText(path, seed + "\n");
         return seed;
     }
 
