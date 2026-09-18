@@ -71,12 +71,17 @@ green one.
 
 So when a run's result matters, redirect and check `$?`, or read the totals line
 rather than the exit code — but do not read the exit code THROUGH a filter and
-believe it. The 60s default is a deliberate speed budget: the suite is meant to finish inside
+believe it. The 90s default is a deliberate speed budget: the suite is meant to finish inside
 it. Raise it for a single run with `VISUAL_RELAY_TEST_TIMEOUT=<seconds>` when you
 need a slow machine to report rather than vanish, but do not raise the default to
 make a slow suite pass. For reference, five consecutive healthy passes on a Windows
-box took 58.8s, 55.8s, 53.0s, 66.1s and 53.3s, so that arm is at or over budget
-while macOS finishes the same suite in about half the time.
+box took 58.8s, 55.8s, 53.0s, 66.1s and 53.3s, so that arm was at or over the earlier
+60s budget while macOS finishes the same suite in about half the time.
+
+The 90 is pinned rather than merely documented: the `test-budget` guard in
+`tools/VisualRelay.Guards` reads the literal out of
+`tools/VisualRelay.Cli/WatchdogTimeouts.cs`, the pre-commit hook runs it, and a commit
+that moves the number off 90 is rejected.
 
 ## Leftover backend state under `$XDG_DATA_HOME/visual-relay/`
 

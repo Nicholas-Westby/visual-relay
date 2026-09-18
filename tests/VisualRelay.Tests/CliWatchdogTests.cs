@@ -53,7 +53,7 @@ public sealed class CliWatchdogTests
         Assert.Equal(124, rc);
     }
 
-    // The env-var timeout seams (VISUAL_RELAY_TEST_TIMEOUT default 60s for `test`,
+    // The env-var timeout seams (VISUAL_RELAY_TEST_TIMEOUT default 90s for `test`,
     // VISUAL_RELAY_CHECK_TEST_TIMEOUT default 300s for the `check` gate) are
     // resolved by the pure WatchdogTimeouts.Resolve, tested here directly so no
     // process-global env mutation is needed (a banned pattern in tests).
