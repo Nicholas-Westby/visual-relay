@@ -111,6 +111,57 @@ public sealed partial class RelayDriver
               + "nothing reviewed those edits.";
     }
 
+    /// <summary>
+    /// What the commit is about to carry that the plan never named, announced as
+    /// <c>commit_unplanned_edits</c>.
+    /// <para>
+    /// The two checks above both hang off Fix-verify: one runs when that stage goes
+    /// green, the other when its ladder is exhausted. Measured on i18next: a RESUME
+    /// whose Verify passed on the first attempt SKIPS Fix-verify entirely, so neither
+    /// fired, and two test files a previous run had edited outside the plan went into
+    /// the commit unreviewed and unmentioned. The edits were made by a stage that was
+    /// not running any more. So this one hangs off the commit instead, which is where
+    /// the edits stop being a working tree and start being history, and it does not
+    /// care which stage made them or whether that stage ran.
+    /// </para>
+    /// <para>
+    /// It reports rather than refuses. Two clean runs on gorilla/mux committed exactly
+    /// the manifest plus the retired task file, so this is silent on an ordinary run;
+    /// making it block on the strength of one observed case would be a policy change
+    /// the evidence does not carry yet.
+    /// </para>
+    /// </summary>
+    private async Task ReportUnplannedCommitEditsAsync(
+        string rootPath, string runId, string taskId, RelayConfig config,
+        IReadOnlyList<string> manifest, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> unplanned;
+        try
+        {
+            var changed = await WorktreeChanges.ListAsync(
+                rootPath, config.TasksDir, _dependencies.GitInvoker, cancellationToken);
+            var planned = new HashSet<string>(
+                ManifestPaths.ResolveAll(rootPath, manifest).Resolved, StringComparer.Ordinal);
+            unplanned = [.. changed.Where(path => !planned.Contains(path))
+                .OrderBy(path => path, StringComparer.Ordinal)];
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            // Never let a report stop a commit that has already passed its gates.
+            return;
+        }
+
+        if (unplanned.Count == 0)
+            return;
+
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "warn", "commit_unplanned_edits", runId, rootPath, taskId, 12,
+            Data: new Dictionary<string, string>
+            {
+                ["paths"] = string.Join(", ", unplanned),
+            }), cancellationToken);
+    }
+
     private async Task<(string Verdict, string Issues, string Body)?> RunFixVerifyReviewStageAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, RelayTaskInput input, StringBuilder ledger,

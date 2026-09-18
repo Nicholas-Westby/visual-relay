@@ -169,6 +169,12 @@ public sealed partial class RelayDriver
         if (_options.LastStageToRun is not null)
             return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Planned, null, null, null);
 
+        // Before retirement moves anything, and outside the real-commit branch so a
+        // simulated run reports what it would have carried: the last point at which the
+        // tree can be compared with the plan that was supposed to produce it.
+        await ReportUnplannedCommitEditsAsync(
+            rootPath, runId, taskId, config, manifest, cancellationToken);
+
         var commitStopwatch = Stopwatch.StartNew();
         var commitSha = "simulated";
         var doneWritten = false;

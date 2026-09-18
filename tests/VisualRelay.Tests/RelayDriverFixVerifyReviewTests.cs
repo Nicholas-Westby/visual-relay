@@ -144,6 +144,18 @@ public sealed class RelayDriverFixVerifyReviewTests
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "reviewer-objects", "NEEDS-REVIEW")));
     }
 
+    /// <summary>A clean commit-gate resume runs no LLM stage at all; this proves it.</summary>
+    private sealed class NoStageRunner : ISubagentRunner
+    {
+        public bool WasCalled { get; private set; }
+
+        public Task<SubagentResult> RunAsync(StageInvocation inv, CancellationToken ct = default)
+        {
+            WasCalled = true;
+            return Task.FromResult(new SubagentResult(string.Empty, null, false, "should not run"));
+        }
+    }
+
     /// <summary>Every attempt red, so the ladder is exhausted and the stage flags.</summary>
     private sealed class AlwaysRedTestRunner : ITestRunner
     {
@@ -206,6 +218,69 @@ public sealed class RelayDriverFixVerifyReviewTests
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
         Assert.DoesNotContain("outside the plan", outcome.Reason!, StringComparison.Ordinal);
         Assert.Empty(UnreviewedEvents(sink));
+    }
+
+    /// <summary>
+    /// The third path, and the one both checks above miss. Measured on i18next: a RESUME
+    /// whose Verify passed on the first attempt went straight to Commit, so Fix-verify
+    /// never ran and neither the green-path review nor the exhausted-path list could
+    /// fire. Two test files an earlier run had edited outside the plan went into the
+    /// commit unreviewed and unmentioned. Nothing was wrong with either check; the edits
+    /// were made by a stage that was not running any more, which is why this one hangs
+    /// off the commit instead. A fresh run cannot reproduce it: stage 5 discards
+    /// non-test edits before the red gate, so the leftover never survives to Commit.
+    /// </summary>
+    [Fact]
+    public async Task ACommitResumeCarryingEditsThePlanNeverNamed_SaysSoAlthoughFixVerifyNeverRan()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("exit 0", []);
+        repo.WriteTask("commit-resume", "# Commit resume\n");
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+        sim.Seed(repo.Root, "src/app.cs", "hello");
+        sim.Commit(repo.Root, "seed the plan's file");
+
+        string[] manifest = ["src/app.cs"];
+        var treeHash = RelayDriverResumeTestHelpers.ComputeTreeHash(repo.Root, manifest);
+        RelayDriverResumeTestHelpers.SetupCommitGateResumeScenario(
+            repo.Root, "commit-resume", manifest, treeHash);
+
+        // The earlier run's leftover. Outside the plan, untracked, and no stage this
+        // resume runs will touch it. It does not disturb the tree hash, which is
+        // computed over the manifest, so the gate still matches and skips to Commit.
+        File.WriteAllText(Path.Combine(repo.Root, OutsidePath), "process.env.TZ = 'UTC'\n");
+
+        var sink = new InMemoryRelayEventSink();
+        var guard = new NoStageRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(guard, new ScriptedTestRunner(new TestRunResult(0, "green")), sink, sim),
+            new RelayDriverOptions(CreateGitCommit: false, Resume: true));
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "commit-resume");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.False(guard.WasCalled, "no LLM stage runs on a clean commit-gate resume");
+        // Neither Fix-verify hook could have fired: that stage never ran.
+        Assert.Empty(UnreviewedEvents(sink));
+
+        var reported = Assert.Single(sink.Events, e => e.EventName == "commit_unplanned_edits");
+        Assert.Equal(OutsidePath, reported.Data!["paths"]);
+        Assert.Equal("warn", reported.Level);
+        Assert.Equal(12, reported.StageNumber);
+    }
+
+    /// <summary>A commit holding only what the plan named says nothing at all.</summary>
+    [Fact]
+    public async Task ACommitHoldingOnlyThePlansFiles_ReportsNothing()
+    {
+        using var repo = TestRepository.Create();
+        var runner = new FixVerifyEditingRunner("src/app.cs");
+        var (driver, sink) = Build(repo, "nothing-extra", runner);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "nothing-extra");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.DoesNotContain(sink.Events, e => e.EventName == "commit_unplanned_edits");
     }
 
     [Fact]
