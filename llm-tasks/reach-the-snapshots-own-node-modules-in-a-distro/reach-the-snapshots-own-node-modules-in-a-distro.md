@@ -68,8 +68,17 @@ either escapes the snapshot or is refused.
 
 ## Prescribed approach
 
-Work out, on the machine, which of these the `EACCES` actually is, because the
-fix differs and guessing between them is what produced the half-fix:
+**Do this before anything else, because it is free and it decides the rest.** All
+three diagnoses below fit the evidence already collected, which is exactly why a
+fix written from off the machine would be a coin flip dressed as an analysis. The
+one datum that separates them is what `<snapshot>/node_modules` IS on disk while
+a verify is running, and nobody has looked: the preserved artefacts hold the
+failure but not the directory, because the snapshot was gone by the time anyone
+read them. So hold a snapshot open and run `ls -la` and `readlink` inside it.
+That tells you 2 from 3 immediately and costs nothing.
+
+Then work out which of these the `EACCES` actually is, because the fix differs
+and guessing between them is what produced the half-fix:
 
 1. The write target inside the snapshot exists but is not in the sandbox's
    writable set, in which case the grant is what to widen.
@@ -100,10 +109,13 @@ the property that makes it different, rather than the tool or the ecosystem.
 
 This cannot be verified on macOS. It needs a real WSL distro, the i18next
 precondition above, and one run. The previous run's artefacts are preserved at
-`.relay/name-the-hasloadednamespace-guard-warnings-consistently/` on that machine:
-run.log, status.json, the flagged bundle `329d081b`, per-stage input/report JSON,
-and four verify-output files including all three Fix-verify attempts. Read those
-before spending another run.
+`.relay/name-the-hasloadednamespace-guard-warnings-consistently/` on that machine
+and are not to be cleaned until this task is done: 43 files, including a 566 KB
+run.log carrying all three Fix-verify attempts' reasoning, status.json, the
+flagged bundle `329d081b`, per-stage input/report JSON, and four verify-output
+files. Two of those attempts reached the overlayfs copy-up conclusion
+independently, so read them before spending another run. What they do NOT contain
+is the snapshot directory itself, which is the first thing to capture.
 
 ## Out of scope
 
