@@ -1,25 +1,49 @@
 using System.Text.Json;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Execution.Wsl;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class MainWindowViewModelInitTests
+public sealed partial class MainWindowViewModelInitTests
 {
     // ── Startup-inspection isolation ─────────────────────────────────────
 
     /// <summary>
-    /// This machine, stated rather than resolved. With no resolver injected the view
-    /// model falls back to <c>SandboxHost.Current</c>, which on Windows is a real
-    /// wsl.exe probe behind process-wide memoised state that other tests mutate. When
-    /// that state said "no distro", CreateConfig took the refusal and returned without
-    /// writing anything, so these tests failed in about 12 ms with the config missing
-    /// while the same test passed in 4 seconds run alone. Measured on Windows at 0.412:
-    /// 2 runs of 2 in the full suite, 12 of 12 in isolation.
+    /// A host that is runnable on THIS platform, stated rather than resolved.
+    /// <para>
+    /// With no resolver injected the view model falls back to
+    /// <c>SandboxHost.Current</c>, which on Windows is a real wsl.exe probe behind
+    /// process-wide memoised state that other tests mutate. When that state said "no
+    /// distro", CreateConfig took the refusal and returned without writing anything:
+    /// measured on Windows at 0.412, 2 full-suite runs of 2 failed in about 12 ms with
+    /// the config missing, while the same test passed in 4 seconds run alone.
+    /// </para>
+    /// <para>
+    /// It is NOT <c>SandboxHost.Local</c>, which is <c>IsWindows: false</c>. Stating
+    /// that on Windows is a claim about the platform that is not true: the launch then
+    /// takes the POSIX branch and tries to start <c>/bin/sh</c>, which is not there.
+    /// Measured the same way, 2 runs of 2. A Windows host WITH a distro is what is
+    /// runnable there, and it satisfies the tool gate without touching the filesystem,
+    /// because that arm's requirement is a resolved distro rather than a binary on PATH.
+    /// </para>
     /// </summary>
-    private static Task<SandboxHost> LocalHost() => Task.FromResult(SandboxHost.Local);
+    private static Task<SandboxHost> RunnableHost() => Task.FromResult(
+        OperatingSystem.IsWindows()
+            ? SandboxHost.Windows(new WslContext(
+                @"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u"))
+            : SandboxHost.Local);
+
+    /// <summary>
+    /// Answers the validation smoke-run without starting a process. A test that states
+    /// a host but lets this default still launches a real shell through that host, so
+    /// the platform decides whether it passes; that is what stating the host alone
+    /// could not fix.
+    /// </summary>
+    private static ITestRunner AcceptingRunner(TimeSpan _) =>
+        new ScriptedTestRunner(new TestRunResult(0, "green"));
 
     [Fact]
     public async Task LoadInitialAsync_WithNoRoot_DoesNotTriggerSandboxInspection()
@@ -53,7 +77,7 @@ public sealed class MainWindowViewModelInitTests
     {
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n"); // no WriteConfig
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = RunnableHost };
         await viewModel.LoadInitialAsync();
 
         Assert.True(viewModel.NeedsInitialization);
@@ -73,7 +97,7 @@ public sealed class MainWindowViewModelInitTests
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "App.csproj"), "<Project/>");
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = RunnableHost };
 
         await viewModel.LoadInitialAsync();
 
@@ -107,12 +131,42 @@ public sealed class MainWindowViewModelInitTests
         Assert.True(viewModel.NeedsInitialization);
     }
 
+    /// <summary>
+    /// The Windows arm of <see cref="RunnableHost"/>, exercised on any OS by stating the
+    /// host rather than waiting to be on Windows. A distro-backed host must satisfy the
+    /// tool gate (that arm requires a resolved distro, not a binary on PATH) and must
+    /// launch nothing, so CreateConfig gets as far as writing the config. Without this
+    /// the Windows branch above is only ever executed on Windows, which is where it was
+    /// wrong the last two times.
+    /// </summary>
+    [Fact]
+    public async Task CreateConfig_OnAWindowsHostWithADistro_WritesTheConfig()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(
+                new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u"))),
+            InitValidationRunnerFactory = AcceptingRunner,
+        };
+        await viewModel.LoadInitialAsync();
+        Assert.True(viewModel.NeedsInitialization);
+
+        viewModel.InitTestCommandInput = "dotnet test";
+        await viewModel.CreateConfigCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.NeedsInitialization, viewModel.StatusText);
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
     [Fact]
     public async Task CreateConfig_WritesConfigAndPopulatesQueue()
     {
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = RunnableHost, InitValidationRunnerFactory = AcceptingRunner };
         await viewModel.LoadInitialAsync();
         Assert.True(viewModel.NeedsInitialization);
 
@@ -135,7 +189,7 @@ public sealed class MainWindowViewModelInitTests
     {
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = RunnableHost, InitValidationRunnerFactory = AcceptingRunner };
         await viewModel.LoadInitialAsync();
         Assert.True(viewModel.NeedsInitialization);
 
@@ -147,116 +201,4 @@ public sealed class MainWindowViewModelInitTests
         Assert.True(root.TryGetProperty("authorTests", out _));
     }
 
-    /// <summary>
-    /// The manual action asks the same proposer bootstrap falls back to — an agent run
-    /// that reads the project — rather than the old single prompt carrying a list of
-    /// the root's entry NAMES, which could not show a nested test project or a script's
-    /// text.
-    /// </summary>
-    [Fact]
-    public async Task FindTestCommand_PopulatesInputFromTheProposer()
-    {
-        using var repo = TestRepository.Create();
-        repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel
-        {
-            RootPath = repo.Root,
-            SandboxHostResolver = LocalHost,
-            TestCommandProposerFor = (_, _) => Task.FromResult<string?>("go test ./..."),
-        };
-        await viewModel.LoadInitialAsync();
-
-        await viewModel.FindTestCommandCommand.ExecuteAsync(null);
-
-        Assert.Equal("go test ./...", viewModel.InitTestCommandInput);
-    }
-
-    [Fact]
-    public async Task FindTestCommand_WithNoProposerAvailable_SaysSoRatherThanFailing()
-    {
-        using var repo = TestRepository.Create();
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, IsHuggingFaceConfigured = false, SandboxHostResolver = LocalHost };
-        await viewModel.LoadInitialAsync();
-
-        await viewModel.FindTestCommandCommand.ExecuteAsync(null);
-
-        Assert.Contains("enter the command manually", viewModel.StatusText, StringComparison.Ordinal);
-        Assert.Equal(string.Empty, viewModel.InitTestCommandInput);
-    }
-
-    [Fact]
-    public async Task CreateConfig_UsesCreateConfigValidationTimeout()
-    {
-        using var repo = TestRepository.Create();
-        repo.WriteTask("alpha", "# Alpha\n");
-        TimeSpan? capturedTimeout = null;
-        var viewModel = new MainWindowViewModel
-        {
-            RootPath = repo.Root,
-            SandboxHostResolver = LocalHost,
-            InitValidationRunnerFactory = timeout =>
-            {
-                capturedTimeout = timeout;
-                return new ScriptedTestRunner(new TestRunResult(0, "green"));
-            }
-        };
-        await viewModel.LoadInitialAsync();
-        Assert.True(viewModel.NeedsInitialization);
-
-        viewModel.InitTestCommandInput = "dotnet test";
-        await viewModel.CreateConfigCommand.ExecuteAsync(null);
-
-        Assert.NotNull(capturedTimeout);
-        Assert.Equal(ProjectBootstrapper.CreateConfigValidationTimeout, capturedTimeout!.Value);
-        Assert.False(viewModel.NeedsInitialization);
-        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
-    }
-
-    [Fact]
-    public async Task CreateConfig_SetsValidatingStatusBeforeValidation()
-    {
-        using var repo = TestRepository.Create();
-        repo.WriteTask("alpha", "# Alpha\n");
-        string? capturedStatusText = null;
-        var viewModel = new MainWindowViewModel
-        {
-            RootPath = repo.Root,
-            SandboxHostResolver = LocalHost,
-        };
-        viewModel.InitValidationRunnerFactory = _ =>
-            new StatusCaptureTestRunner(new TestRunResult(0, "green"),
-                () => capturedStatusText = viewModel.StatusText);
-        await viewModel.LoadInitialAsync();
-        Assert.True(viewModel.NeedsInitialization);
-
-        viewModel.InitTestCommandInput = "dotnet test";
-        await viewModel.CreateConfigCommand.ExecuteAsync(null);
-
-        Assert.NotNull(capturedStatusText);
-        Assert.Contains("Validating", capturedStatusText, StringComparison.OrdinalIgnoreCase);
-        Assert.False(viewModel.NeedsInitialization);
-        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
-    }
-
-    [Fact]
-    public async Task CreateConfig_RejectsTimeoutAndSurfacesReason()
-    {
-        using var repo = TestRepository.Create();
-        repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel
-        {
-            RootPath = repo.Root,
-            SandboxHostResolver = LocalHost,
-            InitValidationRunnerFactory = _ => new TimeoutSimulatingTestRunner()
-        };
-        await viewModel.LoadInitialAsync();
-        Assert.True(viewModel.NeedsInitialization);
-
-        viewModel.InitTestCommandInput = "dotnet test";
-        await viewModel.CreateConfigCommand.ExecuteAsync(null);
-
-        Assert.Contains("timed out", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
-        Assert.True(viewModel.NeedsInitialization);
-        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
-    }
 }
