@@ -10,6 +10,17 @@ public sealed class MainWindowViewModelInitTests
 {
     // ── Startup-inspection isolation ─────────────────────────────────────
 
+    /// <summary>
+    /// This machine, stated rather than resolved. With no resolver injected the view
+    /// model falls back to <c>SandboxHost.Current</c>, which on Windows is a real
+    /// wsl.exe probe behind process-wide memoised state that other tests mutate. When
+    /// that state said "no distro", CreateConfig took the refusal and returned without
+    /// writing anything, so these tests failed in about 12 ms with the config missing
+    /// while the same test passed in 4 seconds run alone. Measured on Windows at 0.412:
+    /// 2 runs of 2 in the full suite, 12 of 12 in isolation.
+    /// </summary>
+    private static Task<SandboxHost> LocalHost() => Task.FromResult(SandboxHost.Local);
+
     [Fact]
     public async Task LoadInitialAsync_WithNoRoot_DoesNotTriggerSandboxInspection()
     {
@@ -42,7 +53,7 @@ public sealed class MainWindowViewModelInitTests
     {
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n"); // no WriteConfig
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
         await viewModel.LoadInitialAsync();
 
         Assert.True(viewModel.NeedsInitialization);
@@ -62,7 +73,7 @@ public sealed class MainWindowViewModelInitTests
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "App.csproj"), "<Project/>");
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
 
         await viewModel.LoadInitialAsync();
 
@@ -101,7 +112,7 @@ public sealed class MainWindowViewModelInitTests
     {
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
         await viewModel.LoadInitialAsync();
         Assert.True(viewModel.NeedsInitialization);
 
@@ -124,7 +135,7 @@ public sealed class MainWindowViewModelInitTests
     {
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, SandboxHostResolver = LocalHost };
         await viewModel.LoadInitialAsync();
         Assert.True(viewModel.NeedsInitialization);
 
@@ -150,6 +161,7 @@ public sealed class MainWindowViewModelInitTests
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
+            SandboxHostResolver = LocalHost,
             TestCommandProposerFor = (_, _) => Task.FromResult<string?>("go test ./..."),
         };
         await viewModel.LoadInitialAsync();
@@ -163,7 +175,7 @@ public sealed class MainWindowViewModelInitTests
     public async Task FindTestCommand_WithNoProposerAvailable_SaysSoRatherThanFailing()
     {
         using var repo = TestRepository.Create();
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, IsHuggingFaceConfigured = false };
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, IsHuggingFaceConfigured = false, SandboxHostResolver = LocalHost };
         await viewModel.LoadInitialAsync();
 
         await viewModel.FindTestCommandCommand.ExecuteAsync(null);
@@ -181,6 +193,7 @@ public sealed class MainWindowViewModelInitTests
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
+            SandboxHostResolver = LocalHost,
             InitValidationRunnerFactory = timeout =>
             {
                 capturedTimeout = timeout;
@@ -208,6 +221,7 @@ public sealed class MainWindowViewModelInitTests
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
+            SandboxHostResolver = LocalHost,
         };
         viewModel.InitValidationRunnerFactory = _ =>
             new StatusCaptureTestRunner(new TestRunResult(0, "green"),
@@ -232,6 +246,7 @@ public sealed class MainWindowViewModelInitTests
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
+            SandboxHostResolver = LocalHost,
             InitValidationRunnerFactory = _ => new TimeoutSimulatingTestRunner()
         };
         await viewModel.LoadInitialAsync();
