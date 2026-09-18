@@ -36,7 +36,9 @@ public sealed partial class RelayDriver
     ///   • File → copy (or symlink if individual file ≥ threshold).
     ///
     /// Bounded by <paramref name="depth"/> (<see cref="MaxOverlayRecursionDepth"/>)
-    /// and per-top-level-entry <paramref name="copiedBytes"/> budget; on hitting either
+    /// and per-top-level-entry <paramref name="copiedBytes"/> budget (with a second,
+    /// separate <paramref name="freeCopiedBytes"/> budget for children too small to be
+    /// worth denying); on hitting either
     /// bound the remaining subtree is symlinked and a <c>verify_overlay_skipped</c>
     /// warn event is emitted. This is the rule
     /// <see cref="Wsl.WslTreeCopy.IgnoredEntriesScript"/> applies inside the distro on the
@@ -48,7 +50,7 @@ public sealed partial class RelayDriver
     /// </summary>
     private void OverlayIgnoredDirRecursive(
         string srcDir, string dstDir, long thresholdBytes,
-        int depth, ref long copiedBytes,
+        int depth, ref long copiedBytes, ref long freeCopiedBytes,
         string runId, string sourcePath, string worktreeId)
     {
         // --- bounds -----------------------------------------------------------
@@ -60,12 +62,21 @@ public sealed partial class RelayDriver
             return;
         }
 
+        // A directory small enough to be free is copied even with the budget spent: see
+        // WslTreeCopy.FreeCopyBytes for what linking one cost on i18next. It is charged to
+        // freeCopiedBytes instead, so the two budgets cannot spend each other.
         if (depth > 0 && copiedBytes >= thresholdBytes)
         {
-            try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { /* best-effort fallback symlink — the skip advisory below still fires */ }
-            EmitOverlaySkipAdvisory(runId, sourcePath, worktreeId,
-                Path.GetFileName(srcDir), "copy_budget_exhausted");
-            return;
+            var free = freeCopiedBytes < thresholdBytes
+                && !NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold(
+                    srcDir, Wsl.WslTreeCopy.FreeBytesFor(thresholdBytes));
+            if (!free)
+            {
+                try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { /* best-effort fallback symlink — the skip advisory below still fires */ }
+                EmitOverlaySkipAdvisory(runId, sourcePath, worktreeId,
+                    Path.GetFileName(srcDir), "copy_budget_exhausted");
+                return;
+            }
         }
 
         // Depth > 0: if the dir itself is large, share it as a whole-dir symlink
@@ -106,7 +117,7 @@ public sealed partial class RelayDriver
                 {
                     OverlayIgnoredDirRecursive(
                         subDir.FullName, Path.Combine(dstDir, entry.Name),
-                        thresholdBytes, depth + 1, ref copiedBytes,
+                        thresholdBytes, depth + 1, ref copiedBytes, ref freeCopiedBytes,
                         runId, sourcePath, worktreeId);
                 }
                 else if (entry is FileInfo file)
@@ -114,6 +125,12 @@ public sealed partial class RelayDriver
                     var childDst = Path.Combine(dstDir, entry.Name);
                     if (file.Length >= thresholdBytes)
                         File.CreateSymbolicLink(childDst, file.FullName);
+                    else if (file.Length <= Wsl.WslTreeCopy.FreeBytesFor(thresholdBytes)
+                             && freeCopiedBytes < thresholdBytes)
+                    {
+                        file.CopyTo(childDst, overwrite: false);
+                        freeCopiedBytes += file.Length;
+                    }
                     else
                     {
                         file.CopyTo(childDst, overwrite: false);

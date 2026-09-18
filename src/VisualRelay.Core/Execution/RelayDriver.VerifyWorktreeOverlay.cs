@@ -68,8 +68,9 @@ public sealed partial class RelayDriver
                 if (isDirectory)
                 {
                     long copiedBytes = 0;
+                    long freeCopiedBytes = 0;
                     OverlayIgnoredDirRecursive(
-                        src, dst, thresholdBytes, depth: 0, ref copiedBytes,
+                        src, dst, thresholdBytes, depth: 0, ref copiedBytes, ref freeCopiedBytes,
                         runId, sourcePath, worktreeId);
                 }
                 else

@@ -14,6 +14,11 @@ namespace VisualRelay.Tests;
 [UnsupportedOSPlatform("windows")]
 public sealed class WslTreeCopyScriptTests : IDisposable
 {
+    /// <summary>The production free-copy size, in the KiB the script takes it in.</summary>
+    private static string FreeKbFor(string limitKb) =>
+        (WslTreeCopy.FreeBytesFor(long.Parse(limitKb) * 1024) / 1024)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     private readonly string _root = Directory.CreateTempSubdirectory("vr-treecopy-").FullName;
     private string Source => Path.Combine(_root, "src");
     private string Dest => Path.Combine(_root, "dst");
@@ -153,7 +158,7 @@ public sealed class WslTreeCopyScriptTests : IDisposable
         Assert.Equal(context.WslExePath, launch.FileName);
         Assert.Equal(
             ["-d", "Ubuntu", "--exec", "/bin/sh", "-c", WslTreeCopy.IgnoredEntriesScript, "vr-overlay",
-             "/home/u/repo", "/home/u/.cache/wt/x", "65536", "a b", "c"],
+             "/home/u/repo", "/home/u/.cache/wt/x", "65536", "256", "a b", "c"],
             launch.Arguments);
     }
 
@@ -179,11 +184,59 @@ public sealed class WslTreeCopyScriptTests : IDisposable
         Assert.Null(WslTreeCopy.InDistro(SandboxHost.Local, "/home/u/repo", "/home/u/wt"));
     }
 
+    /// <summary>
+    /// The i18next shape, and the defect it exposed. Its node_modules has 395 children;
+    /// the copy budget was spent by the first fifteen alphabetically, and the script's
+    /// three glob patterns put every dot-named entry last, so the 4 KB `.vite-temp`
+    /// scratch directory was linked back to the real checkout no matter how small it was.
+    /// vitest then wrote its config timestamp through that link, into a checkout verify
+    /// mounts read-only, and got EACCES before a test ran. Proven on the machine by
+    /// running this very script and writing a file through the result.
+    /// </summary>
+    [Fact]
+    public async Task IgnoredEntries_ABudgetSpentByEarlierSiblings_StillCopiesATinyScratchDir()
+    {
+        SkipOnWindows();
+        // Enough ordinary children ahead of it, alphabetically, to exhaust the budget.
+        for (var i = 0; i < 4; i++)
+            Write($"node_modules/@pkg{i}/blob.bin", new string('x', 1024 * 1024));
+        Write("node_modules/.vite-temp/.keep", string.Empty);
+
+        var failed = await RunAsync(WslTreeCopy.IgnoredEntriesScript, BigLimitKb, "node_modules");
+
+        Assert.Empty(failed);
+        var scratch = Path.Combine(Dest, "node_modules", ".vite-temp");
+        Assert.True(Directory.Exists(scratch));
+        Assert.False(IsLink(scratch), "a tiny scratch dir must not be linked back to the checkout");
+
+        // The write that failed on i18next, and where it lands.
+        await File.WriteAllTextAsync(Path.Combine(scratch, "timestamp.mjs"), "x");
+        Assert.False(File.Exists(Path.Combine(Source, "node_modules", ".vite-temp", "timestamp.mjs")));
+    }
+
+    /// <summary>The budget still holds: a child too big to be free is linked once it is spent.</summary>
+    [Fact]
+    public async Task IgnoredEntries_ABudgetSpentByEarlierSiblings_StillLinksABigLateChild()
+    {
+        SkipOnWindows();
+        for (var i = 0; i < 4; i++)
+            Write($"node_modules/@pkg{i}/blob.bin", new string('x', 1024 * 1024));
+        Write("node_modules/zlate/blob.bin", new string('x', 1024 * 1024));
+
+        var failed = await RunAsync(WslTreeCopy.IgnoredEntriesScript, BigLimitKb, "node_modules");
+
+        Assert.Empty(failed);
+        Assert.True(IsLink(Path.Combine(Dest, "node_modules", "zlate")));
+    }
+
     private static void SkipOnWindows() =>
         Assert.SkipWhen(OperatingSystem.IsWindows(), "the scripts run inside the distro; /bin/sh stands in for it");
 
     /// <summary>A limit coarse enough that <c>du</c>'s block rounding cannot decide an entry's side of it.</summary>
     private const string LimitKb = "64";
+
+    /// <summary>A limit big enough that the free size is the production one (256 KiB).</summary>
+    private const string BigLimitKb = "4096";
 
     private static bool IsLink(string path) => File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
 
@@ -207,7 +260,7 @@ public sealed class WslTreeCopyScriptTests : IDisposable
     {
         string[] args = limitKb is null
             ? ["-c", script, "vr-overlay", Source, Dest, .. names]
-            : ["-c", script, "vr-overlay", Source, Dest, limitKb, .. names];
+            : ["-c", script, "vr-overlay", Source, Dest, limitKb, FreeKbFor(limitKb), .. names];
         var (_, output, _) = await ProcessCapture.RunAsync("/bin/sh", args, _root, TimeSpan.FromSeconds(60), CancellationToken.None);
         return WslTreeCopy.FailedNames(output);
     }

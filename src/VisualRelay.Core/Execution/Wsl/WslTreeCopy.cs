@@ -17,19 +17,45 @@ internal static class WslTreeCopy
     private const string FailedPrefix = "vr-overlay-failed ";
 
     /// <summary>
-    /// <c>sh -c &lt;script&gt; vr-overlay &lt;source&gt; &lt;dest&gt; &lt;limit KiB&gt; &lt;name&gt;...</c>: the rule
+    /// A child this small is copied even when the entry's copy budget is spent, because
+    /// copying it costs nothing and linking it is what lets a write escape the snapshot.
+    /// <para>
+    /// Measured on i18next: <c>node_modules</c> has 395 children, and the budget was gone
+    /// after the first fifteen alphabetically. Everything after <c>@rolldown</c> was linked
+    /// however small it was, and the three glob patterns put every dot-named entry last, so
+    /// <c>.bin</c>, <c>.vite</c> and <c>.vite-temp</c> were structurally guaranteed to lose.
+    /// <c>.vite-temp</c> is 4 KB. Writing through the snapshot's copy of it landed the file
+    /// in the real checkout, which verify mounts read-only, so vitest got EACCES before a
+    /// test ran. A child's fate was decided by where its name fell in the alphabet.
+    /// </para>
+    /// </summary>
+    internal const long FreeCopyBytes = 256 * 1024;
+
+    /// <summary>
+    /// The free size to use against <paramref name="thresholdBytes"/>. Clamped to a
+    /// sixteenth of it, because a free size at or above the threshold would make every
+    /// child that could be copied at all free, and the budget would stop existing.
+    /// </summary>
+    internal static long FreeBytesFor(long thresholdBytes) =>
+        Math.Min(FreeCopyBytes, Math.Max(0, thresholdBytes / 16));
+
+    /// <summary>
+    /// <c>sh -c &lt;script&gt; vr-overlay &lt;source&gt; &lt;dest&gt; &lt;limit KiB&gt; &lt;free KiB&gt; &lt;name&gt;...</c>:
+    /// the rule
     /// <c>RelayDriver.OverlayIgnoredDirRecursive</c> applies on the app side, so the two arms lay
     /// the same checkout out the same way and change together. An entry below the limit is copied
     /// with its modes and links (<c>cp -a</c>); a large file is linked to the source; a DIRECTORY
     /// at or above the limit becomes a real directory whose children are copied one by one until
-    /// the entry's copy budget (the same limit) is spent, the rest linked. Linking such a folder
+    /// the entry's copy budget (the same limit) is spent, the rest linked — except that a child
+    /// at or below the free size has its own budget, so a cheap one is never denied because
+    /// bigger siblings came first in the glob (see <see cref="FreeCopyBytes"/>). Linking such a folder
     /// whole made every path under it the checkout's, which the sandbox mounts read-only for
     /// verify: vitest could not create <c>node_modules/.vite-temp</c> on i18next, printed EACCES
     /// and exited before a test ran. A destination that already exists (the checkout, the
     /// uncommitted overlay) is left alone.
     /// </summary>
     internal const string IgnoredEntriesScript =
-        "src=$1; dst=$2; limit=$3; shift 3; for name in \"$@\"; do "
+        "src=$1; dst=$2; limit=$3; free=$4; shift 4; for name in \"$@\"; do "
         + "s=\"$src/$name\"; d=\"$dst/$name\"; "
         + "if [ -e \"$d\" ] || [ -L \"$d\" ]; then continue; fi; "
         + "mkdir -p \"$(dirname \"$d\")\" || { echo \"" + FailedPrefix + "$name\"; continue; }; "
@@ -39,11 +65,15 @@ internal static class WslTreeCopy
         + "elif ! mkdir \"$d\"; then echo \"" + FailedPrefix + "$name\"; "
         // The three patterns are every child including the dot-named ones; an unmatched pattern
         // stays literal in POSIX sh, so each candidate is tested for existence first.
-        + "else copied=0; for c in \"$s\"/* \"$s\"/.[!.]* \"$s\"/..?*; do "
+        + "else copied=0; freed=0; for c in \"$s\"/* \"$s\"/.[!.]* \"$s\"/..?*; do "
         + "[ -e \"$c\" ] || [ -L \"$c\" ] || continue; b=${c##*/}; "
-        + "ckb=$(du -sk \"$c\" 2>/dev/null | cut -f1); ckb=${ckb:-0}; "
-        + "if [ \"$ckb\" -lt \"$limit\" ] && [ \"$copied\" -lt \"$limit\" ]; then "
-        + "cp -a \"$c\" \"$d/$b\" && copied=$((copied+ckb)) || echo \"" + FailedPrefix + "$name/$b\"; "
+        + "ckb=$(du -sk \"$c\" 2>/dev/null | cut -f1); ckb=${ckb:-0}; take=0; "
+        // A free-sized child is charged to its own budget, so it never spends what a
+        // bigger sibling would have used and a bigger sibling never spends its.
+        + "if [ \"$ckb\" -lt \"$limit\" ]; then "
+        + "if [ \"$ckb\" -le \"$free\" ] && [ \"$freed\" -lt \"$limit\" ]; then take=1; freed=$((freed+ckb)); "
+        + "elif [ \"$copied\" -lt \"$limit\" ]; then take=1; copied=$((copied+ckb)); fi; fi; "
+        + "if [ \"$take\" = 1 ]; then cp -a \"$c\" \"$d/$b\" || echo \"" + FailedPrefix + "$name/$b\"; "
         + "else ln -s \"$c\" \"$d/$b\" || echo \"" + FailedPrefix + "$name/$b\"; fi; done; fi; done";
 
     /// <summary>
@@ -63,7 +93,8 @@ internal static class WslTreeCopy
         WslLauncher.BuildPlain(context.WslExePath, context.Distro,
         [
             "/bin/sh", "-c", IgnoredEntriesScript, ScriptName, linuxSource, linuxDest,
-            (limitBytes / 1024).ToString(CultureInfo.InvariantCulture), .. names,
+            (limitBytes / 1024).ToString(CultureInfo.InvariantCulture),
+            (FreeBytesFor(limitBytes) / 1024).ToString(CultureInfo.InvariantCulture), .. names,
         ]);
 
     /// <summary>The launch that copies <paramref name="relativePaths"/> from the source over the destination.</summary>

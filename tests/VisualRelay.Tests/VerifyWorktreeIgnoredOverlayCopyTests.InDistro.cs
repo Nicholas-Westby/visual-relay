@@ -69,7 +69,8 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
         await ProcessCapture.RunAsync(
             "/bin/sh",
             ["-c", WslTreeCopy.IgnoredEntriesScript, "vr-overlay", source, dest,
-             (SharedThresholdBytes / 1024).ToString(), "node_modules"],
+             (SharedThresholdBytes / 1024).ToString(),
+             (WslTreeCopy.FreeBytesFor(SharedThresholdBytes) / 1024).ToString(), "node_modules"],
             dest, TimeSpan.FromSeconds(60), CancellationToken.None);
 
     /// <summary>What each child of <paramref name="dir"/> is: a link, a real directory or a file.</summary>
