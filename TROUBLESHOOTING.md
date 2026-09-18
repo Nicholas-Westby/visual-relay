@@ -71,9 +71,12 @@ green one.
 
 So when a run's result matters, redirect and check `$?`, or read the totals line
 rather than the exit code — but do not read the exit code THROUGH a filter and
-believe it. The default was 60s, which was below the runtime it guarded: five consecutive
-healthy passes on one machine took 58.8s, 55.8s, 53.0s, 66.1s and 53.3s. It is now
-300s, and `VISUAL_RELAY_TEST_TIMEOUT=<seconds>` still wins when set.
+believe it. The 60s default is a deliberate speed budget: the suite is meant to finish inside
+it. Raise it for a single run with `VISUAL_RELAY_TEST_TIMEOUT=<seconds>` when you
+need a slow machine to report rather than vanish, but do not raise the default to
+make a slow suite pass. For reference, five consecutive healthy passes on a Windows
+box took 58.8s, 55.8s, 53.0s, 66.1s and 53.3s, so that arm is at or over budget
+while macOS finishes the same suite in about half the time.
 
 ## Leftover backend state under `$XDG_DATA_HOME/visual-relay/`
 
