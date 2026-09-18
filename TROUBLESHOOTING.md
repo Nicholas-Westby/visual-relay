@@ -71,9 +71,9 @@ green one.
 
 So when a run's result matters, redirect and check `$?`, or read the totals line
 rather than the exit code — but do not read the exit code THROUGH a filter and
-believe it. Measured: a full pass takes about 50s against a default 60s watchdog,
-so a loaded box trips this regularly rather than rarely. Raise it with
-`VISUAL_RELAY_TEST_TIMEOUT=<seconds>` so a slow pass reports instead of vanishing.
+believe it. The default was 60s, which was below the runtime it guarded: five consecutive
+healthy passes on one machine took 58.8s, 55.8s, 53.0s, 66.1s and 53.3s. It is now
+300s, and `VISUAL_RELAY_TEST_TIMEOUT=<seconds>` still wins when set.
 
 ## Leftover backend state under `$XDG_DATA_HOME/visual-relay/`
 
