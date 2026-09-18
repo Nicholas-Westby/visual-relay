@@ -47,7 +47,7 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         var activeDir = Path.Combine(relayDir, "ACTIVE");
-        Directory.CreateDirectory(activeDir);
+        EnsureClaimDirectory(activeDir);
         var infoPath = Path.Combine(activeDir, "info.json");
 
         var nonce = Guid.NewGuid().ToString("N");
@@ -78,7 +78,7 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
             // IOException.
             catch (DirectoryNotFoundException) when (attempt < Attempts)
             {
-                Directory.CreateDirectory(activeDir);
+                EnsureClaimDirectory(activeDir);
             }
             // Both arms name UnauthorizedAccessException, which does NOT derive from
             // IOException. Racing that same parent deletion is what produces it, measured
@@ -107,6 +107,30 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
     {
         Release();
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Creates the claim directory, tolerating the previous holder's recursive delete
+    /// running at the same time. Creating a directory that is being removed reports
+    /// EEXIST transiently — "The file ... ACTIVE already exists" — even though it is on
+    /// its way out, and that escaped acquiring in 3 of 6 churn runs before this existed.
+    /// Giving up silently is correct: the claim below then fails on its own terms and is
+    /// answered by the loop, rather than this method inventing a verdict about a lock it
+    /// knows nothing about.
+    /// </summary>
+    private static void EnsureClaimDirectory(string activeDir)
+    {
+        for (var attempt = 1; attempt <= Attempts; attempt++)
+        {
+            try
+            {
+                Directory.CreateDirectory(activeDir);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     /// <summary>

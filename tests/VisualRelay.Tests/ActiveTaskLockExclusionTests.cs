@@ -126,7 +126,8 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
     [Fact]
     public async Task CallersChurningTheLock_NeverEscapeAndNeverOverlap()
     {
-        int other = 0, peak = 0, live = 0, acquired = 0;
+        var escaped = new System.Collections.Concurrent.ConcurrentBag<string>();
+        int peak = 0, live = 0, acquired = 0;
 
         await Task.WhenAll(Enumerable.Range(0, 4).Select(i => Task.Run(async () =>
         {
@@ -141,11 +142,13 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
                     Interlocked.Decrement(ref live);
                 }
                 catch (InvalidOperationException) { }
-                catch { Interlocked.Increment(ref other); }
+                // Named, not counted: a bare tally tells you something escaped and not
+                // what, which is a failure message that needs a second run to act on.
+                catch (Exception ex) { escaped.Add($"{ex.GetType().Name}: {ex.Message}"); }
             }
         })));
 
-        Assert.Equal(0, other);
+        Assert.True(escaped.IsEmpty, "acquiring threw: " + string.Join(" | ", escaped.Distinct()));
         Assert.Equal(1, peak);
         // The churn has to actually reach the lock, or the test proves nothing.
         Assert.True(acquired > 0, "no caller ever acquired, so nothing was exercised");
