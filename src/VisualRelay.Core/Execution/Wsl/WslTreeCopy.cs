@@ -35,6 +35,15 @@ internal static class WslTreeCopy
     /// The free size to use against <paramref name="thresholdBytes"/>. Clamped to a
     /// sixteenth of it, because a free size at or above the threshold would make every
     /// child that could be copied at all free, and the budget would stop existing.
+    /// <para>
+    /// What the two budgets actually bound, since it is easy to state too tidily: each is
+    /// tested BEFORE its child is added, so each admits one child that crosses it and can
+    /// overshoot by that child's whole size. The bound is two thresholds plus the two
+    /// children that crossed them, not two thresholds. Measured on i18next: the main
+    /// budget copied 89,748 KiB against a 65,536 KiB limit, because a 24 MiB package was
+    /// admitted while the counter still read under. Checking after would refuse a child
+    /// that fits, which is worse, so the behaviour stays and the claim gets narrower.
+    /// </para>
     /// </summary>
     internal static long FreeBytesFor(long thresholdBytes) =>
         Math.Min(FreeCopyBytes, Math.Max(0, thresholdBytes / 16));

@@ -100,7 +100,12 @@ public sealed partial class RelayDriver
         catch { return; }
 
         IEnumerable<FileSystemInfo> entries;
-        try { entries = src.EnumerateFileSystemInfos(); }
+        // Sorted, because the budget below is spent in this order and the filesystem's
+        // own order is a hash: on APFS the same tree enumerates differently from the
+        // name order the distro script's globs give, so the two arms would lay the same
+        // checkout out differently and neither would be reproducible. Ordinal, to match
+        // the shell's sort.
+        try { entries = src.EnumerateFileSystemInfos().OrderBy(e => e.Name, StringComparer.Ordinal); }
         catch { return; }
 
         foreach (var entry in entries)

@@ -200,7 +200,10 @@ public sealed class WslTreeCopyScriptTests : IDisposable
         // Enough ordinary children ahead of it, alphabetically, to exhaust the budget.
         for (var i = 0; i < 4; i++)
             Write($"node_modules/@pkg{i}/blob.bin", new string('x', 1024 * 1024));
-        Write("node_modules/.vite-temp/.keep", string.Empty);
+        // Real bytes: an EMPTY dir measures 0 KB, and "0 is at or below the free size"
+        // is true for every free size including none, so an empty fixture would pass
+        // against the very defect this covers.
+        Write("node_modules/.vite-temp/cache.json", new string('x', 8 * 1024));
 
         var failed = await RunAsync(WslTreeCopy.IgnoredEntriesScript, BigLimitKb, "node_modules");
 

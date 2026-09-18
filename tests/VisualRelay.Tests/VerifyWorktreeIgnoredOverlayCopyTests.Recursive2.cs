@@ -131,6 +131,85 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     }
 
     // ───────────────────────────────────────────────────────────────────
+    // 13c. The same budget, and the children it must NOT deny. Measured on
+    //      i18next: node_modules' budget was spent by the first fifteen
+    //      children alphabetically, so the 4 KB .vite-temp scratch directory
+    //      was linked back to the checkout and vitest's write through it hit
+    //      a read-only mount. Ten tiny dirs among seven budget-eating ones:
+    //      every tiny one must come out real. Enumeration order is not
+    //      guaranteed, which is the point — under the old single budget the
+    //      ten could only all survive if all ten happened to be enumerated
+    //      before the budget ran out, and here they always survive.
+    // ───────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateVerifyWorktree_BudgetExhausted_StillCopiesEveryChildTooCheapToDeny()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vr-vw-free-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var driver = new RelayDriver(RelayDriverDependencies.ForTests(
+            new ScriptedSubagentRunner(), new ScriptedTestRunner(),
+            new InMemoryRelayEventSink(), new GitSimEngine()));
+        string? worktree = null;
+        try
+        {
+            InitRepo(root);
+            await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "deps/\n");
+            await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
+
+            var depsDir = Path.Combine(root, "deps");
+            Directory.CreateDirectory(depsDir);
+            var payload = new byte[LowThresholdBytes / 5];
+            for (var i = 0; i < 7; i++)
+            {
+                // Named to sort first: most filesystems hand them over in order, and
+                // the budget has to be gone before a cheap child is reached for the
+                // case to be exercised at all. The guard below says so when it is not.
+                var sib = Path.Combine(depsDir, $"aaa{i}");
+                Directory.CreateDirectory(sib);
+                await File.WriteAllBytesAsync(Path.Combine(sib, "payload.bin"), payload);
+            }
+            for (var i = 0; i < 10; i++)
+            {
+                var scratch = Path.Combine(depsDir, $"zzz{i}");
+                Directory.CreateDirectory(scratch);
+                await File.WriteAllTextAsync(Path.Combine(scratch, "x"), "x");
+            }
+            await CommitAll(root, "seed");
+
+            worktree = await driver.CreateVerifyWorktreeForTestAsync(
+                root, "task-free", "run-free", CancellationToken.None, LowThresholdBytes,
+                cloneOverlay: false);
+
+            // EVERY cheap child, not the ones that happen to land late: this filesystem
+            // hands children over in hash order, not sorted, so nothing in the fixture
+            // can choose which side of the budget a name falls on. Under the single
+            // budget the cheap children enumerated after the sixth eater were linked,
+            // and with ten of them among seven eaters that is all but certain to be
+            // several of them. Under two budgets it is none of them, every time.
+            for (var i = 0; i < 10; i++)
+            {
+                var copied = Path.Combine(worktree!, "deps", $"zzz{i}");
+                Assert.True(Directory.Exists(copied), $"zzz{i} must exist");
+                Assert.False(
+                    File.GetAttributes(copied).HasFlag(FileAttributes.ReparsePoint),
+                    $"zzz{i} is too cheap to deny, so it must be real and writable");
+            }
+
+            // The write that failed on i18next, and where it must not land.
+            await File.WriteAllTextAsync(
+                Path.Combine(worktree!, "deps", "zzz0", "timestamp.mjs"), "x");
+            Assert.False(File.Exists(Path.Combine(depsDir, "zzz0", "timestamp.mjs")));
+        }
+        finally
+        {
+            if (worktree is not null)
+                await driver.CleanupVerifyWorktreeForTestAsync(root, worktree);
+            TestFileSystem.DeleteDirectoryResilient(root);
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────────
     // 14. Teardown safety at depth: a directory symlink several levels
     //     deep pointing at an outside sentinel dir survives cleanup —
     //     UnlinkOverlaySymlinks unlinks the link node without traversing
