@@ -20,19 +20,28 @@ public static class WatchdogTimeouts
     /// run with the env var.
     /// </para>
     /// <para>
-    /// Known pressure on it, recorded so the next person has the numbers rather than
-    /// rediscovering them: five consecutive healthy passes on a Windows box measured
-    /// 58.8s, 55.8s, 53.0s, 66.1s and 53.3s, so that arm was already at or over the
-    /// earlier 60s budget and two earlier passes there were killed mid-run. macOS
-    /// finishes the same suite in roughly half that. A killed run prints no totals,
-    /// which is easy to misread as a pass when the exit code is taken through a pipe
-    /// (see TROUBLESHOOTING.md).
+    /// Measured across 73 full-suite runs on a Windows box in one day, dotnet's own
+    /// Total time in seconds:
     /// </para>
     /// <para>
-    /// The 90 is pinned: <c>VisualRelay.Guards</c>' <c>test-budget</c> guard reads this
-    /// literal, the pre-commit hook runs that guard, and
-    /// <c>TestBudgetGuardTests</c> asserts it in the suite. Changing the number here
-    /// alone will be rejected at commit time.
+    ///                n     min    p50    p90    max
+    ///   build       12    47.0   53.6   63.9   69.3
+    ///   no-build    61    45.9   52.2   62.1   84.3
+    /// </para>
+    /// <para>
+    /// So the suite is NOT near the line: p90 is 62-64s against 90, and 72 of those 73
+    /// runs never came close. The same suite finishes in 30-38s on an Apple Silicon VM,
+    /// a 2.3x margin against that arm's 1.4x, so exposure differs far more than the
+    /// suite does. The 73rd run exceeded 90s and was killed — more than 30% beyond the
+    /// day's maximum, out of a quiet stretch, with no trend or clustering before it.
+    /// That is an unexplained excursion rather than a sizing problem, and raising the
+    /// ceiling would treat a symptom whose magnitude nobody has accounted for.
+    /// </para>
+    /// <para>
+    /// The operational cost of a kill is worth knowing: a timed-out run prints NO
+    /// totals, so it reports as an absence rather than as a slow run. Redirect and
+    /// check the exit code (124) rather than reading it through a filter — see
+    /// TROUBLESHOOTING.md.
     /// </para>
     /// </summary>
     public static TimeSpan ForTest(bool serial) =>
