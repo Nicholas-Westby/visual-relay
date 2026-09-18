@@ -144,6 +144,70 @@ public sealed class RelayDriverFixVerifyReviewTests
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "reviewer-objects", "NEEDS-REVIEW")));
     }
 
+    /// <summary>Every attempt red, so the ladder is exhausted and the stage flags.</summary>
+    private sealed class AlwaysRedTestRunner : ITestRunner
+    {
+        public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken ct = default) =>
+            Task.FromResult(new TestRunResult(1, "Failed TestX"));
+    }
+
+    private static (RelayDriver Driver, InMemoryRelayEventSink Sink) BuildNeverGreen(
+        TestRepository repo, string taskId, ISubagentRunner runner)
+    {
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
+        repo.WriteTask(taskId, $"# {taskId}\n");
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+        sim.Seed(repo.Root, "src/app.cs", "// app\n");
+        sim.Seed(repo.Root, "tests/app.tests.cs", "// tests\n");
+        sim.Commit(repo.Root, "seed the plan's files");
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new AlwaysRedTestRunner(), sink, sim),
+            RelayDriverOptions.NoGitCommit);
+        return (driver, sink);
+    }
+
+    /// <summary>
+    /// The exhausted ladder is the case that shipped uncovered. The review above only
+    /// runs on a GREEN attempt, so on i18next three failing Fix-verify attempts handed
+    /// a human a bundle holding a time zone pinned into two test files the plan never
+    /// named, under a reason saying the harness was probably at fault. The reason must
+    /// name those files, and it must not cost a model call to say so.
+    /// </summary>
+    [Fact]
+    public async Task AFixVerifyThatNeverGoesGreen_StillNamesWhatItEditedOutsideThePlan()
+    {
+        using var repo = TestRepository.Create();
+        var runner = new FixVerifyEditingRunner(OutsidePath);
+        var (driver, sink) = BuildNeverGreen(repo, "never-green", runner);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "never-green");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.Contains("verify failed after", outcome.Reason!, StringComparison.Ordinal);
+        Assert.Contains(OutsidePath, outcome.Reason!, StringComparison.Ordinal);
+        Assert.Contains("outside the plan", outcome.Reason!, StringComparison.Ordinal);
+        Assert.Contains("nothing reviewed those edits", outcome.Reason!, StringComparison.Ordinal);
+        Assert.Single(UnreviewedEvents(sink));
+        // No second reviewer: the run has already failed, and the reader needs the
+        // list rather than a verdict on it.
+        Assert.Empty(runner.SecondReviews);
+    }
+
+    [Fact]
+    public async Task AFixVerifyThatNeverGoesGreen_AndStayedInThePlan_SaysNothingExtra()
+    {
+        using var repo = TestRepository.Create();
+        var runner = new FixVerifyEditingRunner("src/app.cs");
+        var (driver, sink) = BuildNeverGreen(repo, "never-green-inside", runner);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "never-green-inside");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.DoesNotContain("outside the plan", outcome.Reason!, StringComparison.Ordinal);
+        Assert.Empty(UnreviewedEvents(sink));
+    }
+
     [Fact]
     public async Task AnAmendManifestNamingTheFile_CountsAsInThePlan()
     {

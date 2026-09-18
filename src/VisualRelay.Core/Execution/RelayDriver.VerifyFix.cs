@@ -58,6 +58,7 @@ public sealed partial class RelayDriver
         var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;
 
         var runsExecuted = 0;
+        string? lastFixVerifyBody = null;
         SetupCheckResults? lastAttemptSetupChecks = null;
         var verifySignatures = new List<(string Reason, string OutputPath, string TreeHash)>();
         // What the tree already held before this loop touched it. Stages 7 and 8 ran
@@ -121,7 +122,7 @@ public sealed partial class RelayDriver
                 continue;
             }
 
-            var body = result.Json;
+            var body = lastFixVerifyBody = result.Json;
 
             // Bootstrap re-check: runs before the test command. If it fails the
             // stage is red and the agent gets the bootstrap failure for the next
@@ -270,6 +271,12 @@ public sealed partial class RelayDriver
             exhaustReason = await TryAppendIdenticalFailureAdvisoryAsync(
                 verifySignatures, exhaustReason, runId, rootPath, taskId, stage, cancellationToken);
         }
+
+        // After the advisory, which on this path often blames the harness: a reader who
+        // stops there never learns the bundle holds edits the plan never named.
+        exhaustReason += await DescribeUnreviewedFixVerifyEditsAsync(
+            rootPath, runId, taskId, config, stage.Number, manifest, changesBeforeFixVerify,
+            lastFixVerifyBody, cancellationToken);
         var flagDetails = (lastAttemptSetupChecks?.ToSummaryLines() + "\n\n") + failingTestOutput;
         var finalOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
             exhaustReason, flagDetails, statusEntries, cancellationToken);

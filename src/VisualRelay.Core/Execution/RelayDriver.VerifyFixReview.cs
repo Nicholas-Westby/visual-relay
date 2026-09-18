@@ -32,6 +32,35 @@ public sealed partial class RelayDriver
         string fixVerifyBody,
         CancellationToken cancellationToken)
     {
+        var unreviewed = await UnreviewedFixVerifyEditsAsync(
+            rootPath, runId, taskId, config, stage.Number, manifest, changesBeforeFixVerify,
+            fixVerifyBody, cancellationToken);
+        if (unreviewed.Count == 0)
+            return null;
+
+        var pathList = string.Join(", ", unreviewed);
+        var verdict = await RunFixVerifyReviewStageAsync(
+            rootPath, runId, taskId, taskDirectory, config, input, ledger, manifest,
+            unreviewed, fixVerifyBody, cancellationToken);
+        if (verdict is null || verdict.Value.Verdict != "changes")
+            return null;
+
+        var reason = $"fix-verify edited {pathList} outside the plan";
+        if (!string.IsNullOrWhiteSpace(verdict.Value.Issues))
+            reason += $": {verdict.Value.Issues}";
+        return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
+            reason, verdict.Value.Body, statusEntries, cancellationToken);
+    }
+
+    /// <summary>
+    /// The files Fix-verify touched that neither the plan nor the loop's starting
+    /// listing accounts for, announced as <c>fix_verify_unreviewed_edits</c>.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> UnreviewedFixVerifyEditsAsync(
+        string rootPath, string runId, string taskId, RelayConfig config, int stageNumber,
+        IReadOnlyList<string> manifest, IReadOnlySet<string> changesBeforeFixVerify,
+        string fixVerifyBody, CancellationToken cancellationToken)
+    {
         var after = await WorktreeChanges.ListAsync(
             rootPath, config.TasksDir, _dependencies.GitInvoker, cancellationToken);
 
@@ -46,24 +75,40 @@ public sealed partial class RelayDriver
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToList();
         if (unreviewed.Count == 0)
-            return null;
+            return unreviewed;
 
-        var pathList = string.Join(", ", unreviewed);
         await _dependencies.EventSink.PublishAsync(new RelayEvent(
             DateTimeOffset.UtcNow, "info", "fix_verify_unreviewed_edits", runId, rootPath, taskId,
-            stage.Number, Data: new Dictionary<string, string> { ["paths"] = pathList }), cancellationToken);
+            stageNumber, Data: new Dictionary<string, string>
+            {
+                ["paths"] = string.Join(", ", unreviewed),
+            }), cancellationToken);
+        return unreviewed;
+    }
 
-        var verdict = await RunFixVerifyReviewStageAsync(
-            rootPath, runId, taskId, taskDirectory, config, input, ledger, manifest,
-            unreviewed, fixVerifyBody, cancellationToken);
-        if (verdict is null || verdict.Value.Verdict != "changes")
-            return null;
-
-        var reason = $"fix-verify edited {pathList} outside the plan";
-        if (!string.IsNullOrWhiteSpace(verdict.Value.Issues))
-            reason += $": {verdict.Value.Issues}";
-        return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-            reason, verdict.Value.Body, statusEntries, cancellationToken);
+    /// <summary>
+    /// The same listing, for the flag that ends an exhausted ladder. The review above
+    /// only runs on a GREEN attempt, so a run that never went green used to hand a
+    /// human a bundle holding edits nobody asked for without saying so — measured on
+    /// i18next, where three Fix-verify attempts failed on the environment and the
+    /// bundle carried a time zone pinned into two test files that the plan never
+    /// named. The flag reason for that run said the change was probably fine and the
+    /// harness was at fault, which is exactly the sentence that stops a reader
+    /// looking. No model call: the run has already failed, and what the reader needs
+    /// is the list, not a verdict on it.
+    /// </summary>
+    private async Task<string> DescribeUnreviewedFixVerifyEditsAsync(
+        string rootPath, string runId, string taskId, RelayConfig config, int stageNumber,
+        IReadOnlyList<string> manifest, IReadOnlySet<string> changesBeforeFixVerify,
+        string? fixVerifyBody, CancellationToken cancellationToken)
+    {
+        var unreviewed = await UnreviewedFixVerifyEditsAsync(
+            rootPath, runId, taskId, config, stageNumber, manifest, changesBeforeFixVerify,
+            fixVerifyBody ?? string.Empty, cancellationToken);
+        return unreviewed.Count == 0
+            ? string.Empty
+            : $" Fix-verify also edited {string.Join(", ", unreviewed)} outside the plan; "
+              + "nothing reviewed those edits.";
     }
 
     private async Task<(string Verdict, string Issues, string Body)?> RunFixVerifyReviewStageAsync(
