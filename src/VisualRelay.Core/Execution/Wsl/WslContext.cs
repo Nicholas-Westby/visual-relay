@@ -34,12 +34,21 @@ public static class WslContextResolver
             LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>
-    /// The memo, read under the same lock that replaces it. The field was written
-    /// under <c>Gate</c> and read outside it at every call site, so a caller could
-    /// resolve a STALE Lazy: on Windows that is the real six-step wsl.exe probe, run
-    /// after a test had already installed a fixture prober. Measured there, the probe
-    /// test failed taking 468 ms against a 9 ms baseline — the duration of a real
-    /// probe rather than of a memo read, which is what identified this.
+    /// The memo, read under the same lock that replaces it. The field was written under
+    /// <c>Gate</c> and read OUTSIDE it at every call site, including
+    /// <see cref="TryGetCurrent"/> and <see cref="TryGetCurrentAsync"/>, which are how
+    /// the running application resolves its sandbox host. A caller could therefore
+    /// resolve a stale Lazy and run a probe the memo was supposed to have answered.
+    /// <para>
+    /// Nothing in the application swaps the prober, so its window is much narrower than
+    /// the suite's — narrower, not absent, and the unsynchronised read is a defect on
+    /// its own terms without needing a sighting. Where it WAS seen is the suite, where
+    /// a fixture does swap it: the probe test failed taking 468 ms against a 9 ms
+    /// baseline, which is the duration of a real six-step wsl.exe probe rather than of
+    /// a memo read. That duration is what identified this; the assertion text said
+    /// nothing. Whether it explains that one sighting is unproven — a memory-visibility
+    /// race resists being made deterministic, and it was not reproducible on macOS.
+    /// </para>
     /// </summary>
     private static Lazy<Task<WslContext?>> Probed
     {
