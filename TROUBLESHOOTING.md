@@ -53,6 +53,28 @@ Serial mode appends `-- xUnit.ParallelizeTestCollections=false` and raises the w
 timeout to 1800s (unless `VISUAL_RELAY_TEST_TIMEOUT` is set). The stderr output prints a
 `serial mode:` banner so it is obvious in saved logs.
 
+## A timed-out test run that looks like a pass
+
+`./visual-relay test` exits **124** when the watchdog fires, and prints
+`visual-relay: test timed out after Ns` with no totals line. That is correct and
+checkable:
+
+```sh
+./visual-relay test >log 2>&1; echo $?     # 124 on timeout
+```
+
+What is not checkable is the same command behind a pipe. A shell reports the exit
+status of the LAST stage, so `./visual-relay test | rg 'Total tests'` gives you
+`rg`'s status and the 124 is gone. A run that timed out then reads as whatever the
+reader did, which on a loaded machine is how a half-finished suite passes for a
+green one.
+
+So when a run's result matters, redirect and check `$?`, or read the totals line
+rather than the exit code — but do not read the exit code THROUGH a filter and
+believe it. Measured: a full pass takes about 50s against a default 60s watchdog,
+so a loaded box trips this regularly rather than rarely. Raise it with
+`VISUAL_RELAY_TEST_TIMEOUT=<seconds>` so a slow pass reports instead of vanishing.
+
 ## Leftover backend state under `$XDG_DATA_HOME/visual-relay/`
 
 Until 2026-09-01 a local model gateway ran behind every stage, provisioned into
