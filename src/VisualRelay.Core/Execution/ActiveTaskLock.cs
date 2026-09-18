@@ -73,6 +73,14 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
             return;
         }
 
+        // NOT widened to IOException, deliberately. Every catch below RECLAIMS the lock
+        // by deleting it, and an unreadable info.json is not evidence that the holder is
+        // gone — it is equally the holder writing it right now, which on Windows is a
+        // sharing violation rather than a parse failure. Reclaiming on that would break
+        // mutual exclusion, and crashing on it (today's behaviour) merely fails the run.
+        // The safe answer is to treat unreadable as HELD, but that is a policy change to
+        // mutual exclusion and it should be made deliberately with a test, not folded
+        // into a commit about something else.
         try
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(infoPath));

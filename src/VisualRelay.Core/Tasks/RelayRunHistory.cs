@@ -173,7 +173,11 @@ public static partial class RelayRunHistory
                 return parsed;
             }
         }
-        catch (JsonException)
+        // The write time below is the fallback for a report this cannot read, and an IO
+        // error is one of the ways it cannot read one — a file mid-write, a vanished
+        // directory. Catching only malformed JSON meant those skipped the fallback and
+        // threw out of a method whose whole shape is "try this, else the write time".
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
         }
 
