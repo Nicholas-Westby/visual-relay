@@ -11,9 +11,13 @@ namespace VisualRelay.Tests;
 /// task that had nothing wrong with it. task-06 died on task-05's file; task-09 on
 /// task-07's. Different victim each time, same mechanism.
 /// <para>
-/// POSIX permits both opens, so these pass here whether or not the fix is present.
-/// They are a guard against reintroducing it, not a reproduction; only Windows can
-/// witness this one.
+/// On POSIX these pass whether or not the fix is present, because a rename over an
+/// open file is legal there, so on macOS and Linux they are a guard against
+/// reintroducing the defect. On Windows they are a DETERMINISTIC reproduction: with
+/// the read fixed and the replace not, the concurrent one went red 10 times out of 10.
+/// Every other intermittent chased on this project has been a couple of sightings in
+/// twenty runs and unfalsifiable; this one fails every time on the arm that can see it,
+/// which is what makes a real before and after possible.
 /// </para>
 /// </summary>
 public sealed class StageStatusSharingTests : IDisposable
@@ -25,8 +29,16 @@ public sealed class StageStatusSharingTests : IDisposable
     private static StageStatusEntry[] Entries(string status) =>
         [new StageStatusEntry(1, "Ideate", status)];
 
+    /// <summary>
+    /// Named for BOTH sides on purpose. Its first Windows run failed on the writer while
+    /// its name promised the reader, which read as "the new test is flaky on Windows"
+    /// rather than "the fix is half applied": the read path never threw, and
+    /// <c>WriteAsync</c>'s own replace did. A concurrency test that drives two roles has
+    /// to be named for the pair, or its failure is attributed to whichever role the name
+    /// mentions.
+    /// </summary>
     [Fact]
-    public async Task ReadingWhileTheFileIsBeingReplaced_NeverThrows()
+    public async Task ConcurrentReadsAndReplaces_NeitherSideThrows()
     {
         await StageStatusRecord.WriteAsync(_dir, Entries("Done"));
 
@@ -43,8 +55,9 @@ public sealed class StageStatusSharingTests : IDisposable
                 StageStatusRecord.Read(_dir);
         }));
 
-        // The assertion is that nothing above throws: on Windows an unshared read
-        // against a replacing move is the exception this pins.
+        // The assertion is that nothing above throws, on either side. On Windows an
+        // unshared read against a replacing move throws, and so does an unretried
+        // replace against a live reader; both are this test's subject.
         await Task.WhenAll([writer, .. readers]);
     }
 
