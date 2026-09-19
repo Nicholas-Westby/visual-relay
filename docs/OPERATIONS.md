@@ -29,7 +29,7 @@ reads them any more and they are safe to delete.
 
 The **`fallback`** tier is the always-available floor: it resolves to `hf-qwen3-coder-next` (Hugging Face Novita Qwen3-Coder-480B, ~$0.38/$1.55 per 1M tokens in/out) and requires only `HF_TOKEN`. Every other tier can fall through to it when its provider keys are absent. Override the default model via `tierProfiles.fallback` in `.relay/config.json`.
 
-See [`.env.example`](../.env.example) for the full provider key set, both key locations, and the resolution precedence (process env > user-level `~/.config/visual-relay/.env`). The in-app key panel reads and writes the user-level path.
+See [`.env.example`](../.env.example) for the full provider key set, both key locations, and the resolution precedence (process env > user-level `~/.config/visual-relay/.env`). The in-app key panel reads and writes the user-level path. On Windows that file is `%APPDATA%\visual-relay\.env`, or `%HOME%\.config\visual-relay\.env` when `HOME` is set, as it is in Git Bash.
 
 Key resolution happens per stage: each tier's chain is filtered to the models whose provider key is actually present, so a missing key skips that model rather than spending an auth-error retry on it. A tier with no usable model fails the stage immediately and says which key would fix it.
 

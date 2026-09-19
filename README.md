@@ -35,117 +35,26 @@ You can then run `./visual-relay` in that folder the next time you want to launc
 
 # Install (Windows)
 
-Visual Relay runs on Windows, but the sandbox every command runs in is Linux: `nono`
-enforcing the same profile through the WSL2 kernel, exactly as on macOS and Linux. So
-there are two halves to install — Visual Relay on Windows, and the sandbox inside a
-WSL2 distro. Visual Relay sets up the second half itself.
+Clone the repo and launch it with the `visual-relay.cmd` wrapper (cloning needs Git, which
+`winget install Git.Git` installs):
 
-1. Install the .NET 10 SDK on Windows. (Run from a terminal, the launcher offers to
-   install a per-user copy for you instead.)
+```powershell
+cd ~/repositories # or wherever you keep your repos
+git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
+cd visual-relay
+.\visual-relay.cmd launch
+```
 
-   ```powershell
-   winget install Microsoft.DotNet.SDK.10
-   ```
-
-2. Clone the repo and run it through `visual-relay.cmd` (nix doesn't run on Windows, so
-   dependencies are installed globally). Typing `./visual-relay` in PowerShell runs
-   `visual-relay.ps1`, which PowerShell's default execution policy refuses; the `.cmd`
-   passes the policy flag for you:
-
-   ```powershell
-   cd ~/repositories # or wherever you keep your repos
-   git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
-   cd visual-relay
-   .\visual-relay.cmd launch
-   ```
-
-3. The first launch checks the WSL side and offers to set up whatever is missing:
-
-   - No WSL: it installs WSL itself. Windows asks you to approve that as an
-     administrator, and a restart follows; launch again afterwards for the rest.
-   - No distro: it installs Ubuntu, with a Linux user named after yours.
-   - Then git, and nono 0.75.0, which Visual Relay pins and checks against a SHA-256
-     before installing.
-
-   Only the WSL install needs administrator rights. The rest took two and a half minutes
-   when measured, almost all of it downloading Ubuntu.
-   `.\visual-relay.cmd setup-wsl` runs the same setup on its own. Set `VR_WSL_DISTRO=<name>`
-   to use a distro other than the WSL default; setup installs Ubuntu under that name if it
-   does not exist yet. To install WSL yourself instead, run `wsl --install -d Ubuntu` in an
-   elevated PowerShell and reboot.
-
-`--depth 1` does a shallow clone (latest commit only) for a faster, smaller
-download; omit it to fetch the full history.
-
-`./visual-relay` is a tiny launcher that provisions its own toolchain via
-[Nix](https://nixos.org) (this avoids global installs).
-
-You can then run `./visual-relay` in that folder the next time you want to launch it.
-
-# Install (Windows)
-
-Visual Relay runs on Windows, but the sandbox every command runs in is Linux: `nono`
-enforcing the same profile through the WSL2 kernel, exactly as on macOS and Linux. So
-there are two halves to install — Visual Relay on Windows, and the sandbox inside a
-WSL2 distro. Visual Relay sets up the distro half itself; only WSL needs you.
-
-1. Install WSL in an elevated PowerShell, then reboot. This is the one step that needs
-   administrator rights:
-
-   ```powershell
-   wsl --install -d Ubuntu
-   ```
-
-   If Ubuntu opens after the reboot and asks for a user name, create one. If no distro
-   appears (a first install can bring WSL without one), that is fine: step 3 sets one up.
-
-2. Install the .NET 10 SDK on Windows. (Run from a terminal, the launcher offers to
-   install a per-user copy for you instead.)
-
-   ```powershell
-   winget install Microsoft.DotNet.SDK.10
-   ```
-
-3. Clone the repo and run it through `visual-relay.cmd` (nix doesn't run on Windows, so
-   dependencies are installed globally). Typing `./visual-relay` in PowerShell runs
-   `visual-relay.ps1`, which PowerShell's default execution policy refuses; the `.cmd`
-   passes the policy flag for you:
-
-   ```powershell
-   cd ~/repositories # or wherever you keep your repos
-   git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
-   cd visual-relay
-   .\visual-relay.cmd launch
-   ```
-
-   The first launch checks the WSL side and offers to set up whatever is missing: Ubuntu
-   with a Linux user named after yours if there is no distro, then git, and nono 0.75.0,
-   which Visual Relay pins and checks against a SHA-256 before installing. None of it needs
-   administrator rights, and it takes about two minutes. `.\visual-relay.cmd setup-wsl`
-   runs the same setup on its own. Set `VR_WSL_DISTRO=<name>` to use a distro other than
-   the WSL default; setup installs Ubuntu under that name if it does not exist yet.
-
-`--depth 1` does a shallow clone (latest commit only) for a faster, smaller
-download; omit it to fetch the full history.
+The first launch offers to install anything that is missing: the .NET 10 SDK, then WSL with
+an Ubuntu distro, which is where Visual Relay runs your project's commands. If WSL itself has
+to be installed, Windows asks you to approve it and then to restart; run `.\visual-relay.cmd`
+again after the restart to finish.
 
 You can then run `.\visual-relay.cmd` in that folder the next time you want to launch it.
 
-Provider keys go in `%APPDATA%\visual-relay\.env`, or use the key panel in the app. When
-`HOME` is set, as it is in Git Bash, Visual Relay reads `%USERPROFILE%\.config\visual-relay\.env`
-instead.
-
-**Keep the repositories you work on inside the distro** and open them as
-`\\wsl.localhost\<distro>\home\<user>\...`. A `C:\` path is refused: the Windows drives
-WSL mounts under `/mnt` are roughly an order of magnitude slower for the many small
-files a build touches, and their permission model is not the one Landlock was designed
-against.
-
-**Your project's build and test commands run inside WSL**, so the toolchain they need
-has to be installed in the distro. Per-user installs such as rustup and nvm are found,
-because Visual Relay runs commands with the PATH your login shell builds. A Windows-only
-toolchain — MSBuild against .NET Framework, Visual Studio build tools, Unity on Windows,
-anything that needs an `.exe` — is not supported. If anything is missing, the launch gate
-names it and how to fix it; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+Keep the repositories you work on inside the distro, open them as
+`\\wsl.localhost\Ubuntu\home\<user>\...`, and install their toolchains there too. If
+something goes wrong, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#windows).
 
 <!-- END install section -->
 
