@@ -69,6 +69,22 @@ public sealed class WslProberVmPlatformTests
         Assert.True(probe.IsUsable);
     }
 
+    /// <summary>
+    /// The probe never throws for anything but cancellation: the application keeps its first
+    /// probe for its whole life, so one that threw would leave every later check broken.
+    /// </summary>
+    [Fact]
+    public async Task APlatformReaderThatThrows_LeavesAHealthyMachineUsable_AndSaysWhy()
+    {
+        var wsl = ScriptedWsl.HealthyUbuntu();
+
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe,
+            () => throw new InvalidOperationException("registry exploded"), CancellationToken.None);
+
+        Assert.True(probe.IsUsable);
+        Assert.Contains("registry exploded", probe.Diagnostics);
+    }
+
     /// <summary>A missing WSL says it all: installing WSL is what brings the platform too.</summary>
     [Fact]
     public async Task TheInboxStub_IsReportedAsMissingWsl_NotAsAMissingPlatform()

@@ -27,6 +27,27 @@ public sealed class WslVmPlatformTests
             platform.RestartPending);
     }
 
+    /// <summary>
+    /// A key that cannot be read must never stop a machine whose WSL works: "not running"
+    /// blocks every launch there, so an unreadable key reads as the answer that blocks nothing.
+    /// </summary>
+    [Fact]
+    public void UnreadableKeys_ReadAsARunningPlatformWithNothingPending()
+    {
+        Assert.Equal(WslVmPlatform.Ready, WslVmPlatform.From(_ => null));
+    }
+
+    [Theory]
+    [InlineData(true, false, true, false)]
+    [InlineData(false, true, false, true)]
+    public void TheServiceKeySaysRunning_AndTheServicingKeySaysRestartPending(
+        bool serviceKey, bool servicingKey, bool running, bool restartPending)
+    {
+        var platform = WslVmPlatform.From(path => path.Contains("vmcompute", StringComparison.Ordinal) ? serviceKey : servicingKey);
+
+        Assert.Equal(new WslVmPlatform(running, restartPending), platform);
+    }
+
     [Fact]
     public void OffWindows_NothingIsReadAndNothingBlocks()
     {

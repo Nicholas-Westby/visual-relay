@@ -28,13 +28,16 @@ public sealed record WslVmPlatform(bool Running, bool RestartPending)
     /// <summary>A platform that runs with nothing pending, as on every machine that runs a WSL2 distro.</summary>
     public static WslVmPlatform Ready { get; } = new(true, false);
 
+    /// <summary>This machine's answer, read from its registry; off Windows there is nothing to read.</summary>
+    public static WslVmPlatform ThisMachine() => OperatingSystem.IsWindows() ? From(KeyExists) : Ready;
+
     /// <summary>
-    /// This machine's answer. A key that cannot be read counts as the answer that blocks
-    /// nothing, so an unreadable registry never stops a machine whose WSL works.
+    /// The answer <paramref name="keyExists"/> gives for each key, where null means the key could
+    /// not be read. That counts as the answer that blocks nothing, so an unreadable registry
+    /// never stops a machine whose WSL works.
     /// </summary>
-    public static WslVmPlatform ThisMachine() => OperatingSystem.IsWindows()
-        ? new WslVmPlatform(KeyExists(VmComputeServiceKey) ?? true, KeyExists(RestartPendingKey) ?? false)
-        : Ready;
+    internal static WslVmPlatform From(Func<string, bool?> keyExists) =>
+        new(Running: keyExists(VmComputeServiceKey) ?? true, RestartPending: keyExists(RestartPendingKey) ?? false);
 
     [SupportedOSPlatform("windows")]
     private static bool? KeyExists(string path)

@@ -71,8 +71,19 @@ public static partial class WslProber
         }
 
         // WSL answers --version from the files an uninstall leaves behind, so whether a WSL2
-        // distro can start at all is Windows' answer, not wsl.exe's.
-        var platform = readVmPlatform();
+        // distro can start at all is Windows' answer, not wsl.exe's. A reader that fails blocks
+        // nothing, like a key it cannot read.
+        WslVmPlatform platform;
+        try
+        {
+            platform = readVmPlatform();
+        }
+        catch (Exception ex)
+        {
+            notes.Add($"the Virtual Machine Platform could not be read: {ex.Message}");
+            platform = WslVmPlatform.Ready;
+        }
+
         if (!platform.Running)
         {
             notes.Add("the Virtual Machine Platform is not running (there is no vmcompute service)"
