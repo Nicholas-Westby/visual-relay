@@ -1,10 +1,16 @@
 # Stop tests sharing one memoised WSL probe
 
-`WslContext` memoises the distro probe in three process-wide statics: `_prober`,
-`_probed` (a `Lazy<Task<WslContext?>>`) and `_override`. That is right for the
-app, which should probe once per process. It is a trap under a parallel test
-run, because a test that sets or clears any of them changes what an unrelated
-test on another thread resolves, and nothing tells either of them it happened.
+`WslContextResolver` (in `WslContext.cs`) memoises the distro probe in
+process-wide statics: `_probed`, a `Lazy<Task<WslContext?>>` that captures the
+prober it was built with, and `_override`. That is right for the app, which
+should probe once per process. It is a trap under a parallel test run, because a
+test that sets or clears either of them changes what an unrelated test on
+another thread resolves, and nothing tells either of them it happened.
+
+A third static has the same exposure: `_lastProbe`, which every `FromProbe` call
+writes and which refusals are worded from, through `UnusableProbe`. A test that
+writes an unusable probe there can change which failing check another test's
+refusal names.
 
 This has cost real time once already. It is not urgent, because the six tests it
 caught now state their host instead of resolving one. It is filed rather than
@@ -38,10 +44,24 @@ What it exposed is that tests were depending on a probe they never meant to make
 
 ## Current state
 
-`tests/VisualRelay.Tests/MainWindowViewModelInitTests.cs` now passes
-`SandboxHostResolver = LocalHost` everywhere, so those six no longer resolve
-anything. The statics are untouched and the trap is intact for the next test
-that resolves a host for real.
+- The init facts, now split across `MainWindowViewModelInitTests.cs` and
+  `MainWindowViewModelInitTests.Validation.cs`, pass
+  `SandboxHostResolver = RunnableHost`: a Windows host with a stated distro on
+  Windows, `SandboxHost.Local` elsewhere. It is not `Local` everywhere because on
+  Windows that takes the POSIX branch and tries to start `/bin/sh`. So the six
+  that failed no longer resolve anything, and the trap is intact for the next
+  test that resolves a host for real.
+- Two later fixes changed the resolver without touching this problem.
+  `c18a1045` reads `_probed` under the lock that replaces it, and `bc5f4ae8`
+  removed a separate `_prober` static by having the memo capture its prober when
+  it is built. Both closed races inside the resolver; neither stops one test
+  seeing another's values.
+- The classes that write the statics, `WslContextResolverTests`,
+  `SandboxHostResolveTests` and `NonoProfileEnsurerHostTests`, share
+  `[Collection("WslContext")]`, which has no definition. They run one at a time
+  against each other and in parallel with everything else, which is how a test
+  elsewhere sees their values. `WslProberLoginPathTests` also calls `FromProbe`,
+  from outside that collection.
 
 ## Prescribed approach
 
@@ -55,6 +75,10 @@ every future test to remember to inject a host. Options, cheapest first:
 3. Leaving the statics and adding a guard test that fails when a type under
    `tests/` writes to them outside a scope that restores them.
 
+Whichever is chosen has to cover all three statics, `_lastProbe` included, or
+say why one of them can stay shared. The first option, as worded, covers only
+the override.
+
 Prefer whichever makes the WRONG thing hard rather than the right thing
 mandatory. A convention that every test must inject a host is the state we are
 in now, and it held only until someone wrote a test that did not.
@@ -64,15 +88,21 @@ in now, and it held only until someone wrote a test that did not.
 - A fact that proves the race: two tests resolving the host concurrently, one
   setting an override, with the other's answer unaffected. It must fail against
   today's statics, or it is not testing the thing.
-- Keep the existing init facts green without their explicit `LocalHost`, since
-  the point is that they should no longer need it.
+- Leave `RunnableHost` on the init facts. Without it they fall back to
+  `SandboxHost.Current`, which on Windows is a real wsl.exe probe of whatever
+  machine runs the suite, so removing it would test the machine rather than this
+  fix. The race fact above is the proof.
 
 ## Verification
 
 The race only shows on Windows, because macOS has no distro and the refusal
 cannot fire. So the proving test has to drive the resolver directly with an
 injected prober rather than relying on a real probe, and it should then fail on
-any platform.
+any platform. The seams exist: `UseProberForTests` installs a prober,
+`ProbedForTestsAsync` reads the memo with the platform check skipped, and
+`Override` is honoured on every platform. Off Windows, `TryGetCurrent` and
+`TryGetCurrentAsync` answer from the override alone and never read the memo, so
+a race on the memo has to be observed through `ProbedForTestsAsync`.
 
 ## Out of scope
 
@@ -82,7 +112,8 @@ any platform.
 
 ## Rejected alternatives
 
-- **Serialise the affected tests.** Hides the trap and slows the suite, and the
-  next test to resolve a host would still be exposed.
+- **Serialise the affected tests**, for example with a `DisableParallelization`
+  definition for the `WslContext` collection. Hides the trap and slows the
+  suite, and the next test to resolve a host would still be exposed.
 - **Drop the memoisation.** The probe is six wsl.exe steps; running it per call
   would make the app slow for a test-only problem.
