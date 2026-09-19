@@ -26,6 +26,6 @@ public static class SetupWslCommand
             return 2;
         }
 
-        return await WslSetup.RunOnThisMachineAsync(Console.Error.WriteLine, CancellationToken.None);
+        return await WslSetup.RunAsync(WslSetupHost.ThisMachine(), Console.Error.WriteLine, CancellationToken.None);
     }
 }

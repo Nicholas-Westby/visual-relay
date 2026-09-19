@@ -85,13 +85,14 @@ public sealed class WslSetupTests
     private Task<int> RunAsync(WslProbe[] probes, string? failing = null)
     {
         var next = new Queue<WslProbe>(probes);
-        return WslSetup.RunAsync(
+        var host = new WslSetupHost(
             _ => Task.FromResult(next.Dequeue()),
             (argv, _) =>
             {
                 _log.Add("wsl.exe " + string.Join(' ', argv));
                 return Task.FromResult(failing is not null && argv.Contains(failing) ? (1, "failed\n") : (0, ""));
             },
-            User, localNonoDeb: null, _log.Add, CancellationToken.None);
+            User, LocalNonoDeb: null);
+        return WslSetup.RunAsync(host, _log.Add, CancellationToken.None);
     }
 }

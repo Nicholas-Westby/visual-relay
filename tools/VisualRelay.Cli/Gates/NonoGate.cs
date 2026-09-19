@@ -19,12 +19,25 @@ public static class NonoGate
     /// prerequisite is missing (after printing the fix). On Windows a successful
     /// probe also becomes the process-wide <see cref="WslContext"/>, so anything
     /// else running in this process reuses the same facts instead of probing again.
+    /// A Windows failure that <c>setup-wsl</c> can finish is first offered as a y/N
+    /// question (see <see cref="WslSetupOffer"/>); a yes that works lets the launch go on.
     /// </summary>
     public static int Require(string root)
     {
         var isWindows = OperatingSystem.IsWindows();
         var probe = isWindows ? WslContextResolver.ProbeAsync(CancellationToken.None).GetAwaiter().GetResult() : null;
         var (exitCode, message) = Decide(ProcessLauncher.OnPath("nono"), isWindows, probe);
+        if (exitCode != 0 && probe is not null)
+        {
+            var interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected && !Console.IsErrorRedirected;
+            var setup = WslSetupOffer.OfferAsync(probe, WslSetupHost.ThisMachine(), interactive, Console.In, Console.Error,
+                CancellationToken.None).GetAwaiter().GetResult();
+            if (setup is { Ready: null } failed)
+                return failed.ExitCode; // the setup has already said why
+            if (setup is { Ready: { } ready })
+                (probe, exitCode, message) = (ready, 0, null);
+        }
+
         if (message is not null)
             Console.Error.WriteLine(message);
         if (exitCode == 0 && probe is not null)
