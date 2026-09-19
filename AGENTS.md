@@ -30,6 +30,9 @@ exempt from those contextual checks. See `docs/commit-messages.md`.
 - If `./visual-relay test` hangs (sits at `Testing (NNNs)` with nothing completing), it's a
   deadlock, not a slow test. Find the culprit with
   `./visual-relay test --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none`. See `TROUBLESHOOTING.md`.
+- On Windows, the tests that run bootstrap or the run gate against the machine's own WSL
+  distro skip when it has no usable one. On a machine that does have one, set
+  `VR_TEST_EXPECT_WSL=1` so a probe that wrongly finds none fails them instead.
 - Headless UI tests must use `[AvaloniaFact]`/`[AvaloniaTheory]` (Avalonia.Headless.XUnit);
   `HeadlessUnitTestSession` is banned (BannedApiAnalyzers) — reintroducing it fails the build.
 - New UI tests instantiate the specific panel/control under test, not the whole app,

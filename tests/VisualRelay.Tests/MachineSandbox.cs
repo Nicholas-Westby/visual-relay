@@ -12,13 +12,24 @@ namespace VisualRelay.Tests;
 /// </summary>
 internal static class MachineSandbox
 {
+    /// <summary>
+    /// Set to 1 on a Windows machine that has a working distro. A skip there would hide a
+    /// probe that wrongly finds none, so these tests fail instead.
+    /// </summary>
+    private const string ExpectWslEnvVar = "VR_TEST_EXPECT_WSL";
+
     public static async Task SkipUnlessUsableAsync()
     {
         if (!OperatingSystem.IsWindows())
             return;
         var host = await SandboxHost.CurrentAsync();
-        Assert.SkipWhen(host.Wsl is null,
-            "this test runs its commands in this machine's WSL distro, and there is no usable one: "
-            + WslGate.Decide(WslContextResolver.UnusableProbe).Message?.Split('\n')[0]);
+        if (host.Wsl is not null)
+            return;
+
+        var reason = "this test runs its commands in this machine's WSL distro, and there is no usable one: "
+                     + WslGate.Decide(WslContextResolver.UnusableProbe).Message?.Split('\n')[0];
+        if (Environment.GetEnvironmentVariable(ExpectWslEnvVar) == "1")
+            Assert.Fail($"{reason} ({ExpectWslEnvVar}=1 says this machine has one)");
+        Assert.Skip(reason);
     }
 }
