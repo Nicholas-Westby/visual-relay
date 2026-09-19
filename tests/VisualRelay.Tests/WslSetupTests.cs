@@ -109,6 +109,8 @@ public sealed class WslSetupTests
             (argv, _) =>
             {
                 _log.Add("wsl.exe " + string.Join(' ', argv));
+                if (argv is ["-l", "-v"])
+                    return Task.FromResult((0, "  NAME      STATE           VERSION\n* Ubuntu    Stopped         2\n"));
                 return Task.FromResult(failing is not null && argv.Contains(failing) ? (1, "failed\n") : (0, ""));
             },
             (argv, _) =>

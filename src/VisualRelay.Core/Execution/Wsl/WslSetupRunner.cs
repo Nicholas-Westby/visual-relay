@@ -8,7 +8,8 @@ public sealed record WslSetupOutcome(string? Failure);
 /// delegate shape <see cref="WslProber"/> takes: each step becomes its wsl.exe calls, run in
 /// plan order (a step that <see cref="WslSetupStep.NeedsAdministrator"/> through the runner that
 /// asks Windows for approval), and the first call that fails stops the run with a message
-/// naming the step, the exit code and the end of its output.
+/// naming the step, the exit code and the end of its output. A distro install is also checked
+/// against the distro listing, because its exit code does not say whether a distro arrived.
 /// </summary>
 public static class WslSetupRunner
 {
@@ -29,18 +30,32 @@ public static class WslSetupRunner
             var step = plan.Steps[i];
             report($"[{i + 1}/{plan.Steps.Count}] {step.Description}");
             var run = step.NeedsAdministrator ? host.RunWslAsAdministrator : host.RunWsl;
+            var output = "";
             foreach (var argv in CommandsFor(step, host.LocalNonoDeb))
             {
-                var (exitCode, output) = await run(argv, ct);
+                (var exitCode, output) = await run(argv, ct);
                 if (exitCode != 0 && !(step.NeedsAdministrator && exitCode == SucceededRestartNeeded))
-                    return new WslSetupOutcome(Failure(i + 1, plan.Steps.Count, step, exitCode, output, installedHere));
+                    return new WslSetupOutcome(Failure(i + 1, plan.Steps.Count, step, $"wsl.exe exited {exitCode}", output, installedHere));
             }
 
-            if (step is InstallDistroStep install)
-                installedHere = install.Name;
+            if (step is not InstallDistroStep install)
+                continue;
+            // WSL exits 0 without installing anything when the distro has to wait for a restart
+            // (WSL 2.7.14 on Windows 11 25H2, 2026-09-19, after it turned the Virtual Machine
+            // Platform back on), so only the listing says whether the distro is there.
+            if (!await IsListedAsync(host, install.Name, ct))
+                return new WslSetupOutcome(Failure(i + 1, plan.Steps.Count, step,
+                    $"wsl.exe exited 0 but did not install '{install.Name}'", output, installedHere));
+            installedHere = install.Name;
         }
 
         return new WslSetupOutcome(null);
+    }
+
+    private static async Task<bool> IsListedAsync(WslSetupHost host, string distro, CancellationToken ct)
+    {
+        var (_, listing) = await host.RunWsl(["-l", "-v"], ct);
+        return WslListParser.Parse(listing).Any(listed => listed.Name.Equals(distro, StringComparison.OrdinalIgnoreCase));
     }
 
     private static IReadOnlyList<string[]> CommandsFor(WslSetupStep step, string? localNonoDeb) => step switch
@@ -62,9 +77,9 @@ public static class WslSetupRunner
     private static string[] AsRoot(string distro, string script, params string[] args) =>
         ["-d", distro, "-u", "root", "--exec", "sh", "-c", script, ScriptName, .. args];
 
-    private static string Failure(int number, int count, WslSetupStep step, int exitCode, string output, string? installedHere)
+    private static string Failure(int number, int count, WslSetupStep step, string what, string output, string? installedHere)
     {
-        var message = $"visual-relay: WSL setup stopped at step {number} of {count} ({step.Description}): wsl.exe exited {exitCode}.";
+        var message = $"visual-relay: WSL setup stopped at step {number} of {count} ({step.Description}): {what}.";
         var tail = output.Replace("\r", "").Split('\n').Select(line => line.TrimEnd()).Where(line => line.Length > 0)
             .TakeLast(OutputTailLines).ToList();
         if (tail.Count > 0)
