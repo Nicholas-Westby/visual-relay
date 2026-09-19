@@ -49,6 +49,9 @@ public sealed class DrainLifecycleStatusTests
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "first");
+        // Selecting starts a read of the task's file. Windows refuses to delete a file
+        // that read still has open (seen: 1 full run in 20), so it finishes first.
+        await viewModel.LastSelectionLoad!;
 
         var callbacks = viewModel.CreateDrainLifecycleCallbacks();
         callbacks.OnExecuteStarted!("first");
