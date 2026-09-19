@@ -103,6 +103,24 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
     }
 
     /// <summary>
+    /// A caller that is cancelled must not leave its claim behind half written: an empty
+    /// claim reads as held, so it would lock the repository in the name of a caller that
+    /// never got the lock.
+    /// </summary>
+    [Fact]
+    public async Task ACancelledCaller_LeavesNoClaimBehind()
+    {
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => ActiveTaskLock.AcquireAsync(_root, "cancelled", cancelled.Token));
+
+        Assert.False(File.Exists(Path.Combine(_root, ".relay", "ACTIVE", "info.json")), "the cancelled caller left its claim");
+        await using var next = await ActiveTaskLock.AcquireAsync(_root, "next", CancellationToken.None);
+    }
+
+    /// <summary>
     /// A claim that has stayed unparseable for far longer than any holder takes to write
     /// one was abandoned between the two steps, by a process that died there, and is
     /// cleared rather than blocking the repository for good.

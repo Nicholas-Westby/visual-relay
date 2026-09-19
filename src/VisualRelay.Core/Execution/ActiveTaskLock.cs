@@ -68,13 +68,13 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
 
         for (var attempt = 1; ; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            FileStream claim;
             try
             {
-                await using var claim = new FileStream(
+                claim = new FileStream(
                     infoPath, FileMode.CreateNew, FileAccess.Write,
                     FileShare.Read | FileShare.Delete);
-                await claim.WriteAsync(payload, cancellationToken);
-                return new ActiveTaskLock(activeDir, nonce);
             }
             // The previous holder's Release is deleting this directory out from under
             // the claim. A directory marked for deletion still satisfies
@@ -87,6 +87,7 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
             catch (DirectoryNotFoundException) when (attempt < Attempts)
             {
                 EnsureClaimDirectory(activeDir);
+                continue;
             }
             // Both arms name UnauthorizedAccessException, which does NOT derive from
             // IOException. Racing that same parent deletion is what produces it, measured
@@ -103,11 +104,31 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
                 && attempt < Attempts && ReclaimedStaleClaim(infoPath))
             {
                 // The holder was provably gone and its claim is cleared; race for it again.
+                continue;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 throw new InvalidOperationException("relay: another task is already active");
             }
+
+            // The claim is this caller's from here, and an empty one reads as held, so it is
+            // written whole or removed: the write takes no token (it is a hundred bytes), and a
+            // write that fails deletes the claim rather than locking the repository in the name
+            // of a caller that never got the lock.
+            try
+            {
+                await using (claim)
+                {
+                    await claim.WriteAsync(payload, CancellationToken.None);
+                }
+            }
+            catch
+            {
+                TryDelete(infoPath);
+                throw;
+            }
+
+            return new ActiveTaskLock(activeDir, nonce);
         }
     }
 
@@ -209,7 +230,7 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
         }
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or FormatException or InvalidOperationException)
         {
-            return DateTime.UtcNow - File.GetLastWriteTimeUtc(infoPath) > HalfWrittenGrace && TryDelete(infoPath);
+            return WasAbandonedMidWrite(infoPath) && TryDelete(infoPath);
         }
 
         try
@@ -220,6 +241,47 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             return TryDelete(infoPath);
+        }
+    }
+
+    /// <summary>
+    /// Whether a claim that does not parse has stayed that way for longer than a write takes.
+    /// Both times come from the claim's own filesystem. On a <c>\\wsl.localhost</c> share a
+    /// file's time is the WSL VM's clock, which drifts from the host's (after the host sleeps,
+    /// for one), and a VM clock running behind would make a claim being written right now
+    /// look old enough to clear. A claim that has gone since it was read is not abandoned:
+    /// the caller refuses, as it does for any claim it could not read.
+    /// </summary>
+    private static bool WasAbandonedMidWrite(string infoPath)
+    {
+        var written = File.GetLastWriteTimeUtc(infoPath);
+        if (written == DateTime.FromFileTimeUtc(0))
+            return false;
+
+        return Path.GetDirectoryName(Path.GetDirectoryName(infoPath)) is { } relayDir
+            && FileSystemNowUtc(relayDir) is { } now
+            && now - written > HalfWrittenGrace;
+    }
+
+    /// <summary>
+    /// "Now" by the clock of the filesystem holding <paramref name="directory"/>: the write
+    /// time of a file created there for the purpose, or null when none can be.
+    /// </summary>
+    private static DateTime? FileSystemNowUtc(string directory)
+    {
+        var probe = Path.Combine(directory, $"clock-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllBytes(probe, []);
+            return File.GetLastWriteTimeUtc(probe);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        finally
+        {
+            TryDelete(probe);
         }
     }
 
