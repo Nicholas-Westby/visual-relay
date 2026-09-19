@@ -164,7 +164,7 @@ public sealed class WslSetupRunnerTests
     [Fact]
     public async Task ADistroListedInItsOwnCapitalization_CountsAsInstalled()
     {
-        var plan = WslSetupPlan.For(WslProbeFixtures.RequestedDistroMissing() with { RequestedDistro = "ubuntu" }, User);
+        var plan = WslSetupPlan.For(WslProbeFixtures.NoDistro() with { RequestedDistro = "ubuntu" }, User);
         var wsl = new AnsweringWsl { ListAs = "Ubuntu" };
 
         var outcome = await RunAsync(plan, wsl);
