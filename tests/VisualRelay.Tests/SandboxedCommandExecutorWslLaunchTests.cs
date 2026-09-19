@@ -16,9 +16,13 @@ namespace VisualRelay.Tests;
 public sealed class SandboxedCommandExecutorWslLaunchTests
 {
     private const string WslExe = @"C:\Windows\System32\wsl.exe";
-    private const string Root = @"\\wsl$\Ubuntu\home\alice\repo";
+    // A distro no machine has. Building the launch reads <root>\.git, and a share path on
+    // a distro that exists boots it when it is stopped: measured on Windows, 2.7 s idle and
+    // 16 to 45 s per test under the suite's load. A missing distro answers in about 25 ms
+    // and boots nothing.
+    private const string Root = @"\\wsl$\VrNoSuchDistro\home\alice\repo";
 
-    private static readonly WslContext Context = new(WslExe, "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+    private static readonly WslContext Context = new(WslExe, "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
     private static readonly ToolContext WslRoot = new(Root, TimeSpan.FromSeconds(600));
     private static readonly JsonElement NoArguments = JsonDocument.Parse("{}").RootElement;
 
@@ -33,7 +37,7 @@ public sealed class SandboxedCommandExecutorWslLaunchTests
 
         Assert.False(result.IsError, result.Content);
         Assert.Equal(WslExe, launcher.FileName);
-        Assert.Equal(new[] { "-d", "Ubuntu", "--exec", "/bin/sh", "-c", WslLauncher.Envelope, "vr" }, launcher.Arguments.Take(7));
+        Assert.Equal(new[] { "-d", "VrNoSuchDistro", "--exec", "/bin/sh", "-c", WslLauncher.Envelope, "vr" }, launcher.Arguments.Take(7));
         Assert.EndsWith("-tool.pid", launcher.Arguments[7]);
         Assert.Equal("/home/alice/repo", launcher.Arguments[8]);
         Assert.Equal("env", launcher.Arguments[9]);

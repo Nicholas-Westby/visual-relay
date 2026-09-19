@@ -27,10 +27,14 @@ public sealed class SandboxedTestRunnerSearchPathTests
     [Fact]
     public void TheDistroLaunch_RunsTheCommandBehindTheSearchPath()
     {
-        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        // A distro no machine has. Building the launch reads <root>\.git, and a share path on
+        // a distro that exists boots it when it is stopped: measured on Windows, 2.7 s idle and
+        // 16 to 45 s per test under the suite's load. A missing distro answers in about 25 ms
+        // and boots nothing.
+        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
         var sut = new SandboxedTestRunner(new ShellTestRunner(), TestConfig(), host: SandboxHost.Windows(context));
 
-        var launch = sut.ResolveSandboxedLaunch("pytest -q", @"\\wsl.localhost\Ubuntu\home\alice\repo", SnapshotSrc);
+        var launch = sut.ResolveSandboxedLaunch("pytest -q", @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", SnapshotSrc);
 
         Assert.Equal(["/bin/sh", "-c", SandboxedTestRunner.WithSearchPaths(SnapshotSrc, "pytest -q")], launch.Arguments.TakeLast(3));
     }

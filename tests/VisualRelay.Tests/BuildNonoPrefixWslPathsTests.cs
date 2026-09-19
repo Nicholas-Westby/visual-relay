@@ -14,8 +14,12 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class BuildNonoPrefixWslPathsTests
 {
+    // A distro no machine has. Building the launch reads <root>\.git, and a share path on
+    // a distro that exists boots it when it is stopped: measured on Windows, 2.7 s idle and
+    // 16 to 45 s per test under the suite's load. A missing distro answers in about 25 ms
+    // and boots nothing.
     private static readonly WslContext Context =
-        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        new(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     private static readonly SandboxHost Wsl = SandboxHost.Windows(Context);
 
@@ -25,7 +29,7 @@ public sealed class BuildNonoPrefixWslPathsTests
         var prefix = SandboxedStage.ComposeNonoPrefix(
             TestConfig(), rollback: false, skipDirs: null, verboseDiagnostics: false,
             templatesDir: @"C:\Users\alice\AppData\Roaming\visual-relay\templates",
-            workspaceRoot: @"\\wsl.localhost\Ubuntu\home\alice\repo", requestDiagnostics: false, host: Wsl);
+            workspaceRoot: @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", requestDiagnostics: false, host: Wsl);
 
         Assert.Equal(
             new[]
@@ -63,8 +67,8 @@ public sealed class BuildNonoPrefixWslPathsTests
     [Theory]
     [InlineData(@"C:\Users\alice\.cache", "/mnt/c/Users/alice/.cache")]
     [InlineData(@"d:\x y\ü", "/mnt/d/x y/ü")]
-    [InlineData(@"\\wsl.localhost\Ubuntu\home\alice\.npm", "/home/alice/.npm")]
-    [InlineData(@"\\wsl$\ubuntu\home\alice\.npm", "/home/alice/.npm")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\alice\.npm", "/home/alice/.npm")]
+    [InlineData(@"\\wsl$\vrnosuchdistro\home\alice\.npm", "/home/alice/.npm")]
     [InlineData("/home/alice/.cargo", "/home/alice/.cargo")]
     public void MapGrant_OnTheWslHost_IsThePathAsNonoSeesItInsideTheDistro(string path, string expected)
     {

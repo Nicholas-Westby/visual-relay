@@ -15,10 +15,14 @@ namespace VisualRelay.Tests;
 public sealed class SandboxedTestRunnerWslLaunchTests
 {
     private const string WslExe = @"C:\Windows\System32\wsl.exe";
-    private const string Root = @"\\wsl.localhost\Ubuntu\home\alice\repo";
+    // A distro no machine has. Building the launch reads <root>\.git, and a share path on
+    // a distro that exists boots it when it is stopped: measured on Windows, 2.7 s idle and
+    // 16 to 45 s per test under the suite's load. A missing distro answers in about 25 ms
+    // and boots nothing.
+    private const string Root = @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo";
     private const string LinuxProfile = "/home/alice/.config/visual-relay/vr-guard.json";
 
-    private static readonly WslContext Context = new(WslExe, "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+    private static readonly WslContext Context = new(WslExe, "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
     private static readonly SandboxHost Host = SandboxHost.Windows(Context);
 
     [Fact]
@@ -29,7 +33,7 @@ public sealed class SandboxedTestRunnerWslLaunchTests
         var (fileName, args) = sut.ResolveLaunch("go test ./...", Root);
 
         Assert.Equal(WslExe, fileName);
-        Assert.Equal(new[] { "-d", "Ubuntu", "--exec", "/bin/sh", "-c", WslLauncher.Envelope, "vr" }, args.Take(7));
+        Assert.Equal(new[] { "-d", "VrNoSuchDistro", "--exec", "/bin/sh", "-c", WslLauncher.Envelope, "vr" }, args.Take(7));
         Assert.StartsWith(WslProcessControl.PidFileDirectory + "/", args[7]);
         Assert.EndsWith("-verify.pid", args[7]);
         Assert.Equal("/home/alice/repo", args[8]);
@@ -98,7 +102,7 @@ public sealed class SandboxedTestRunnerWslLaunchTests
             () => sut.ResolveLaunch("go test ./...", @"\\wsl.localhost\Debian\home\alice\repo"));
 
         Assert.Contains("'Debian'", ex.Message);
-        Assert.Contains("'Ubuntu'", ex.Message);
+        Assert.Contains("'VrNoSuchDistro'", ex.Message);
         Assert.Contains("VR_WSL_DISTRO", ex.Message);
     }
 
