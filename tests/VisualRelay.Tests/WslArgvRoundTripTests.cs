@@ -12,7 +12,7 @@ namespace VisualRelay.Tests;
 /// <c>printf '%s\0'</c>, which repeats its format once per argument, so every
 /// argument arrives followed by a NUL byte that no quoting could have produced.
 /// <para>Skipped everywhere but an opted-in Windows host with a usable WSL2 distro
-/// (<see cref="NonoIntegration.ThisMachinesWsl"/>); on macOS it reports the platform.</para>
+/// (<see cref="WslContextResolver.TryGetCurrent"/>); on macOS it reports the platform.</para>
 /// </summary>
 public sealed class WslArgvRoundTripTests
 {
@@ -108,7 +108,7 @@ public sealed class WslArgvRoundTripTests
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "the WSL sandbox is the Windows arm");
         NonoIntegration.SkipIfNotOptedIn("VR_RUN_NONO_INTEGRATION=1 required for the real WSL probes.");
-        var wsl = NonoIntegration.ThisMachinesWsl();
+        var wsl = WslContextResolver.TryGetCurrent();
         Assert.SkipUnless(wsl is not null, "no usable WSL2 distro with nono on this host");
         return wsl!;
     }

@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;
 
@@ -38,17 +37,4 @@ internal static class NonoIntegration
 
     /// <summary>True when <paramref name="name"/> resolves on PATH.</summary>
     public static bool ToolAvailable(string name) => PathExecutables.OnPath(name);
-
-    /// <summary>
-    /// This machine's real WSL context, or null when it has no usable distro. The test
-    /// process otherwise answers as a machine with no WSL, so the real-WSL tests ask for the
-    /// live probe here: once per process, in a resolution of its own.
-    /// </summary>
-    public static WslContext? ThisMachinesWsl() => Machine.Value;
-
-    private static readonly Lazy<WslContext?> Machine = new(() =>
-    {
-        using var real = WslContextResolver.IsolateForTests(prober: WslContextResolver.ProbeAsync);
-        return WslContextResolver.TryGetCurrent();
-    });
 }

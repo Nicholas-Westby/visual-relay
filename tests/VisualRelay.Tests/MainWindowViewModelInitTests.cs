@@ -14,12 +14,12 @@ public sealed partial class MainWindowViewModelInitTests
     /// A host that is runnable on THIS platform, stated rather than resolved.
     /// <para>
     /// With no resolver injected the view model falls back to
-    /// <c>SandboxHost.Current</c>. In the test process that is a Windows host with no
-    /// distro on Windows, because the suite does not probe the machine it runs on, and
-    /// CreateConfig then takes the refusal and returns without writing anything. It used
-    /// to be whatever another test had left in the resolver: measured on Windows at 0.412,
-    /// 2 full-suite runs of 2 failed in about 12 ms with the config missing, while the same
-    /// test passed in 4 seconds run alone.
+    /// <c>SandboxHost.Current</c>, which on Windows is a real wsl.exe probe of whatever
+    /// machine runs the suite, so these facts would test that machine. They also used to
+    /// read state other tests wrote, before tests got resolutions of their own: when it
+    /// said "no distro", CreateConfig took the refusal and returned without writing
+    /// anything. Measured on Windows at 0.412, 2 full-suite runs of 2 failed in about
+    /// 12 ms with the config missing, while the same test passed in 4 seconds run alone.
     /// </para>
     /// <para>
     /// It is NOT <c>SandboxHost.Local</c>, which is <c>IsWindows: false</c>. Stating

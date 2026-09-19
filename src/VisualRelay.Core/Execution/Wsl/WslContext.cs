@@ -20,10 +20,9 @@ public sealed record WslContext(string WslExePath, string Distro, string NonoPat
 /// that opened it can see. Tests used to write the process-wide one instead, and a
 /// parallel run let one test's "no distro" reach another test's refusal: six Windows
 /// facts failed in 12 ms each on 2026-09-18 because of it. Tests cannot call
-/// <see cref="Override"/> (the test project's BannedSymbols.txt), and the test assembly
-/// makes the process-wide resolution a machine with no WSL before any test runs
-/// (<see cref="ResolveAsNoWslForTests"/>), so no test can see another's values or
-/// silently depend on the machine that runs the suite.
+/// <see cref="Override"/> (the test project's BannedSymbols.txt), so in a test process
+/// the process-wide resolution only ever holds this machine's real answer, which
+/// every test reading it would get anyway.
 /// </para>
 /// </summary>
 public static partial class WslContextResolver
@@ -31,12 +30,12 @@ public static partial class WslContextResolver
     private static readonly TimeSpan ProbeStepTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>The application's resolution: the real probe, run at most once per process.</summary>
-    private static Resolution _process = new(ProbeAsync, null);
+    private static readonly Resolution Process = new(ProbeAsync, null);
 
     /// <summary>A test's own resolution, set only by <see cref="IsolateForTests"/>.</summary>
     private static readonly AsyncLocal<Resolution?> Isolated = new();
 
-    private static Resolution Current => Isolated.Value ?? Volatile.Read(ref _process);
+    private static Resolution Current => Isolated.Value ?? Process;
 
     /// <summary>
     /// The resolved context, blocking on the one probe when it is still running.
@@ -91,19 +90,6 @@ public static partial class WslContextResolver
         Isolated.Value = installed;
         return new IsolationScope(installed, outer);
     }
-
-    /// <summary>
-    /// Makes this process's own resolution a machine with no WSL. The test assembly calls
-    /// it once, before any test runs, so the suite is hermetic about WSL as it is about the
-    /// network: a test that wants this machine's real distro probes it in a resolution of
-    /// its own, and no other test pays for, or depends on, a live probe it never asked for.
-    /// Measured on Windows at 0.444, with the leak between tests fixed: the first live
-    /// probe, started by whichever test first asked for this machine's host, took 25 to
-    /// 60 s under the parallel phase, and the tests queued behind it took a full run past
-    /// its 90 s budget.
-    /// </summary>
-    internal static void ResolveAsNoWslForTests() =>
-        Volatile.Write(ref _process, new Resolution(_ => Task.FromResult(WslProbe.Empty), null));
 
     /// <summary>
     /// The calling test's memoised probe, platform checks and override skipped. Off

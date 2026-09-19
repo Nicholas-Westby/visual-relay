@@ -1,4 +1,3 @@
-using VisualRelay.Core.Execution;
 using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;
@@ -70,21 +69,6 @@ public sealed class WslContextResolverTests
         Assert.Null(await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
         Assert.Null(await WslContextResolver.ProbedForTestsAsync());
         Assert.Same(WslProbe.Empty, WslContextResolver.UnusableProbe);
-    }
-
-    /// <summary>
-    /// Outside any scope a test sees a machine with no WSL, whatever machine runs the
-    /// suite: the test assembly sets that before any test runs. Only Windows reads the
-    /// memo, so only there can this fail, and there it did in effect: the first live
-    /// probe, started by whichever test first asked for this machine's host, took 25 to
-    /// 60 s under load and queued everything behind it.
-    /// </summary>
-    [Fact]
-    public async Task OutsideAScope_TheTestProcessHasNoWsl()
-    {
-        Assert.Null(WslContextResolver.TryGetCurrent());
-        Assert.Null(await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
-        Assert.Null(SandboxHost.Current.Wsl);
     }
 
     /// <summary>
@@ -172,23 +156,23 @@ public sealed class WslContextResolverTests
     /// leave the rest of the test resolving the wrong one without saying so.
     /// </summary>
     [Fact]
-    public void ClosingScopesOutOfOrder_IsRefused()
+    public async Task ClosingScopesOutOfOrder_IsRefused()
     {
         var outer = WslContextResolver.IsolateForTests(@override: Context);
         var inner = WslContextResolver.IsolateForTests();
 
         Assert.Throws<InvalidOperationException>(outer.Dispose);
 
-        // In order, both close, and the flow is back where it started.
+        // In order, both close, and the flow is back outside any scope, where the test seam
+        // refuses to read a memo.
         inner.Dispose();
         outer.Dispose();
-        Assert.Null(WslContextResolver.TryGetCurrent());
+        await Assert.ThrowsAsync<InvalidOperationException>(WslContextResolver.ProbedForTestsAsync);
     }
 
     /// <summary>
-    /// Outside a scope there is no memo of the test's own to read: the process-wide one
-    /// belongs to the process, and in the application it is the real probe of the machine.
-    /// The test seam refuses rather than reading it.
+    /// Outside a scope the memo is the real probe, which on Windows would probe the
+    /// machine running the suite, so the test seam refuses rather than doing that.
     /// </summary>
     [Fact]
     public async Task ReadingTheMemoOutsideAScope_IsRefused()

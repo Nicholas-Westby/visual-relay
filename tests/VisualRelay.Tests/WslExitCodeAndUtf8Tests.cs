@@ -99,7 +99,7 @@ public sealed class WslExitCodeAndUtf8Tests
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "the WSL sandbox is the Windows arm");
         NonoIntegration.SkipIfNotOptedIn("VR_RUN_NONO_INTEGRATION=1 required for the real WSL probes.");
-        var wsl = NonoIntegration.ThisMachinesWsl();
+        var wsl = WslContextResolver.TryGetCurrent();
         Assert.SkipUnless(wsl is not null, "no usable WSL2 distro with nono on this host");
         return wsl!;
     }
