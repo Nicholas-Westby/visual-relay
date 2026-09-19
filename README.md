@@ -67,7 +67,8 @@ WSL2 distro. Visual Relay sets up the second half itself.
    - Then git, and nono 0.75.0, which Visual Relay pins and checks against a SHA-256
      before installing.
 
-   Only the WSL install needs administrator rights; the rest takes about two minutes.
+   Only the WSL install needs administrator rights. The rest took two and a half minutes
+   when measured, almost all of it downloading Ubuntu.
    `.\visual-relay.cmd setup-wsl` runs the same setup on its own. Set `VR_WSL_DISTRO=<name>`
    to use a distro other than the WSL default; setup installs Ubuntu under that name if it
    does not exist yet. To install WSL yourself instead, run `wsl --install -d Ubuntu` in an
