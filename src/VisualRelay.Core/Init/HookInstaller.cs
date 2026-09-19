@@ -95,7 +95,14 @@ exit 1
             var existing = await File.ReadAllTextAsync(hookPath, cancellationToken);
             if (existing.Contains(Marker, StringComparison.Ordinal))
             {
-                // VR-owned — overwrite with the current version.
+                // A hook the repository tracks is the repository's own, marker or not:
+                // Visual Relay's own repository ships a superset of this one (its
+                // test-budget guard and version bump), and overwriting it dropped both and
+                // left a tracked file modified. Its enforcement is already active.
+                if (await IsTrackedAsync(gi, rootPath, hookPath, cancellationToken))
+                    return new HookInstallResult(true, hookPath, null);
+
+                // VR-owned and untracked — overwrite with the current version.
                 return await WriteHookAsync(hookPath, run, cancellationToken);
             }
 
@@ -151,6 +158,23 @@ exit 1
 
     private static WslContext? CurrentContext =>
         OperatingSystem.IsWindows() ? WslContextResolver.TryGetCurrent() : null;
+
+    /// <summary>
+    /// Whether git tracks <paramref name="hookPath"/> in the repository at
+    /// <paramref name="rootPath"/>. A hook outside the working tree (the default
+    /// <c>.git/hooks</c>, or a hooksPath elsewhere) is never tracked.
+    /// </summary>
+    private static async Task<bool> IsTrackedAsync(
+        IGitInvoker gi, string rootPath, string hookPath, CancellationToken cancellationToken)
+    {
+        var relative = Path.GetRelativePath(rootPath, hookPath).Replace('\\', '/');
+        if (relative.StartsWith("../", StringComparison.Ordinal) || relative.StartsWith(".git/", StringComparison.Ordinal)
+            || Path.IsPathRooted(relative))
+            return false;
+
+        var listed = await gi.RunAsync(rootPath, ["ls-files", "--", relative], cancellationToken);
+        return listed.ExitCode == 0 && !string.IsNullOrWhiteSpace(listed.Output);
+    }
 
     private static async Task<HookInstallResult> WriteHookAsync(
         string hookPath, Func<WslLaunch, CancellationToken, Task<(int ExitCode, string Output)>> runWsl,

@@ -133,6 +133,30 @@ public sealed class HookInstallerTests
         Assert.DoesNotContain("my custom", content);
     }
 
+    /// <summary>
+    /// A hook the repository TRACKS is the repository's own, marker or not. Visual Relay's
+    /// own repository ships a superset of the installed hook through core.hooksPath (its
+    /// test-budget guard and version bump), so bootstrapping it overwrote both and left a
+    /// tracked file modified. Enforcement is already active through the tracked hook.
+    /// </summary>
+    [Fact]
+    public async Task InstallAsync_LeavesATrackedVisualRelayHookAlone()
+    {
+        var (sim, repo) = CreateGitSimRepo();
+        await sim.RunAsync(repo.Root, ["config", "core.hooksPath", ".githooks"], CancellationToken.None);
+        var hookPath = Path.Combine(repo.Root, ".githooks", "pre-commit");
+        Directory.CreateDirectory(Path.GetDirectoryName(hookPath)!);
+        const string Own = "#!/usr/bin/env bash\n# Visual Relay pre-commit hook\n./visual-relay bump-version\n";
+        await File.WriteAllTextAsync(hookPath, Own, TestContext.Current.CancellationToken);
+        await sim.RunAsync(repo.Root, ["add", "--", ".githooks/pre-commit"], CancellationToken.None);
+
+        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
+
+        Assert.True(result.Installed);
+        Assert.Null(result.Warning);
+        Assert.Equal(Own, await File.ReadAllTextAsync(hookPath, TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task InstallAsync_LeavesCommitMsgUntouched()
     {
