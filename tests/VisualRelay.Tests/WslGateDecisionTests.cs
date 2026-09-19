@@ -55,6 +55,32 @@ public sealed class WslGateDecisionTests
         Assert.EndsWith(Consequence, message.TrimEnd());
     }
 
+    /// <summary>
+    /// What <c>setup-wsl</c> can finish without administrator rights, the gate offers before
+    /// the manual fix. It never offers it for what setup leaves to the user: WSL itself, a
+    /// WSL1 distro, Landlock, or a distro whose first run never finished.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(WslProbeFixtures.NoDistro), true)]
+    [InlineData(nameof(WslProbeFixtures.RequestedDistroMissing), true)]
+    [InlineData(nameof(WslProbeFixtures.NonoMissing), true)]
+    [InlineData(nameof(WslProbeFixtures.GitMissing), true)]
+    [InlineData(nameof(WslProbeFixtures.NoWsl), false)]
+    [InlineData(nameof(WslProbeFixtures.InboxStubOnly), false)]
+    [InlineData(nameof(WslProbeFixtures.Wsl1), false)]
+    [InlineData(nameof(WslProbeFixtures.LandlockInactive), false)]
+    [InlineData(nameof(WslProbeFixtures.HomeUnknown), false)]
+    public void SetupWsl_IsOfferedFirst_ExactlyWhereItCanFinishTheJob(string fixture, bool offered)
+    {
+        var (_, message) = WslGate.Decide(Fixture(fixture));
+
+        var offer = message!.IndexOf(@"run `.\visual-relay.cmd setup-wsl`", StringComparison.Ordinal);
+        Assert.Equal(offered, offer >= 0);
+        if (offered)
+            Assert.True(offer < message.IndexOf("\n\n", message.IndexOf("\n\n", StringComparison.Ordinal) + 2, StringComparison.Ordinal),
+                "the offer comes before the manual fix:\n" + message);
+    }
+
     [Fact]
     public void WslMissing_NamesTheInstallAndTheRebootAndSaysTheDistroIsTheOneYouInstall()
     {

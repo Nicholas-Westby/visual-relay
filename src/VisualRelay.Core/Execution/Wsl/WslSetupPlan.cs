@@ -57,10 +57,23 @@ public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, str
     private static partial Regex AptImage();
 
     /// <summary>The plan for <paramref name="probe"/>, creating <paramref name="linuxUser"/> in a distro it installs.</summary>
-    public static WslSetupPlan For(WslProbe probe, string linuxUser)
+    public static WslSetupPlan For(WslProbe probe, string linuxUser) =>
+        StepsFor(probe, linuxUser) is { } steps
+            ? new WslSetupPlan(steps, null)
+            : new WslSetupPlan([], WslGate.Decide(probe).Message);
+
+    /// <summary>
+    /// True when setup has something to do for <paramref name="probe"/> and nothing it leaves
+    /// to the user stands in the way. The gate asks this to decide whether to offer
+    /// <c>setup-wsl</c>, which is why the answer never goes through the gate's own message.
+    /// </summary>
+    internal static bool CanFinish(WslProbe probe) => StepsFor(probe, FallbackUser) is { Count: > 0 };
+
+    /// <summary>The steps <paramref name="probe"/> calls for, or null when what it found is not setup's to fix.</summary>
+    private static IReadOnlyList<WslSetupStep>? StepsFor(WslProbe probe, string linuxUser)
     {
         if (!probe.WslExeFound || probe.WslPlatformMissing)
-            return Blocked(probe);
+            return null;
 
         if (probe.DistroName is not { } distro)
         {
@@ -68,24 +81,24 @@ public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, str
             // name gets Ubuntu registered under it, next to whatever the machine already has.
             var name = probe.RequestedDistro ?? DefaultImage;
             var image = AptImage().IsMatch(name) ? name : DefaultImage;
-            return new WslSetupPlan(
+            return
             [
                 new InstallDistroStep(image, name),
                 new CreateUserStep(name, linuxUser),
                 new InstallPackagesStep(name),
                 new InstallNonoStep(name),
-            ], null);
+            ];
         }
 
         if (!probe.IsWsl2)
-            return Blocked(probe);
+            return null;
+        // Without nono there is no Landlock verdict yet (nono's own probe gives it), so a
+        // missing nono is installed first and the gate judges Landlock afterwards.
         if (probe.NonoPath is null)
-            return new WslSetupPlan([new InstallPackagesStep(distro), new InstallNonoStep(distro)], null);
+            return [new InstallPackagesStep(distro), new InstallNonoStep(distro)];
         if (!probe.LandlockActive || probe.DistroHome is null)
-            return Blocked(probe);
-        return probe.GitPath is null
-            ? new WslSetupPlan([new InstallPackagesStep(distro)], null)
-            : new WslSetupPlan([], null);
+            return null;
+        return probe.GitPath is null ? [new InstallPackagesStep(distro)] : [];
     }
 
     /// <summary>
@@ -106,6 +119,4 @@ public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, str
         var user = name.Length > 32 ? name.ToString(0, 32) : name.ToString();
         return user.Length > 0 && (user[0] is >= 'a' and <= 'z' || user[0] == '_') ? user : FallbackUser;
     }
-
-    private static WslSetupPlan Blocked(WslProbe probe) => new([], WslGate.Decide(probe).Message);
 }

@@ -18,6 +18,10 @@ public static class WslGate
 {
     private const string SuggestedDistro = "Ubuntu";
 
+    /// <summary>Put before the manual fix whenever <c>setup-wsl</c> can finish the job.</summary>
+    private const string SetupOffer =
+        @"Visual Relay can set this up for you, with no administrator rights needed: run `.\visual-relay.cmd setup-wsl`.";
+
     /// <summary>0 with no message when the probe is usable; else 127 with the message to print.</summary>
     public static (int ExitCode, string? Message) Decide(WslProbe probe)
     {
@@ -25,7 +29,10 @@ public static class WslGate
             return (0, null);
 
         var (problem, fix) = FirstFailingCheck(probe);
-        var message = $"visual-relay: {problem}\n\n{Indent(fix)}";
+        var message = $"visual-relay: {problem}\n\n";
+        if (WslSetupPlan.CanFinish(probe))
+            message += $"{Indent(SetupOffer)}\n\n";
+        message += Indent(fix);
         if (!string.IsNullOrWhiteSpace(probe.Diagnostics))
             message += $"\n\n{Indent("Probe details:\n" + probe.Diagnostics)}";
         message += $"\n\n{Indent(Consequence(probe.DistroName))}";
