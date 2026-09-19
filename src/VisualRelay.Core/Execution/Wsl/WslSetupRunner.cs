@@ -35,7 +35,7 @@ public static class WslSetupRunner
             {
                 (var exitCode, output) = await run(argv, ct);
                 if (exitCode != 0 && !(step.NeedsAdministrator && exitCode == SucceededRestartNeeded))
-                    return new WslSetupOutcome(Failure(i + 1, plan.Steps.Count, step, $"wsl.exe exited {exitCode}", output, installedHere));
+                    return Stop(Failure(i + 1, plan.Steps.Count, step, $"wsl.exe exited {exitCode}", output, installedHere));
             }
 
             if (step is not InstallDistroStep install)
@@ -44,12 +44,16 @@ public static class WslSetupRunner
             // (WSL 2.7.14 on Windows 11 25H2, 2026-09-19, after it turned the Virtual Machine
             // Platform back on), so only the listing says whether the distro is there.
             if (!await IsListedAsync(host, install.Name, ct))
-                return new WslSetupOutcome(Failure(i + 1, plan.Steps.Count, step,
+                return Stop(Failure(i + 1, plan.Steps.Count, step,
                     $"wsl.exe exited 0 but did not install '{install.Name}'", output, installedHere));
             installedHere = install.Name;
         }
 
         return new WslSetupOutcome(null);
+
+        WslSetupOutcome Stop(string failure) => new(host.LogPath is { } log
+            ? failure + $"\n\n  Every step's full output is in {log}."
+            : failure);
     }
 
     private static async Task<bool> IsListedAsync(WslSetupHost host, string distro, CancellationToken ct)

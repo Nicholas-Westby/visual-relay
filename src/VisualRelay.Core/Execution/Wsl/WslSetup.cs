@@ -29,22 +29,31 @@ public sealed record WslSetupHost(
     /// <summary>How long one wsl.exe call may take: a distro download on a slow line is the long one.</summary>
     private static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(30);
 
+    /// <summary>Where the run's <see cref="WslSetupLog"/> is, for a failure to point at; null when nothing is logged.</summary>
+    public string? LogPath { get; init; }
+
     /// <summary>
-    /// This machine: its own probe (which honours <c>VR_WSL_DISTRO</c>), its wsl.exe, a Linux
-    /// user named after the Windows one, and <see cref="LocalNonoDebEnvVar"/>.
+    /// This machine: its own probe (which honours <c>VR_WSL_DISTRO</c>), its wsl.exe with every
+    /// call recorded in <see cref="WslSetupLog.ThisMachine"/>, a Linux user named after the
+    /// Windows one, and <see cref="LocalNonoDebEnvVar"/>.
     /// </summary>
     public static WslSetupHost ThisMachine()
     {
         var wslExe = WslContextResolver.FindWslExe();
         var localDeb = Environment.GetEnvironmentVariable(LocalNonoDebEnvVar);
+        var log = WslSetupLog.ThisMachine();
         // Without wsl.exe the probe blocks the plan, so nothing is ever run through these.
         var missing = Task.FromResult((-1, "wsl.exe was not found"));
         return new WslSetupHost(
             WslContextResolver.ProbeAsync,
-            (argv, ct) => wslExe is null ? missing : RunWslExeAsync(wslExe, argv, ct),
-            (argv, ct) => wslExe is null ? missing : RunWslExeAsAdministratorAsync(wslExe, argv, ct),
+            log.Recording((argv, ct) => wslExe is null ? missing : RunWslExeAsync(wslExe, argv, ct), "wsl.exe"),
+            log.Recording((argv, ct) => wslExe is null ? missing : RunWslExeAsAdministratorAsync(wslExe, argv, ct),
+                "wsl.exe as administrator"),
             WslSetupPlan.LinuxUserFor(Environment.UserName),
-            string.IsNullOrWhiteSpace(localDeb) ? null : localDeb.Trim());
+            string.IsNullOrWhiteSpace(localDeb) ? null : localDeb.Trim())
+        {
+            LogPath = log.Path,
+        };
     }
 
     /// <summary>

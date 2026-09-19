@@ -311,7 +311,8 @@ After installing a distro it checks that WSL lists it, because the install's exi
 say whether a distro arrived. When it finishes it probes again, and it says the sandbox is ready
 only if the launch gate agrees. A Windows without wsl.exe, converting a WSL1 distro, Landlock and a distro whose
 first run never finished stay with you; for those it prints the gate's own fix. If a step
-fails, it shows the end of that step's output. Running it again does only what is still
+fails, it shows the end of that step's output; every step's command, exit code and full output
+is in `%LOCALAPPDATA%\visual-relay\setup-wsl.log`, which each run replaces. Running it again does only what is still
 missing, and when the failed run was the one that installed the distro,
 `wsl --unregister <name>` removes that distro so you can start over.
 
