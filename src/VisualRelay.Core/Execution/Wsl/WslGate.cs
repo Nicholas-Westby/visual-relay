@@ -53,6 +53,13 @@ public static class WslGate
                 + $"`wsl --install -d {SuggestedDistro}` again. Then run `wsl -d {SuggestedDistro}` once to create your "
                 + "Linux user.");
 
+        if (p.VmPlatformMissing)
+            return p.RestartPending
+                ? ("WSL cannot start Linux until Windows restarts: the Virtual Machine Platform it runs on is not running yet.",
+                    "Restart Windows, then start Visual Relay again.")
+                : ("WSL is installed, but the Virtual Machine Platform it runs Linux on is turned off.",
+                    "Turn it on: run `wsl --install --no-distribution` in an elevated PowerShell, then restart Windows.");
+
         if (p.DistroName is null && p.RequestedDistro is not null)
             return ($"the WSL distro '{p.RequestedDistro}' selected by {WslProber.DistroEnvVar} is not installed "
                     + $"(installed: {Installed(p)}).",

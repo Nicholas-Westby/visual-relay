@@ -261,9 +261,9 @@ PATH for that session only (no global machine change), and finds that dir again 
 launch. Re-run through `.\visual-relay.cmd`, or add `%LOCALAPPDATA%\visual-relay\dotnet` to your
 PATH for a standalone `dotnet`.
 
-**Task execution is blocked.** The launch gate checks five things — WSL, a WSL2 distro, nono
-inside it, Landlock active there, and git inside it — and names the first one that fails
-together with its fix. There is no opt-out and no unsandboxed fallback; inspection (queue,
+**Task execution is blocked.** The launch gate checks WSL and the Virtual Machine Platform it
+runs on, a WSL2 distro, nono inside it, Landlock active there, and git inside it, and names the
+first one that fails together with its fix. There is no opt-out and no unsandboxed fallback; inspection (queue,
 logs, traces, settings) works without any sandbox. The same message is what `bootstrap` and
 `Create config` print when they refuse, because on a Windows host with no usable distro a
 test command could only be checked on the Windows host, where the pipeline will never run it.
@@ -272,6 +272,8 @@ test command could only be checked on the Windows host, where the pipeline will 
 |--------------------|------------|
 | WSL is not installed (Windows 11 ships a wsl.exe that only offers to install WSL) | `.\visual-relay.cmd setup-wsl` installs it once you approve the Windows administrator prompt, then asks for a restart; or `wsl --install -d Ubuntu` in an elevated PowerShell, reboot, then `wsl -d Ubuntu` once to create your Linux user |
 | WSL is not installed (wsl.exe was not found) | a Windows without even the inbox wsl.exe needs updating first; then the same as above |
+| WSL is installed, but the Virtual Machine Platform it runs Linux on is turned off | `.\visual-relay.cmd setup-wsl` turns it on once you approve the Windows administrator prompt, then asks for a restart; or `wsl --install --no-distribution` in an elevated PowerShell, then restart. Removing WSL's app can leave its files behind, so `wsl --version` still answers while no distro can start |
+| WSL cannot start Linux until Windows restarts | restart Windows: the Virtual Machine Platform has been turned on and runs only after a restart. Until then `wsl --install` of a distro exits 0 having installed nothing |
 | no WSL distro is installed | `.\visual-relay.cmd setup-wsl`, or the same as above |
 | the WSL distro `<name>` selected by `VR_WSL_DISTRO` is not installed | `.\visual-relay.cmd setup-wsl` installs Ubuntu under that name; or point `VR_WSL_DISTRO` at an installed distro (unset it to use the default) |
 | `<name>` is a WSL1 distro | `wsl --set-version <name> 2` |
@@ -290,9 +292,11 @@ side of the install, and the launch offers to run it (a yes or no question that 
 no, asked only when someone is at the terminal). It prints what it will do, then does only
 what is missing:
 
-- no WSL: runs `wsl --install --no-distribution` once you approve the Windows administrator
-  prompt, in a window of its own, then stops so you can restart. That is the only step that
-  needs administrator rights; run it again after the restart for the rest.
+- no WSL, or WSL without the Virtual Machine Platform it runs on: runs
+  `wsl --install --no-distribution` once you approve the Windows administrator prompt, in a
+  window of its own, then stops so you can restart. That is the only step that needs
+  administrator rights; run it again after the restart for the rest. When the platform is on
+  but Windows has not restarted since, it runs nothing and asks for the restart.
 - no distro: installs Ubuntu (under the `VR_WSL_DISTRO` name, if one is set) and creates a
   Linux user named after your Windows user as its default. WSL signs that user in without a
   password, so it has none; to use `sudo`, give it one with `wsl -d <name> -u root passwd <user>`.
@@ -303,8 +307,9 @@ what is missing:
   package you already have instead of downloading one; the checksum check still applies.
 
 Everything inside the distro runs as root through `wsl -u root`, which needs no password.
-When it finishes it probes again, and it says the sandbox is ready only if the launch gate
-agrees. A Windows without wsl.exe, converting a WSL1 distro, Landlock and a distro whose
+After installing a distro it checks that WSL lists it, because the install's exit code does not
+say whether a distro arrived. When it finishes it probes again, and it says the sandbox is ready
+only if the launch gate agrees. A Windows without wsl.exe, converting a WSL1 distro, Landlock and a distro whose
 first run never finished stay with you; for those it prints the gate's own fix. If a step
 fails, it shows the end of that step's output. Running it again does only what is still
 missing, and when the failed run was the one that installed the distro,

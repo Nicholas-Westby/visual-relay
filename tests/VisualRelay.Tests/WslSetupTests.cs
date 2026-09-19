@@ -61,6 +61,19 @@ public sealed class WslSetupTests
         Assert.Contains("setup-wsl", _log[^1]);
     }
 
+    /// <summary>
+    /// The state the user's first run left on 2026-09-19: the platform turned on, Windows not yet
+    /// restarted. Nothing setup can run would help, so it runs nothing and asks for the restart.
+    /// </summary>
+    [Fact]
+    public async Task APendingRestart_RunsNothing_AndAsksForTheRestart()
+    {
+        var exitCode = await RunAsync([WslProbeFixtures.VmPlatformAwaitingRestart()]);
+
+        Assert.Equal(127, exitCode);
+        Assert.Contains("Restart Windows", Assert.Single(_log));
+    }
+
     /// <summary>A step can exit 0 and still leave the sandbox unusable, as a kernel without Landlock does.</summary>
     [Fact]
     public async Task Ready_IsClaimedOnlyWhenAFreshProbeSaysSo()

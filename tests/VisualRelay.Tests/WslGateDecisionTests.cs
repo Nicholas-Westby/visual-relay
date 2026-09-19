@@ -18,6 +18,8 @@ public sealed class WslGateDecisionTests
     {
         nameof(WslProbeFixtures.NoWsl) => WslProbeFixtures.NoWsl(),
         nameof(WslProbeFixtures.InboxStubOnly) => WslProbeFixtures.InboxStubOnly(),
+        nameof(WslProbeFixtures.VmPlatformOff) => WslProbeFixtures.VmPlatformOff(),
+        nameof(WslProbeFixtures.VmPlatformAwaitingRestart) => WslProbeFixtures.VmPlatformAwaitingRestart(),
         nameof(WslProbeFixtures.NoDistro) => WslProbeFixtures.NoDistro(),
         nameof(WslProbeFixtures.RequestedDistroMissing) => WslProbeFixtures.RequestedDistroMissing(),
         nameof(WslProbeFixtures.Wsl1) => WslProbeFixtures.Wsl1(),
@@ -37,6 +39,8 @@ public sealed class WslGateDecisionTests
     [Theory]
     [InlineData(nameof(WslProbeFixtures.NoWsl))]
     [InlineData(nameof(WslProbeFixtures.InboxStubOnly))]
+    [InlineData(nameof(WslProbeFixtures.VmPlatformOff))]
+    [InlineData(nameof(WslProbeFixtures.VmPlatformAwaitingRestart))]
     [InlineData(nameof(WslProbeFixtures.NoDistro))]
     [InlineData(nameof(WslProbeFixtures.RequestedDistroMissing))]
     [InlineData(nameof(WslProbeFixtures.Wsl1))]
@@ -66,6 +70,8 @@ public sealed class WslGateDecisionTests
     [InlineData(nameof(WslProbeFixtures.NonoMissing), true)]
     [InlineData(nameof(WslProbeFixtures.GitMissing), true)]
     [InlineData(nameof(WslProbeFixtures.InboxStubOnly), true)]
+    [InlineData(nameof(WslProbeFixtures.VmPlatformOff), true)]
+    [InlineData(nameof(WslProbeFixtures.VmPlatformAwaitingRestart), false)]
     [InlineData(nameof(WslProbeFixtures.NoWsl), false)]
     [InlineData(nameof(WslProbeFixtures.Wsl1), false)]
     [InlineData(nameof(WslProbeFixtures.LandlockInactive), false)]
@@ -117,6 +123,34 @@ public sealed class WslGateDecisionTests
         // Measured on Windows 11 25H2: the first install brought WSL but no distro.
         Assert.Contains("run `wsl --install -d Ubuntu` again", message);
         Assert.DoesNotContain("no WSL distro", message);
+    }
+
+    /// <summary>
+    /// The state a reset left on 2026-09-19: WSL still answers, so "no distro" was the old
+    /// verdict, and installing one only turned the platform back on and asked for a restart.
+    /// </summary>
+    [Fact]
+    public void AVmPlatformThatIsOff_IsReportedBeforeTheDistro_WithTheElevatedFixAndTheRestart()
+    {
+        var (_, message) = WslGate.Decide(WslProbeFixtures.VmPlatformOff());
+
+        Assert.Contains("Virtual Machine Platform", message);
+        Assert.DoesNotContain("no WSL distro", message);
+        Assert.Contains("approve", message);
+        Assert.Contains("wsl --install --no-distribution", message);
+        Assert.Contains("elevated PowerShell", message);
+        Assert.Contains("restart", message);
+    }
+
+    /// <summary>A restart is the one thing setup cannot do, so it is not offered, and nothing else is suggested.</summary>
+    [Fact]
+    public void AVmPlatformAwaitingRestart_AsksForTheRestart_AndNothingElse()
+    {
+        var (_, message) = WslGate.Decide(WslProbeFixtures.VmPlatformAwaitingRestart());
+
+        Assert.Contains("Restart Windows", message);
+        Assert.DoesNotContain("setup-wsl", message);
+        Assert.DoesNotContain("wsl --install", message);
     }
 
     [Fact]

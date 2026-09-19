@@ -27,6 +27,12 @@ internal static class WslProbeFixtures
 
     public static WslProbe NoDistro() => Usable() with { Distros = [], DistroName = null, IsWsl2 = false, KernelRelease = null, NonoPath = null, NonoVersion = null, LandlockActive = false, DistroHome = null, GitPath = null };
 
+    /// <summary>WSL's files are there and answer, but the Virtual Machine Platform is off.</summary>
+    public static WslProbe VmPlatformOff() => NoDistro() with { VmPlatformMissing = true, Diagnostics = "the Virtual Machine Platform is not running (there is no vmcompute service)" };
+
+    /// <summary>The platform has been turned on, and Windows has not restarted since.</summary>
+    public static WslProbe VmPlatformAwaitingRestart() => VmPlatformOff() with { RestartPending = true, Diagnostics = "the Virtual Machine Platform is not running (there is no vmcompute service); Windows is waiting for a restart" };
+
     public static WslProbe RequestedDistroMissing() => NoDistro() with { Distros = [Ubuntu, Debian], RequestedDistro = "Fedora" };
 
     public static WslProbe Wsl1() => Usable() with { DistroName = "Debian", IsWsl2 = false, KernelRelease = "4.4.0-19041-Microsoft" };

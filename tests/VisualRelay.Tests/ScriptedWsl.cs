@@ -32,7 +32,12 @@ internal sealed class ScriptedWsl
 
     private readonly Dictionary<string, (int ExitCode, string Output)> _replies = new(StringComparer.Ordinal);
 
+    private WslVmPlatform _vmPlatform = WslVmPlatform.Ready;
+
     public List<IReadOnlyList<string>> Calls { get; } = [];
+
+    /// <summary>How many times the probe read the machine's virtual machine platform.</summary>
+    public int VmPlatformReads { get; private set; }
 
     /// <summary>A healthy Ubuntu: every probe step answers as a usable machine would.</summary>
     public static ScriptedWsl HealthyUbuntu() => new ScriptedWsl()
@@ -52,6 +57,19 @@ internal sealed class ScriptedWsl
     {
         _replies[argv] = (exitCode, output);
         return this;
+    }
+
+    /// <summary>What the machine's registry says about WSL2's virtual machine: running, unless set here.</summary>
+    public ScriptedWsl WithVmPlatform(WslVmPlatform vmPlatform)
+    {
+        _vmPlatform = vmPlatform;
+        return this;
+    }
+
+    public WslVmPlatform ReadVmPlatform()
+    {
+        VmPlatformReads++;
+        return _vmPlatform;
     }
 
     public Task<(int ExitCode, string Output)> RunAsync(IReadOnlyList<string> argv, CancellationToken ct)

@@ -147,6 +147,7 @@ public static partial class WslContextResolver
             (argv, token) => RunWslExeAsync(wslExe!, argv, token),
             string.IsNullOrWhiteSpace(requested) ? null : requested.Trim(),
             wslExe,
+            WslVmPlatform.ThisMachine,
             ct);
     }
 

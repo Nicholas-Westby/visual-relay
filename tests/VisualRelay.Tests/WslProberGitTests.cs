@@ -21,7 +21,7 @@ public sealed class WslProberGitTests
         var wsl = HealthyUbuntu()
             .On($"-d Ubuntu --exec env PATH={ScriptedWsl.UserPath} sh -c command -v git", 1, string.Empty);
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Null(probe.GitPath);
         Assert.False(probe.IsUsable);
@@ -38,7 +38,7 @@ public sealed class WslProberGitTests
     {
         var wsl = HealthyUbuntu();
 
-        await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         var gitCall = wsl.Calls.Last();
         Assert.Contains("env", gitCall);
@@ -53,7 +53,7 @@ public sealed class WslProberGitTests
             .On($"-d Ubuntu --exec sh -c {WslProber.LoginPathScript}", 1, "no path here")
             .On("-d Ubuntu --exec sh -c command -v git", 0, "/usr/bin/git\n");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Null(probe.UserPath);
         Assert.Equal("/usr/bin/git", probe.GitPath);

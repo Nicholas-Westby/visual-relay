@@ -89,6 +89,21 @@ public sealed class WslSetupPlanTests
         Assert.IsType<InstallWslStep>(step);
     }
 
+    /// <summary>
+    /// WSL that answers without its Virtual Machine Platform gets the same elevated install,
+    /// which turns the platform on, and nothing else: a distro install would exit 0 having
+    /// installed nothing until Windows restarts.
+    /// </summary>
+    [Fact]
+    public void WslWithoutItsVmPlatform_GetsTheElevatedInstall_AndNothingElseYet()
+    {
+        var plan = WslSetupPlan.For(WslProbeFixtures.VmPlatformOff(), User);
+
+        Assert.Null(plan.Blocker);
+        var step = Assert.Single(plan.Steps);
+        Assert.IsType<InstallWslStep>(step);
+    }
+
     [Fact]
     public void OnlyInstallingWslItself_NeedsAdministratorApproval()
     {
@@ -116,6 +131,7 @@ public sealed class WslSetupPlanTests
     private static readonly Dictionary<string, WslProbe> BlockedProbes = new()
     {
         ["no wsl.exe"] = WslProbeFixtures.NoWsl(),
+        ["restart pending"] = WslProbeFixtures.VmPlatformAwaitingRestart(),
         ["wsl1"] = WslProbeFixtures.Wsl1(),
         ["landlock inactive"] = WslProbeFixtures.LandlockInactive(),
         ["home unknown"] = WslProbeFixtures.HomeUnknown(),

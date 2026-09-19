@@ -15,7 +15,7 @@ public sealed class WslProberLoginPathTests
     {
         var wsl = ScriptedWsl.HealthyUbuntu();
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, ScriptedWsl.Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, ScriptedWsl.Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Equal(ScriptedWsl.UserPath, probe.UserPath);
     }
@@ -28,7 +28,7 @@ public sealed class WslProberLoginPathTests
     {
         var wsl = ScriptedWsl.HealthyUbuntu().On($"-d Ubuntu --exec sh -c {WslProber.LoginPathScript}", exitCode, output);
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, ScriptedWsl.Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, ScriptedWsl.Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Null(probe.UserPath);
         Assert.True(probe.IsUsable, probe.Diagnostics);
@@ -40,7 +40,7 @@ public sealed class WslProberLoginPathTests
     {
         var wsl = ScriptedWsl.HealthyUbuntu().On("-d Ubuntu --exec sh -lc command -v nono", 1, "");
 
-        await WslProber.ProbeAsync(wsl.RunAsync, null, ScriptedWsl.Exe, CancellationToken.None);
+        await WslProber.ProbeAsync(wsl.RunAsync, null, ScriptedWsl.Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.DoesNotContain(wsl.Calls, argv => argv.Contains(WslProber.LoginPathScript));
     }

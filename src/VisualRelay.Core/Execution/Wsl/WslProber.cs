@@ -5,9 +5,11 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// <summary>
 /// Gathers a <see cref="WslProbe"/> by running wsl.exe through an injected runner
 /// (the delegate owns the process and its environment, including
-/// <c>WSL_UTF8=1</c>; tests script it and never spawn). Eight steps: list the
+/// <c>WSL_UTF8=1</c>; tests script it and never spawn), and reading the virtual machine
+/// platform through an injected reader. Eight steps: list the
 /// distros (with none listed, <c>--version</c> tells a missing WSL from a missing
-/// distro, and the probe stops); pick the one <c>VR_WSL_DISTRO</c> names, else the default; read
+/// distro); stop there unless Windows says WSL2's virtual machine platform is running, or
+/// when no distro is listed; pick the one <c>VR_WSL_DISTRO</c> names, else the default; read
 /// <c>uname -r</c>; resolve nono through a login shell (so a profile-added
 /// <c>~/.cargo/bin</c> counts); read its version and ask it whether Landlock is up;
 /// read the distro user's home; once those hold, read the PATH the user's login
@@ -46,6 +48,7 @@ public static partial class WslProber
         Func<IReadOnlyList<string>, CancellationToken, Task<(int ExitCode, string Output)>> runWsl,
         string? requestedDistro,
         string? wslExePath,
+        Func<WslVmPlatform> readVmPlatform,
         CancellationToken ct)
     {
         var probe = WslProbe.Empty with { RequestedDistro = requestedDistro };
@@ -63,8 +66,22 @@ public static partial class WslProber
             // The inbox wsl.exe of a Windows without WSL answers every command with an
             // install notice; only an installed WSL answers --version.
             var version = await RunAsync(runWsl, ["--version"], ct);
-            return Finish(probe with { WslPlatformMissing = version.ExitCode != 0 }, notes);
+            if (version.ExitCode != 0)
+                return Finish(probe with { WslPlatformMissing = true }, notes);
         }
+
+        // WSL answers --version from the files an uninstall leaves behind, so whether a WSL2
+        // distro can start at all is Windows' answer, not wsl.exe's.
+        var platform = readVmPlatform();
+        if (!platform.Running)
+        {
+            notes.Add("the Virtual Machine Platform is not running (there is no vmcompute service)"
+                      + (platform.RestartPending ? "; Windows is waiting for a restart" : ""));
+            return Finish(probe with { VmPlatformMissing = true, RestartPending = platform.RestartPending }, notes);
+        }
+
+        if (distros.Count == 0)
+            return Finish(probe, notes);
 
         var chosen = requestedDistro is null
             ? distros.FirstOrDefault(d => d.IsDefault) ?? distros[0]

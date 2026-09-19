@@ -21,7 +21,7 @@ public sealed class WslProberTests
     {
         var wsl = HealthyUbuntu();
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, requestedDistro: null, wslExePath: Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, requestedDistro: null, wslExePath: Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.True(probe.IsUsable, probe.Diagnostics);
         Assert.True(probe.WslExeFound);
@@ -44,7 +44,7 @@ public sealed class WslProberTests
     {
         var wsl = HealthyUbuntu();
 
-        await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         string[][] expected =
         [
@@ -67,7 +67,7 @@ public sealed class WslProberTests
     {
         var wsl = HealthyUbuntu();
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, requestedDistro: "Fedora", Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, requestedDistro: "Fedora", Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.False(probe.IsUsable);
         Assert.Equal("Fedora", probe.RequestedDistro);
@@ -83,7 +83,7 @@ public sealed class WslProberTests
             .On("-l -v", 0, ListOutput)
             .On("-d Debian --exec uname -r", 0, "4.4.0-19041-Microsoft\n");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, requestedDistro: "debian", Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, requestedDistro: "debian", Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Equal("Debian", probe.DistroName);
         Assert.Equal("debian", probe.RequestedDistro);
@@ -97,7 +97,7 @@ public sealed class WslProberTests
             .On("-l -v", 0, "  NAME      STATE     VERSION\n* Debian    Stopped   1\n")
             .On("-d Debian --exec uname -r", 0, "4.4.0-19041-Microsoft\n");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Equal("Debian", probe.DistroName);
         Assert.False(probe.IsWsl2);
@@ -112,7 +112,7 @@ public sealed class WslProberTests
         // not the kernel name, is what decides whether such a kernel is usable.
         var wsl = HealthyUbuntu().On("-d Ubuntu --exec uname -r", 0, "6.6.87-custom\n");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.True(probe.IsWsl2);
         Assert.Equal("6.6.87-custom", probe.KernelRelease);
@@ -123,7 +123,7 @@ public sealed class WslProberTests
     {
         var wsl = HealthyUbuntu().On("-d Ubuntu --exec sh -lc command -v nono", 1, "");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Null(probe.NonoPath);
         Assert.Null(probe.NonoVersion);
@@ -139,7 +139,7 @@ public sealed class WslProberTests
         var wsl = HealthyUbuntu().On("-d Ubuntu --exec env NONO_NO_UPDATE_CHECK=1 /usr/local/bin/nono setup --check-only", 1,
             "[2/4] Testing sandbox support...\nnono: Setup error: Landlock is not available: No supported Landlock ABI detected\n");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.False(probe.LandlockActive);
         Assert.False(probe.IsUsable);
@@ -153,7 +153,7 @@ public sealed class WslProberTests
         // so /sys/kernel/security/lsm does not exist, yet Landlock is up (ABI 7).
         var wsl = HealthyUbuntu();
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.True(probe.LandlockActive);
         Assert.DoesNotContain(wsl.Calls, argv => argv.Any(a => a.Contains("/sys/kernel/security")));
@@ -168,7 +168,7 @@ public sealed class WslProberTests
             .On("-d Ubuntu --exec env NONO_NO_UPDATE_CHECK=1 /home/alice/.cargo/bin/nono setup --check-only", 0, SandboxCheckPassed)
             .On("-d Ubuntu --exec sh -lc printf %s \"$HOME\"", 0, "Welcome to Ubuntu\n/home/alice");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.Equal("/home/alice/.cargo/bin/nono", probe.NonoPath);
         Assert.Equal("/home/alice", probe.DistroHome);
@@ -180,7 +180,7 @@ public sealed class WslProberTests
     {
         var wsl = HealthyUbuntu();
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, wslExePath: null, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, wslExePath: null, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.False(probe.WslExeFound);
         Assert.Null(probe.WslExePath);
@@ -195,7 +195,7 @@ public sealed class WslProberTests
             .On("-l -v", -1, "Windows Subsystem for Linux has no installed distributions.\n")
             .On("--version", 0, "WSL version: 2.7.14.0\nKernel version: 6.18.33.2-2\n");
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.True(probe.WslExeFound);
         Assert.False(probe.WslPlatformMissing);
@@ -215,7 +215,7 @@ public sealed class WslProberTests
         var asRead = Encoding.UTF8.GetString(Encoding.Unicode.GetBytes(notice));
         var wsl = new ScriptedWsl().On("-l -v", 1, asRead).On("--version", 1, asRead);
 
-        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, CancellationToken.None);
+        var probe = await WslProber.ProbeAsync(wsl.RunAsync, null, Exe, wsl.ReadVmPlatform, CancellationToken.None);
 
         Assert.True(probe.WslPlatformMissing);
         Assert.False(probe.IsUsable);
@@ -229,7 +229,7 @@ public sealed class WslProberTests
     {
         var probe = await WslProber.ProbeAsync(
             (_, _) => throw new InvalidOperationException("wsl.exe exploded"),
-            null, Exe, CancellationToken.None);
+            null, Exe, static () => WslVmPlatform.Ready, CancellationToken.None);
 
         Assert.True(probe.WslExeFound);
         Assert.False(probe.IsUsable);
@@ -244,6 +244,6 @@ public sealed class WslProberTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => WslProber.ProbeAsync(
             (_, ct) => { ct.ThrowIfCancellationRequested(); return Task.FromResult((0, "")); },
-            null, Exe, cts.Token));
+            null, Exe, static () => WslVmPlatform.Ready, cts.Token));
     }
 }

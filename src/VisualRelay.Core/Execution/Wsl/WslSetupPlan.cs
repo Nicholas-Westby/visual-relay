@@ -14,13 +14,14 @@ public abstract record WslSetupStep
 }
 
 /// <summary>
-/// Installs WSL itself, through the Windows administrator prompt, without a distro: the distro
-/// is set up by the next run, once the restart WSL's first install needs has happened.
+/// Installs WSL and turns on the Virtual Machine Platform it runs on, through the Windows
+/// administrator prompt, without a distro: the distro is set up by the next run, once the
+/// restart that turning the platform on needs has happened.
 /// </summary>
 public sealed record InstallWslStep : WslSetupStep
 {
     public override string Description =>
-        "install WSL itself (Windows asks you to approve this as an administrator, and a restart follows)";
+        "install WSL and the Windows features it runs on (Windows asks you to approve this as an administrator, and a restart follows)";
 
     public override bool NeedsAdministrator => true;
 }
@@ -58,9 +59,10 @@ public sealed record InstallNonoStep(string Distro) : WslSetupStep
 /// Windows administrator rights once WSL itself is present (measured on Windows 11 on
 /// 2026-09-19: a new distro, a user, git and nono in about 130 s, with no UAC prompt, no reboot and
 /// no question asked). WSL itself is installed through the Windows administrator prompt when the
-/// inbox wsl.exe is there to install it. A Windows without even that, a WSL1 distro, Landlock and
-/// an unreadable home are left to the user, with the gate's own fix, because each needs an older
-/// Windows updated, a kernel, or a decision that is theirs.
+/// inbox wsl.exe is there to install it, and so is the Virtual Machine Platform it runs on when that
+/// is off. A Windows without even that wsl.exe, a pending restart, a WSL1 distro, Landlock and an
+/// unreadable home are left to the user, with the gate's own fix, because each needs an older
+/// Windows updated, a restart, a kernel, or a decision that is theirs.
 /// </summary>
 public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, string? Blocker)
 {
@@ -93,6 +95,10 @@ public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, str
         // Nothing about a distro can be known before WSL answers, so installing WSL is the whole plan.
         if (probe.WslPlatformMissing)
             return [new InstallWslStep()];
+        // The same install turns the platform on; once it is on, only a restart is left, and
+        // that is the user's to do. A distro install before then exits 0 having installed nothing.
+        if (probe.VmPlatformMissing)
+            return probe.RestartPending ? null : [new InstallWslStep()];
 
         if (probe.DistroName is not { } distro)
         {

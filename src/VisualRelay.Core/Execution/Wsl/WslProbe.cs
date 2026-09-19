@@ -28,6 +28,21 @@ public sealed record WslProbe(
     public bool WslPlatformMissing { get; init; }
 
     /// <summary>
+    /// True when WSL is installed but the Virtual Machine Platform that WSL2 runs its Linux
+    /// kernel on is not running (<see cref="WslVmPlatform.Running"/>): turned off, or turned on
+    /// and waiting for a restart. No WSL2 distro can start then, and a distro install exits 0
+    /// having installed nothing.
+    /// </summary>
+    public bool VmPlatformMissing { get; init; }
+
+    /// <summary>
+    /// True when Windows is waiting for a restart to finish installing or removing a component
+    /// (<see cref="WslVmPlatform.RestartPending"/>). Read only with <see cref="VmPlatformMissing"/>,
+    /// which that restart is what fixes once the platform has been turned on.
+    /// </summary>
+    public bool RestartPending { get; init; }
+
+    /// <summary>
     /// The PATH the distro user's own login shell builds (profile and rc files, so
     /// rustup, nvm and the like count), or null when it could not be read. Every
     /// launch carries it; a plain <c>wsl --exec</c> gets only the distro default.
