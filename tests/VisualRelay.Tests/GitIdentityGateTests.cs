@@ -26,7 +26,7 @@ public sealed class GitIdentityGateTests
     {
         var git = new ScriptedGit(128,
             "Author identity unknown\n\n*** Please tell me who you are.\n\n"
-            + "fatal: empty ident name (for <enjay@Hodgman.localdomain>) not allowed\n");
+            + "fatal: empty ident name (for <alice@alice-pc.localdomain>) not allowed\n");
 
         var refusal = await GitIdentityGate.CheckAsync("/home/u/repo", git, insideWsl: false);
 

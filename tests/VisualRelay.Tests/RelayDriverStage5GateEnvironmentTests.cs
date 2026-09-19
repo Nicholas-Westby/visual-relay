@@ -16,9 +16,9 @@ public sealed class RelayDriverStage5GateEnvironmentTests
 {
     private const string NugetDenied =
         "  Determining projects to restore...\n"
-        + "/home/enjay/.dotnet/sdk/11.0.100-rc.1.26425.128/NuGet.targets(784,5): error : Failed to read NuGet.Config due to unauthorized access. Path: '/home/enjay/.nuget/NuGet/NuGet.Config'. [/home/enjay/vr-eval/LiteDB/LiteDB/LiteDB.csproj]\n"
-        + "/home/enjay/.dotnet/sdk/11.0.100-rc.1.26425.128/NuGet.targets(784,5): error :   Access to the path '/home/enjay/.nuget/NuGet/NuGet.Config' is denied. [/home/enjay/vr-eval/LiteDB/LiteDB/LiteDB.csproj]\n"
-        + "/home/enjay/.dotnet/sdk/11.0.100-rc.1.26425.128/NuGet.targets(784,5): error :   Permission denied [/home/enjay/vr-eval/LiteDB/LiteDB/LiteDB.csproj]\n";
+        + "/home/alice/.dotnet/sdk/11.0.100-rc.1.26425.128/NuGet.targets(784,5): error : Failed to read NuGet.Config due to unauthorized access. Path: '/home/alice/.nuget/NuGet/NuGet.Config'. [/home/alice/vr-eval/LiteDB/LiteDB/LiteDB.csproj]\n"
+        + "/home/alice/.dotnet/sdk/11.0.100-rc.1.26425.128/NuGet.targets(784,5): error :   Access to the path '/home/alice/.nuget/NuGet/NuGet.Config' is denied. [/home/alice/vr-eval/LiteDB/LiteDB/LiteDB.csproj]\n"
+        + "/home/alice/.dotnet/sdk/11.0.100-rc.1.26425.128/NuGet.targets(784,5): error :   Permission denied [/home/alice/vr-eval/LiteDB/LiteDB/LiteDB.csproj]\n";
 
     [Theory]
     [InlineData(NugetDenied)]
@@ -43,7 +43,7 @@ public sealed class RelayDriverStage5GateEnvironmentTests
         + "> Could not create service of type BuildLifecycleController using BuildScopeServices.createBuildLifecycleController().\n"
         + "   > Could not create service of type BuildModelController using VintageBuildControllerProvider.createBuildModelController().\n"
         + "      > Could not create service of type FileHasher using BuildSessionServices.createFileHasher().\n"
-        + "         > java.io.FileNotFoundException: /home/enjay/vr-eval/Unciv/.gradle/9.4.1/fileHashes/fileHashes.lock (Permission denied)\n\n"
+        + "         > java.io.FileNotFoundException: /home/alice/vr-eval/Unciv/.gradle/9.4.1/fileHashes/fileHashes.lock (Permission denied)\n\n"
         + "* Try:\n"
         + "> Run with --stacktrace option to get the stack trace.\n"
         + "> Run with --info or --debug option to get more log output.\n"

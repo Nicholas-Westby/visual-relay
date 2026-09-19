@@ -8,19 +8,19 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// A workspace sandboxed inside a WSL distro names its extra grants as the distro sees them and
 /// is checked against the distro user's home. Measured on the Windows arm with litedb-org/LiteDB:
-/// the entry /home/enjay/.nuget/NuGet was checked against the Windows profile and refused, and
+/// the entry /home/alice/.nuget/NuGet was checked against the Windows profile and refused, and
 /// the refusal emptied the task list.
 /// </summary>
 public sealed class SandboxExtraAllowPathsWslTests
 {
-    private static readonly WslContext VrNoSuchDistro = new("wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/enjay");
+    private static readonly WslContext VrNoSuchDistro = new("wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     [Theory]
-    [InlineData("/home/enjay/.nuget/NuGet", "/home/enjay/.nuget/NuGet")]
-    [InlineData("~/.nuget/NuGet", "/home/enjay/.nuget/NuGet")]
-    [InlineData("$HOME/.nuget/NuGet", "/home/enjay/.nuget/NuGet")]
-    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\enjay\.cache\tool", "/home/enjay/.cache/tool")]
-    [InlineData("/home/enjay//.m2/./repository/", "/home/enjay/.m2/repository")]
+    [InlineData("/home/alice/.nuget/NuGet", "/home/alice/.nuget/NuGet")]
+    [InlineData("~/.nuget/NuGet", "/home/alice/.nuget/NuGet")]
+    [InlineData("$HOME/.nuget/NuGet", "/home/alice/.nuget/NuGet")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\alice\.cache\tool", "/home/alice/.cache/tool")]
+    [InlineData("/home/alice//.m2/./repository/", "/home/alice/.m2/repository")]
     public async Task AnEntryUnderTheDistroHome_IsGrantedInItsLinuxForm(string entry, string expected)
     {
         using var repo = TestRepository.Create();
@@ -35,11 +35,11 @@ public sealed class SandboxExtraAllowPathsWslTests
     [Theory]
     [InlineData("/etc/nuget")]
     [InlineData("/home/other/.nuget")]
-    [InlineData("/home/enjay-other/.nuget")]
-    [InlineData(@"\\wsl.localhost\VrNoSuchOtherDistro\home\enjay\.cache")]
-    [InlineData(@"C:\Users\enjay\.nuget")]
+    [InlineData("/home/alice-other/.nuget")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchOtherDistro\home\alice\.cache")]
+    [InlineData(@"C:\Users\alice\.nuget")]
     [InlineData("~/.ssh")]
-    [InlineData("/home/enjay/.aws/credentials")]
+    [InlineData("/home/alice/.aws/credentials")]
     [InlineData("~/../other")]
     public async Task AnEntryOutsideTheDistroHomeOrIntoASecret_RefusesTheConfig(string entry)
     {
@@ -60,7 +60,7 @@ public sealed class SandboxExtraAllowPathsWslTests
 
         var result = await LoadInDistroAsync(repo, VrNoSuchDistro);
 
-        Assert.Contains("/home/enjay", result.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("/home/alice", result.Diagnostic, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -80,7 +80,7 @@ public sealed class SandboxExtraAllowPathsWslTests
     public async Task WithNoDistroResolved_TheConfigStillLoadsWithoutTheEntries()
     {
         using var repo = TestRepository.Create();
-        await WriteConfigAsync(repo, "/home/enjay/.nuget/NuGet");
+        await WriteConfigAsync(repo, "/home/alice/.nuget/NuGet");
 
         var result = await LoadInDistroAsync(repo, null);
 

@@ -15,7 +15,7 @@ public sealed class FlaggedWorkCaptureTests
     /// <summary>What git said in the measured run, minus its advice paragraph.</summary>
     internal const string NoIdentity =
         "Author identity unknown\n\n*** Please tell me who you are.\n\n"
-        + "fatal: empty ident name (for <enjay@Hodgman.localdomain>) not allowed\n";
+        + "fatal: empty ident name (for <alice@alice-pc.localdomain>) not allowed\n";
 
     /// <summary>
     /// The snapshot is Visual Relay's own plumbing commit and only ever lives inside the
@@ -48,7 +48,7 @@ public sealed class FlaggedWorkCaptureTests
         Assert.True(result.IsFailed);
         Assert.False(result.IsCaptured);
         Assert.Equal("commit-tree", result.FailedStep);
-        Assert.Contains("empty ident name (for <enjay@Hodgman.localdomain>) not allowed", result.Output, StringComparison.Ordinal);
+        Assert.Contains("empty ident name (for <alice@alice-pc.localdomain>) not allowed", result.Output, StringComparison.Ordinal);
         Assert.False(File.Exists(Path.Combine(TaskDirectory(repo), FlaggedWorkStore.BundleFileName)));
     }
 

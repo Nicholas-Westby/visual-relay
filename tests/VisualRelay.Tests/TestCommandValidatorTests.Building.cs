@@ -24,10 +24,10 @@ public sealed partial class TestCommandValidatorTests
         + "[INFO] Compiling 264 source files with javac [debug release 8] to target/classes\n")]
     [InlineData("dotnet test LiteDB.Tests/LiteDB.Tests.csproj",
         "  Determining projects to restore...\r\n"
-        + "  Restored /home/enjay/vr-eval/LiteDB/LiteDB.Tests/LiteDB.Tests.csproj (in 939 ms).\r\n"
-        + "  Restored /home/enjay/vr-eval/LiteDB/LiteDB/LiteDB.csproj (in 930 ms).\r\n")]
+        + "  Restored /home/alice/vr-eval/LiteDB/LiteDB.Tests/LiteDB.Tests.csproj (in 939 ms).\r\n"
+        + "  Restored /home/alice/vr-eval/LiteDB/LiteDB/LiteDB.csproj (in 930 ms).\r\n")]
     [InlineData("dotnet test LiteDB.Tests/LiteDB.Tests.csproj",
-        "  LiteDB -> /home/enjay/vr-eval/LiteDB/LiteDB/bin/Release/net10.0/LiteDB.dll\r\n")]
+        "  LiteDB -> /home/alice/vr-eval/LiteDB/LiteDB/bin/Release/net10.0/LiteDB.dll\r\n")]
     [InlineData("cmake -S . -B build && cmake --build build && ctest --test-dir build --output-on-failure",
         "-- Configuring done (0.3s)\n-- Generating done (0.0s)\n"
         + "[ 20%] Building CXX object CMakeFiles/core.dir/src/a.cpp.o\n[ 40%] Building CXX object CMakeFiles/core.dir/src/b.cpp.o\n")]
