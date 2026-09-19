@@ -102,7 +102,10 @@ public sealed class WslSetupLogTests
             log.Recording(Answering(100, "E: no\n"), "wsl.exe"),
             log.Recording(Answering(100, "E: no\n"), "wsl.exe as administrator"),
             "alice",
-            LocalNonoDeb: null) { Log = log };
+            LocalNonoDeb: null)
+        {
+            Log = log,
+        };
         var outcome = await WslSetupRunner.RunAsync(
             WslSetupPlan.For(WslProbeFixtures.NonoMissing(), "alice"), host, _ => { }, CancellationToken.None);
         return outcome.Failure!;
