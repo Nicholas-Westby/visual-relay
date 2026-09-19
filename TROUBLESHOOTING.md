@@ -271,18 +271,40 @@ test command could only be checked on the Windows host, where the pipeline will 
 | What the gate says | What to do |
 |--------------------|------------|
 | WSL is not installed (Windows 11 ships a wsl.exe that only offers to install WSL) | `wsl --install -d Ubuntu` in an elevated PowerShell, reboot, then `wsl -d Ubuntu` once to create your Linux user |
-| no WSL distro is installed | the same, then re-run |
-| the WSL distro `<name>` selected by `VR_WSL_DISTRO` is not installed | install that one, or point `VR_WSL_DISTRO` at an installed distro (unset it to use the default) |
+| no WSL distro is installed | `.\visual-relay.cmd setup-wsl`, or the same as above |
+| the WSL distro `<name>` selected by `VR_WSL_DISTRO` is not installed | `.\visual-relay.cmd setup-wsl` installs Ubuntu under that name; or point `VR_WSL_DISTRO` at an installed distro (unset it to use the default) |
 | `<name>` is a WSL1 distro | `wsl --set-version <name> 2` |
-| nono was not found inside the WSL distro `<name>` | install nono 0.75.0 in the distro (`curl -fsSL https://nono.sh/install.sh \| NONO_VERSION=v0.75.0 sh`, see the README) and check `wsl -d <name> --exec sh -lc 'command -v nono'` |
+| nono was not found inside the WSL distro `<name>` | `.\visual-relay.cmd setup-wsl`; by hand, install nono 0.75.0 in the distro (`curl -fsSL https://nono.sh/install.sh \| NONO_VERSION=v0.75.0 sh`) and check `wsl -d <name> --exec sh -lc 'command -v nono'` |
 | Landlock is not active in the WSL distro `<name>` | remove a custom `kernel=` or `kernelCommandLine=` line from `%UserProfile%\.wslconfig`, then `wsl --update` and `wsl --shutdown`; stock kernels have enabled Landlock since 5.15.57.1 |
 | the home directory of the default user could not be read | run `wsl -d <name>` once so the distro finishes its first-run user setup |
-| git was not found inside the WSL distro `<name>` | install it there (`sudo apt install -y git` on Ubuntu) and check `wsl -d <name> --exec sh -lc 'command -v git'`; every workspace git call runs in the distro, so one without git cannot drive a repository |
+| git was not found inside the WSL distro `<name>` | `.\visual-relay.cmd setup-wsl`, or install it there (`sudo apt install -y git` on Ubuntu) and check `wsl -d <name> --exec sh -lc 'command -v git'`; every workspace git call runs in the distro, so one without git cannot drive a repository |
 
 Every message ends with the same consequence: the build and test commands of the repository
 you point Visual Relay at run **inside that distro**, so their toolchain must be installed
 there, and a Windows-only toolchain (MSBuild against .NET Framework, Visual Studio build
 tools, Unity on Windows, anything that needs an `.exe`) is not supported.
+
+**Setting up WSL with `setup-wsl`.** `.\visual-relay.cmd setup-wsl` does the distro half of
+the install without administrator rights, and the launch offers to run it (a yes or no
+question that defaults to no, asked only when someone is at the terminal). It prints what it
+will do, then does only what is missing:
+
+- no distro: installs Ubuntu (under the `VR_WSL_DISTRO` name, if one is set) and creates a
+  Linux user named after your Windows user as its default. WSL signs that user in without a
+  password, so it has none; to use `sudo`, give it one with `wsl -d <name> -u root passwd <user>`.
+- git, curl or the CA certificates missing: installs them with apt.
+- nono missing: downloads the 0.75.0 Debian package inside the distro, refuses it unless its
+  SHA-256 matches the one Visual Relay pins, and installs it without its recommends
+  (gnome-keyring and about 80 MB of desktop packages). `VR_NONO_DEB=<path>` installs a
+  package you already have instead of downloading one; the checksum check still applies.
+
+Everything inside the distro runs as root through `wsl -u root`, which needs no password.
+When it finishes it probes again, and it says the sandbox is ready only if the launch gate
+agrees. WSL itself, converting a WSL1 distro, Landlock and a distro whose first run never
+finished stay with you; for those it prints the gate's own fix. If a step fails, it shows the
+end of that step's output. Running it again does only what is still missing, and when the
+failed run was the one that installed the distro, `wsl --unregister <name>` removes that
+distro so you can start over.
 
 **Choosing the distro.** Visual Relay uses the WSL default distro. `VR_WSL_DISTRO=<name>`
 picks another one; unset it to go back to the default. `wsl -l -v` lists what is installed.

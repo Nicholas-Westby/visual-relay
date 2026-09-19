@@ -38,39 +38,26 @@ You can then run `./visual-relay` in that folder the next time you want to launc
 Visual Relay runs on Windows, but the sandbox every command runs in is Linux: `nono`
 enforcing the same profile through the WSL2 kernel, exactly as on macOS and Linux. So
 there are two halves to install — Visual Relay on Windows, and the sandbox inside a
-WSL2 distro.
+WSL2 distro. Visual Relay sets up the distro half itself; only WSL needs you.
 
-1. Install WSL2 and a distro in an elevated PowerShell, then reboot. On a PC that has
-   never had WSL, this first run installs WSL itself but not the distro, so check with
-   `wsl -l -v` after the reboot and run the install again if no distro is listed (no
-   elevation needed). Then open the distro once so it creates your Linux user:
+1. Install WSL in an elevated PowerShell, then reboot. This is the one step that needs
+   administrator rights:
 
    ```powershell
    wsl --install -d Ubuntu
-   wsl -d Ubuntu
    ```
 
-2. Install git and nono 0.75.0 **inside the distro** (not on Windows). Visual Relay pins
-   that nono version, so name it; the installer otherwise takes the latest release:
+   If Ubuntu opens after the reboot and asks for a user name, create one. If no distro
+   appears (a first install can bring WSL without one), that is fine: step 3 sets one up.
 
-   ```bash
-   sudo apt update && sudo apt install -y git curl
-   curl -fsSL https://nono.sh/install.sh | NONO_VERSION=v0.75.0 sh
-   ```
-
-   The `.deb` from the [v0.75.0 release](https://github.com/nolabs-ai/nono/releases/tag/v0.75.0)
-   works too; install it with `sudo apt install --no-install-recommends ./nono-cli_0.75.0_amd64.deb`,
-   because without that flag apt also pulls in gnome-keyring and about 80 MB of desktop
-   packages. Set `VR_WSL_DISTRO=<name>` if the distro you want is not the WSL default.
-
-3. Install the .NET 10 SDK on Windows. (Run from a terminal, the launcher offers to
+2. Install the .NET 10 SDK on Windows. (Run from a terminal, the launcher offers to
    install a per-user copy for you instead.)
 
    ```powershell
    winget install Microsoft.DotNet.SDK.10
    ```
 
-4. Clone the repo and run it through `visual-relay.cmd` (nix doesn't run on Windows, so
+3. Clone the repo and run it through `visual-relay.cmd` (nix doesn't run on Windows, so
    dependencies are installed globally). Typing `./visual-relay` in PowerShell runs
    `visual-relay.ps1`, which PowerShell's default execution policy refuses; the `.cmd`
    passes the policy flag for you:
@@ -81,6 +68,13 @@ WSL2 distro.
    cd visual-relay
    .\visual-relay.cmd launch
    ```
+
+   The first launch checks the WSL side and offers to set up whatever is missing: Ubuntu
+   with a Linux user named after yours if there is no distro, then git, and nono 0.75.0,
+   which Visual Relay pins and checks against a SHA-256 before installing. None of it needs
+   administrator rights, and it takes about two minutes. `.\visual-relay.cmd setup-wsl`
+   runs the same setup on its own. Set `VR_WSL_DISTRO=<name>` to use a distro other than
+   the WSL default; setup installs Ubuntu under that name if it does not exist yet.
 
 `--depth 1` does a shallow clone (latest commit only) for a faster, smaller
 download; omit it to fetch the full history.

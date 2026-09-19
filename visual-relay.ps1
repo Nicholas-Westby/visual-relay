@@ -88,8 +88,8 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 
 # Nothing else is provisioned here: a task's commands run as nono inside a WSL2
-# distro, which this script cannot install. The C# gate probes for WSL, the distro,
-# nono and Landlock, and prints what is missing and how to fix it.
+# distro, which the C# CLI sets up (`setup-wsl`, offered by the launch gate). The gate
+# probes for WSL, the distro, nono and Landlock, and prints what is missing and how to fix it.
 
 $cli = Join-Path $ScriptDir 'tools\VisualRelay.Cli\VisualRelay.Cli.csproj'
 # Pass $rest (not @rest): for a native command PowerShell expands an array into

@@ -57,7 +57,8 @@ CLI subprocess behind a local model gateway. Both were removed on 2026-09-01, so
 the variable now selects nothing and is ignored.
 
 Every command a stage runs is sandboxed by `nono`. On Windows that means WSL2 is
-required, with nono installed inside the distro: the commands themselves run there,
+required, with nono installed inside the distro (`.\visual-relay.cmd setup-wsl` sets up
+the distro, git and nono): the commands themselves run there,
 under the same `vr-guard` profile and the same Landlock enforcement Linux gets. Visual
 Relay on Windows therefore drives repositories whose toolchain lives in the distro —
 the workspace is opened through a `\\wsl.localhost\<distro>\...` path, and a
