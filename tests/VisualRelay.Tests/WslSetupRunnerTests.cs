@@ -1,0 +1,152 @@
+using VisualRelay.Core.Execution.Wsl;
+
+namespace VisualRelay.Tests;
+
+/// <summary>
+/// How <c>setup-wsl</c> carries a plan out: each step as wsl.exe calls, everything inside
+/// the distro run as root through <c>-u root</c> (which needs no password), and the run
+/// stopped at the first step that fails. The wsl.exe here answers from a script, so
+/// nothing is spawned.
+/// </summary>
+public sealed class WslSetupRunnerTests
+{
+    private const string User = "alice";
+
+    private static readonly WslSetupPlan NewUbuntu = WslSetupPlan.For(WslProbeFixtures.NoDistro(), User);
+
+    [Fact]
+    public async Task ANewDistro_IsInstalledThenSetUpAsRoot_InPlanOrder()
+    {
+        var wsl = new AnsweringWsl();
+
+        var outcome = await RunAsync(NewUbuntu, wsl);
+
+        Assert.Null(outcome.Failure);
+        Assert.Collection(wsl.Calls,
+            call => Assert.Equal(["--install", "Ubuntu", "--no-launch"], call),
+            call => Assert.Equal(AsRoot("Ubuntu", WslSetupScripts.CreateUser, User), call),
+            // A new default user takes effect only once the distro starts again.
+            call => Assert.Equal(["--terminate", "Ubuntu"], call),
+            call => Assert.Equal(AsRoot("Ubuntu", WslSetupScripts.Packages), call),
+            call => Assert.Equal(AsRoot("Ubuntu", WslSetupScripts.Nono, NonoRelease.Version,
+                NonoRelease.Amd64DebSha256, NonoRelease.Arm64DebSha256, NonoRelease.DebUrlPrefix, ""), call));
+    }
+
+    [Fact]
+    public async Task ADistroNamedOtherThanItsImage_IsRegisteredUnderThatName_AndSetUpThere()
+    {
+        var plan = WslSetupPlan.For(
+            WslProbeFixtures.RequestedDistroMissing() with { RequestedDistro = "VrNoSuchDistro" }, User);
+        var wsl = new AnsweringWsl();
+
+        await RunAsync(plan, wsl);
+
+        Assert.Equal(["--install", "Ubuntu", "--name", "VrNoSuchDistro", "--no-launch"], wsl.Calls[0]);
+        Assert.All(wsl.Calls.Skip(1), call => Assert.Contains("VrNoSuchDistro", call));
+        Assert.DoesNotContain(wsl.Calls.Skip(1), call => call.Contains("Ubuntu"));
+    }
+
+    [Fact]
+    public async Task ALocalNonoPackage_IsHandedToTheScriptInPlaceOfTheDownload()
+    {
+        var plan = WslSetupPlan.For(WslProbeFixtures.NonoMissing(), User);
+        var wsl = new AnsweringWsl();
+
+        await RunAsync(plan, wsl, localNonoDeb: @"C:\Temp\nono-cli_0.75.0_amd64.deb");
+
+        Assert.Equal(@"C:\Temp\nono-cli_0.75.0_amd64.deb", wsl.Calls[^1][^1]);
+    }
+
+    [Fact]
+    public async Task EachStep_IsAnnouncedBeforeItRuns()
+    {
+        var lines = new List<string>();
+
+        await WslSetupRunner.RunAsync(NewUbuntu, new AnsweringWsl().RunAsync, lines.Add, null, CancellationToken.None);
+
+        Assert.Equal(NewUbuntu.Steps.Select((step, i) => $"[{i + 1}/4] {step.Description}"), lines);
+    }
+
+    [Fact]
+    public async Task AFailingStep_StopsTheRun_AndSaysWhichStepAndWhy()
+    {
+        var wsl = new AnsweringWsl { Fails = call => call.Contains(WslSetupScripts.Packages) };
+
+        var outcome = await RunAsync(NewUbuntu, wsl);
+
+        Assert.DoesNotContain(wsl.Calls, call => call.Contains(WslSetupScripts.Nono));
+        Assert.NotNull(outcome.Failure);
+        Assert.Contains($"step 3 of 4 ({NewUbuntu.Steps[2].Description})", outcome.Failure);
+        Assert.Contains("exited 100", outcome.Failure);
+        Assert.Contains("E: Unable to locate package git", outcome.Failure);
+    }
+
+    /// <summary>
+    /// Only the end of a long log is shown: apt prints hundreds of lines before the one
+    /// that says why it failed, and that one is last.
+    /// </summary>
+    [Fact]
+    public async Task AFailedStepsOutput_IsCutToItsLastLines()
+    {
+        var log = string.Join('\n', Enumerable.Range(1, 200).Select(i => $"Get:{i} http://archive.ubuntu.com")) + "\nE: the real reason\n";
+        var wsl = new AnsweringWsl { Fails = call => call.Contains(WslSetupScripts.Packages), FailureOutput = log };
+
+        var outcome = await RunAsync(NewUbuntu, wsl);
+
+        Assert.Contains("E: the real reason", outcome.Failure);
+        Assert.DoesNotContain("Get:1 ", outcome.Failure);
+    }
+
+    /// <summary>
+    /// A distro this run installed holds nothing of the user's yet, so removing it and
+    /// starting over is safe advice. For any other distro that advice would destroy their work.
+    /// </summary>
+    [Fact]
+    public async Task AFailureAfterThisRunInstalledTheDistro_SaysHowToStartOver()
+    {
+        var wsl = new AnsweringWsl { Fails = call => call.Contains(WslSetupScripts.Nono) };
+
+        var outcome = await RunAsync(NewUbuntu, wsl);
+
+        Assert.Contains("wsl --unregister Ubuntu", outcome.Failure);
+    }
+
+    [Theory]
+    [InlineData("an existing distro")]
+    [InlineData("the install itself")]
+    public async Task AFailureWithNoDistroFromThisRun_NeverSuggestsRemovingOne(string failing)
+    {
+        var (plan, fails) = failing == "the install itself"
+            ? (NewUbuntu, (Func<IReadOnlyList<string>, bool>)(call => call[0] == "--install"))
+            : (WslSetupPlan.For(WslProbeFixtures.NonoMissing(), User), call => call.Contains(WslSetupScripts.Nono));
+        var wsl = new AnsweringWsl { Fails = fails };
+
+        var outcome = await RunAsync(plan, wsl);
+
+        Assert.NotNull(outcome.Failure);
+        Assert.DoesNotContain("--unregister", outcome.Failure);
+        Assert.Contains("setup-wsl", outcome.Failure);
+    }
+
+    private static Task<WslSetupOutcome> RunAsync(WslSetupPlan plan, AnsweringWsl wsl, string? localNonoDeb = null) =>
+        WslSetupRunner.RunAsync(plan, wsl.RunAsync, _ => { }, localNonoDeb, CancellationToken.None);
+
+    private static string[] AsRoot(string distro, string script, params string[] args) =>
+        ["-d", distro, "-u", "root", "--exec", "sh", "-c", script, "vr-setup", .. args];
+
+    /// <summary>A wsl.exe that succeeds at everything except the calls <see cref="Fails"/> picks.</summary>
+    private sealed class AnsweringWsl
+    {
+        public Func<IReadOnlyList<string>, bool> Fails { get; init; } = _ => false;
+
+        public string FailureOutput { get; init; } = "Reading package lists...\nE: Unable to locate package git\n";
+
+        public List<IReadOnlyList<string>> Calls { get; } = [];
+
+        public Task<(int ExitCode, string Output)> RunAsync(IReadOnlyList<string> argv, CancellationToken ct)
+        {
+            Calls.Add(argv.ToList());
+            return Task.FromResult(Fails(argv) ? (100, FailureOutput) : (0, "ok\n"));
+        }
+    }
+}
