@@ -16,9 +16,6 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// </summary>
 public static class WslGate
 {
-    /// <summary>The nono release the distro install instructions pin (matches the Nix and Homebrew pins).</summary>
-    private const string PinnedNonoVersion = "0.75.0";
-
     private const string SuggestedDistro = "Ubuntu";
 
     /// <summary>0 with no message when the probe is usable; else 127 with the message to print.</summary>
@@ -63,11 +60,11 @@ public static class WslGate
 
         if (p.NonoPath is null)
             return ($"nono was not found inside the WSL distro '{d}'.",
-                $"Install nono {PinnedNonoVersion} inside the distro: open it with `wsl -d {d}` and run "
-                + $"`curl -fsSL https://nono.sh/install.sh | NONO_VERSION=v{PinnedNonoVersion} sh` (the installer "
+                $"Install nono {NonoRelease.Version} inside the distro: open it with `wsl -d {d}` and run "
+                + $"`curl -fsSL https://nono.sh/install.sh | NONO_VERSION=v{NonoRelease.Version} sh` (the installer "
                 + "otherwise takes the latest release), or install the .deb from "
-                + $"https://github.com/nolabs-ai/nono/releases/tag/v{PinnedNonoVersion} with "
-                + $"`sudo apt install --no-install-recommends ./nono-cli_{PinnedNonoVersion}_amd64.deb`; then make sure "
+                + $"https://github.com/nolabs-ai/nono/releases/tag/v{NonoRelease.Version} with "
+                + $"`sudo apt install --no-install-recommends ./nono-cli_{NonoRelease.Version}_amd64.deb`; then make sure "
                 + $"a login shell finds it (`wsl -d {d} --exec sh -lc 'command -v nono'`).");
 
         if (!p.LandlockActive)
