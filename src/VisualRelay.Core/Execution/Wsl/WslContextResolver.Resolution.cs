@@ -27,8 +27,18 @@ public static partial class WslContextResolver
             // thread pool because the blocking accessor is reachable from the UI thread:
             // probing inline would make the UI thread the continuation its own awaits are
             // queued to, and the wait would never end.
+            // PreferFairness sends it to the pool's global queue. Task.Run from a pool
+            // thread queues to that thread's OWN local queue, which other threads take from
+            // only when the global queue is empty, and the blocking accessor then parks the
+            // very thread that holds it: a stall of seconds under load. The headless UI
+            // thread in the test suite is a pool thread, and so is any drain thread here.
             Probed = new Lazy<Task<WslContext?>>(
-                () => Task.Run(async () => Record(await prober(CancellationToken.None).ConfigureAwait(false))),
+                () => Task.Factory.StartNew(
+                        async () => Record(await prober(CancellationToken.None).ConfigureAwait(false)),
+                        CancellationToken.None,
+                        TaskCreationOptions.DenyChildAttach | TaskCreationOptions.PreferFairness,
+                        TaskScheduler.Default)
+                    .Unwrap(),
                 LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
@@ -56,9 +66,24 @@ public static partial class WslContextResolver
         }
     }
 
-    /// <summary>Puts back the resolution the flow saw before the test opened its own.</summary>
-    private sealed class IsolationScope(Resolution? outer) : IDisposable
+    /// <summary>
+    /// Puts back the resolution the flow saw before the test opened its own, and refuses
+    /// when the flow is no longer on this scope's resolution: closed out of order, or from
+    /// a flow that did not open it, a restore would install the wrong one silently.
+    /// </summary>
+    private sealed class IsolationScope(Resolution installed, Resolution? outer) : IDisposable
     {
-        public void Dispose() => Isolated.Value = outer;
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            if (!ReferenceEquals(Isolated.Value, installed))
+                throw new InvalidOperationException(
+                    "A WSL test scope was closed out of order, or from a flow that did not open it.");
+            _disposed = true;
+            Isolated.Value = outer;
+        }
     }
 }

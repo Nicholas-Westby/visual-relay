@@ -111,6 +111,9 @@ public sealed class WslContextResolverTests
     public void Override_SetsTheOverrideOfTheResolutionInUse()
     {
         using var wsl = WslContextResolver.IsolateForTests(prober: DebianMachine);
+        // Throws outside a scope, so a broken isolation fails here rather than letting the
+        // call below set a fake context for the whole process.
+        _ = WslContextResolver.ProbedForTestsAsync();
 
 #pragma warning disable RS0030 // Inside IsolateForTests this writes only this test's resolution.
         WslContextResolver.Override(Context);
@@ -162,6 +165,24 @@ public sealed class WslContextResolverTests
             Assert.Equal("Inner", (await WslContextResolver.ProbedForTestsAsync())?.Distro);
 
         Assert.Equal("Outer", (await WslContextResolver.ProbedForTestsAsync())?.Distro);
+    }
+
+    /// <summary>
+    /// A scope closed out of order would put back a resolution the flow no longer has, and
+    /// leave the rest of the test resolving the wrong one without saying so.
+    /// </summary>
+    [Fact]
+    public void ClosingScopesOutOfOrder_IsRefused()
+    {
+        var outer = WslContextResolver.IsolateForTests(@override: Context);
+        var inner = WslContextResolver.IsolateForTests();
+
+        Assert.Throws<InvalidOperationException>(outer.Dispose);
+
+        // In order, both close, and the flow is back where it started.
+        inner.Dispose();
+        outer.Dispose();
+        Assert.Null(WslContextResolver.TryGetCurrent());
     }
 
     /// <summary>

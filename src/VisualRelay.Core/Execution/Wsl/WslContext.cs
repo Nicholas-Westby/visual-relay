@@ -87,8 +87,9 @@ public static partial class WslContextResolver
         WslContext? @override = null, Func<CancellationToken, Task<WslProbe>>? prober = null)
     {
         var outer = Isolated.Value;
-        Isolated.Value = new Resolution(prober ?? (_ => Task.FromResult(WslProbe.Empty)), @override);
-        return new IsolationScope(outer);
+        var installed = new Resolution(prober ?? (_ => Task.FromResult(WslProbe.Empty)), @override);
+        Isolated.Value = installed;
+        return new IsolationScope(installed, outer);
     }
 
     /// <summary>
@@ -115,7 +116,11 @@ public static partial class WslContextResolver
             "ProbedForTestsAsync reads a test's own memo; open WslContextResolver.IsolateForTests first."))
         .Probed.Value;
 
-    /// <summary>Sets (or with null clears) the override that <see cref="TryGetCurrent"/> returns first.</summary>
+    /// <summary>
+    /// Sets (or with null clears) the override that <see cref="TryGetCurrent"/> returns first,
+    /// on the resolution in use: the process's, or inside <see cref="IsolateForTests"/> the
+    /// calling test's own.
+    /// </summary>
     public static void Override(WslContext? context) => Current.OverrideContext = context;
 
     /// <summary>
