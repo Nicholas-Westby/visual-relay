@@ -65,9 +65,13 @@ internal static class TestModuleInitializer
     /// and none of them reproduces in isolation, because isolation removes the cause.
     /// </para>
     /// <para>
-    /// This is a CANDIDATE fix, not a proven one: it cannot be reproduced on macOS, so
-    /// the test of it is whether that rate falls. Raising the floor only — never
-    /// lowering it — so a host that already asked for more keeps what it asked for.
+    /// Measured, 18 runs per condition on Windows and 6 on macOS, columns declared usable
+    /// from their own noise before comparing: a small, consistent improvement and no harm
+    /// (7% fewer tests over two seconds on Windows; macOS, with nothing to relieve, lost
+    /// nothing). It is kept on that basis. It does not explain the deadline failures by
+    /// itself: those tests now run in the Isolated collection, where nothing competes for
+    /// the pool. Raising the floor only, never lowering it, so a host that already asked
+    /// for more keeps what it asked for.
     /// </para>
     /// </summary>
     private static void RaiseThreadPoolFloor()
