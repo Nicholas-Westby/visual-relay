@@ -11,7 +11,7 @@ public sealed partial class ControlServer
     /// that thread; twice on Windows /state took over 20 seconds and nothing recorded
     /// which request it was.
     /// </summary>
-    internal const int SlowRequestThresholdMs = 2000;
+    private const int SlowRequestThresholdMs = 2000;
 
     /// <summary>
     /// Creates a transport-agnostic <see cref="RequestDelegate"/> that handles

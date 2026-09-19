@@ -111,6 +111,7 @@ public static class StageStatusRecord
     /// destination that someone holds open unless that handle permits deletion.
     /// <c>File.ReadAllText</c> asks for <c>FileShare.Read</c>, which does not, so the
     /// two cannot coexist and one of them is refused.
+    /// </para>
     /// <para>
     /// It is the DELETE bit that earns this, and it was worth measuring rather than
     /// reasoning about. Benched on Windows, four readers against one replacing writer,

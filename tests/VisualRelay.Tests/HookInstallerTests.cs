@@ -146,15 +146,15 @@ public sealed class HookInstallerTests
         await sim.RunAsync(repo.Root, ["config", "core.hooksPath", ".githooks"], CancellationToken.None);
         var hookPath = Path.Combine(repo.Root, ".githooks", "pre-commit");
         Directory.CreateDirectory(Path.GetDirectoryName(hookPath)!);
-        const string Own = "#!/usr/bin/env bash\n# Visual Relay pre-commit hook\n./visual-relay bump-version\n";
-        await File.WriteAllTextAsync(hookPath, Own, TestContext.Current.CancellationToken);
+        const string ownHook = "#!/usr/bin/env bash\n# Visual Relay pre-commit hook\n./visual-relay bump-version\n";
+        await File.WriteAllTextAsync(hookPath, ownHook, TestContext.Current.CancellationToken);
         await sim.RunAsync(repo.Root, ["add", "--", ".githooks/pre-commit"], CancellationToken.None);
 
         var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
 
         Assert.True(result.Installed);
         Assert.Null(result.Warning);
-        Assert.Equal(Own, await File.ReadAllTextAsync(hookPath, TestContext.Current.CancellationToken));
+        Assert.Equal(ownHook, await File.ReadAllTextAsync(hookPath, TestContext.Current.CancellationToken));
     }
 
     [Fact]

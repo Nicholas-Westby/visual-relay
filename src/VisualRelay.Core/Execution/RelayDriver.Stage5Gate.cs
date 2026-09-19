@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 

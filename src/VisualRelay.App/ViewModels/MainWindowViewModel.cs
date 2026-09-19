@@ -6,7 +6,6 @@ using VisualRelay.App.ViewModels.RunLogRows;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
-using VisualRelay.Core.Llm;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;

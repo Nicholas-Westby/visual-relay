@@ -25,7 +25,7 @@ public sealed record ProjectBootstrapResult(
     /// usable WSL distro, where a checked test command would be checked through
     /// cmd.exe, on the host, unsandboxed, and the pipeline could never run it.
     /// </summary>
-    public string? Refusal { get; init; }
+    public string? Refusal { get; private init; }
 
     /// <summary>Where <see cref="TestCommand"/> came from, so the status can say so.</summary>
     public TestCommandSource TestCommandSource { get; init; } = TestCommandSource.Placeholder;
@@ -123,7 +123,7 @@ public static partial class ProjectBootstrapper
     /// <param name="proposal">The proposed command.</param>
     /// <param name="host">Where the sandbox launches from.</param>
     /// <returns>The runner to check it with.</returns>
-    internal static ITestRunner CreateProposalRunner(string proposal, SandboxHost host) =>
+    private static ITestRunner CreateProposalRunner(string proposal, SandboxHost host) =>
         new SandboxedTestRunner(
             new ShellTestRunner(ProposalValidationTimeout, loginShell: false, host: host),
             RelayConfigLoader.Defaults(proposal));

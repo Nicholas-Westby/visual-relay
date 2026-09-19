@@ -1,4 +1,3 @@
-using VisualRelay.Cli.Gates;
 using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;

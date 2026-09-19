@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -214,8 +213,7 @@ public sealed partial class RelayDriver
     private async Task<string> DiffForPathsAsync(
         string rootPath, IReadOnlyList<string> paths, CancellationToken cancellationToken)
     {
-        List<string> arguments = ["-c", "core.quotePath=false", "diff", "HEAD", "--"];
-        arguments.AddRange(paths);
+        List<string> arguments = ["-c", "core.quotePath=false", "diff", "HEAD", "--", .. paths];
         var result = await _dependencies.GitInvoker.RunAsync(rootPath, arguments, cancellationToken);
         return result is { ExitCode: 0, TimedOut: false } && !string.IsNullOrWhiteSpace(result.Output)
             ? result.Output

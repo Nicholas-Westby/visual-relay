@@ -26,7 +26,12 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
         var attempted = new SemaphoreSlim(0, callers);
         var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        int other = 0, peak = 0, live = 0;
+        // A single-element array rather than a plain local: peak is read back through
+        // Volatile.Read outside the racers below, and a captured local ReSharper can see
+        // mutated from two scopes reads as a closure bug even though the Interlocked
+        // traffic here is exactly what keeps it safe.
+        var peak = new int[1];
+        int other = 0, live = 0;
 
         var racers = Enumerable.Range(0, callers).Select(i => Task.Run(async () =>
         {
@@ -35,7 +40,7 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
             try
             {
                 await using var acquired = await ActiveTaskLock.AcquireAsync(root, $"task-{i}", CancellationToken.None);
-                InterlockedMax(ref peak, Interlocked.Increment(ref live));
+                InterlockedMax(peak, Interlocked.Increment(ref live));
                 attempted.Release();
                 await hold.Task;
                 Interlocked.Decrement(ref live);
@@ -50,17 +55,17 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
         for (var i = 0; i < callers; i++)
             await attempted.WaitAsync();
 
-        var observed = Volatile.Read(ref peak);
+        var observed = Volatile.Read(ref peak[0]);
         hold.SetResult();
         await Task.WhenAll(racers);
         return (observed, other);
     }
 
-    private static void InterlockedMax(ref int target, int value)
+    private static void InterlockedMax(int[] target, int value)
     {
         int seen;
-        while ((seen = Volatile.Read(ref target)) < value
-               && Interlocked.CompareExchange(ref target, value, seen) != seen)
+        while ((seen = Volatile.Read(ref target[0])) < value
+               && Interlocked.CompareExchange(ref target[0], value, seen) != seen)
         {
         }
     }
@@ -165,7 +170,8 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
     public async Task CallersChurningTheLock_NeverEscapeAndNeverOverlap()
     {
         var escaped = new System.Collections.Concurrent.ConcurrentBag<string>();
-        int peak = 0, live = 0, acquired = 0;
+        var peak = new int[1];
+        int live = 0, acquired = 0;
 
         await Task.WhenAll(Enumerable.Range(0, 4).Select(i => Task.Run(async () =>
         {
@@ -176,7 +182,7 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
                     await using var held = await ActiveTaskLock.AcquireAsync(
                         _root, $"task-{i}", CancellationToken.None);
                     Interlocked.Increment(ref acquired);
-                    InterlockedMax(ref peak, Interlocked.Increment(ref live));
+                    InterlockedMax(peak, Interlocked.Increment(ref live));
                     Interlocked.Decrement(ref live);
                 }
                 catch (InvalidOperationException) { }
@@ -187,7 +193,7 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
         })));
 
         Assert.True(escaped.IsEmpty, "acquiring threw: " + string.Join(" | ", escaped.Distinct()));
-        Assert.Equal(1, peak);
+        Assert.Equal(1, peak[0]);
         // The churn has to actually reach the lock, or the test proves nothing.
         Assert.True(acquired > 0, "no caller ever acquired, so nothing was exercised");
     }

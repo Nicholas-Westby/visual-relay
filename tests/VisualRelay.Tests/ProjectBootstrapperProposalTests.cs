@@ -1,4 +1,4 @@
-using VisualRelay.Core.Configuration;
+using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
@@ -108,7 +108,7 @@ public sealed class ProjectBootstrapperProposalTests
             repo.Root,
             gitInvoker: sim,
             validationRunner: new Recorder(new TestRunResult(127, "sh: go: command not found")),
-            proposeCommand: (_, _) => Task.FromResult<string?>(proposals.Count > 0 ? proposals.Dequeue() : null),
+            proposeCommand: (_, _) => Task.FromResult(proposals.Count > 0 ? proposals.Dequeue() : null),
             proposalRunner: _ => new Recorder(new TestRunResult(127, "sh: first: command not found")));
 
         Assert.True(result.UsedPlaceholderTestCommand);
@@ -194,7 +194,7 @@ public sealed class ProjectBootstrapperProposalTests
         var result = await ProjectBootstrapper.BootstrapAsync(
             repo.Root, gitInvoker: sim, validationRunner: new Recorder(new TestRunResult(127, "sh: go: command not found")));
 
-        var text = VisualRelay.App.ViewModels.MainWindowViewModel.DescribeBootstrap(result);
+        var text = MainWindowViewModel.DescribeBootstrap(result);
         Assert.Contains("No test command passed the check", text, StringComparison.Ordinal);
         Assert.Contains("Set testCmd in .relay/config.json", text, StringComparison.Ordinal);
         Assert.DoesNotContain("scaffolds the project", text, StringComparison.Ordinal);
@@ -213,7 +213,7 @@ public sealed class ProjectBootstrapperProposalTests
             proposeCommand: (_, _) => Task.FromResult<string?>("go test ./pkg/..."),
             proposalRunner: _ => new Recorder(new TestRunResult(0, "ok  example.com/m  0.002s")));
 
-        var text = VisualRelay.App.ViewModels.MainWindowViewModel.DescribeBootstrap(result);
+        var text = MainWindowViewModel.DescribeBootstrap(result);
         Assert.Contains("proposed by the model and checked", text, StringComparison.Ordinal);
     }
 
@@ -225,7 +225,7 @@ public sealed class ProjectBootstrapperProposalTests
 
         var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: new GitSimEngine());
 
-        var text = VisualRelay.App.ViewModels.MainWindowViewModel.DescribeBootstrap(result);
+        var text = MainWindowViewModel.DescribeBootstrap(result);
         Assert.Contains("scaffolds the project", text, StringComparison.Ordinal);
     }
 }

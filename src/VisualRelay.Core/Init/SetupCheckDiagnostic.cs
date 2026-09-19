@@ -25,7 +25,7 @@ public sealed record SetupCheckDiagnostic(
     /// operator can be told what was attempted rather than only that nothing worked.
     /// Proposals join this list beside the built-in candidates.
     /// </summary>
-    public IReadOnlyList<(string Candidate, string Reason)> Rejections { get; init; } = [];
+    public IReadOnlyList<(string Candidate, string Reason)> Rejections { get; private init; } = [];
 
     private const int ArtifactTailCapBytes = 64 * 1024; // 64 KB
     private const int StateTailCapChars = 4096;         // 4 KB for /state

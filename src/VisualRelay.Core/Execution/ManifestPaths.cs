@@ -17,7 +17,7 @@ internal sealed record PathEntryDrop(string Entry, string Reason);
 internal static class ManifestPaths
 {
     /// <summary>Why a rooted entry that does not name a file in the workspace is dropped.</summary>
-    internal const string OutsideWorkspaceReason = "absolute path outside the workspace";
+    private const string OutsideWorkspaceReason = "absolute path outside the workspace";
 
     /// <summary>
     /// Resolves one entry as the stage wrote it.

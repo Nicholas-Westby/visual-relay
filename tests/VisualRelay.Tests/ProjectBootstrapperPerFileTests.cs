@@ -1,5 +1,4 @@
 using VisualRelay.App.ViewModels;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
@@ -46,13 +45,8 @@ public sealed class ProjectBootstrapperPerFileTests
     /// <summary>Answers per command, so the whole-suite check and the proof can differ.</summary>
     private sealed class ByCommand(Func<string, TestRunResult> answer) : ITestRunner
     {
-        public List<string> Commands { get; } = [];
-
-        public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
-        {
-            Commands.Add(command);
-            return Task.FromResult(answer(command));
-        }
+        public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default) =>
+            Task.FromResult(answer(command));
     }
 
     private static TestRunResult Green(string _) => new(0, "ok  example.com/m  1 passed");
@@ -142,7 +136,7 @@ public sealed class ProjectBootstrapperPerFileTests
             validationRunner: runner,
             proposalRunner: _ => new ByCommand(_ => new TestRunResult(127, "nope")),
             proposePerFile: (_, _, _, _) =>
-                Task.FromResult<string?>(proposals.Count > 0 ? proposals.Dequeue() : null));
+                Task.FromResult(proposals.Count > 0 ? proposals.Dequeue() : null));
 
         Assert.Equal(PerFileCommandSource.None, result.PerFileCommandSource);
         Assert.Null(RawTestFileCommand(repo.Root));

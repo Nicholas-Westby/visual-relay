@@ -29,7 +29,7 @@ internal static class WslTreeCopy
     /// test ran. A child's fate was decided by where its name fell in the alphabet.
     /// </para>
     /// </summary>
-    internal const long FreeCopyBytes = 256 * 1024;
+    private const long FreeCopyBytes = 256 * 1024;
 
     /// <summary>
     /// The free size to use against <paramref name="thresholdBytes"/>. Clamped to a

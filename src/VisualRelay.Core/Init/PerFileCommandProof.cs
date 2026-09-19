@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Init;
 
@@ -34,7 +33,7 @@ public sealed record PerFileProofResult(bool Proven, string? Reason, string Outp
 internal static class PerFileCommandProof
 {
     /// <summary>Two, so a form that only works for one file is caught; one when the repository has one.</summary>
-    internal const int FilesToSubstitute = 2;
+    private const int FilesToSubstitute = 2;
 
     internal static async Task<PerFileProofResult> ProveAsync(
         string rootPath,

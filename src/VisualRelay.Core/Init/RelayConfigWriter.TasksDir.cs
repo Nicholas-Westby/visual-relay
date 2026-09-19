@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace VisualRelay.Core.Init;
 
 public static partial class RelayConfigWriter

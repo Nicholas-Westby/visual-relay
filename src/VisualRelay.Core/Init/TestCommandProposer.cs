@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Costs;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
@@ -33,7 +32,7 @@ internal static class TestCommandProposer
     /// <summary>Enough turns to read a CI file, a README and a build file, and try a command.</summary>
     internal const int MaxTurns = 30;
 
-    internal const string SystemPrompt =
+    private const string SystemPrompt =
         "Find the ONE shell command that, run from the repository root, runs this project's unit "
         + "tests once and exits. Not a watch mode, not a whole CI pipeline, not a lint or format "
         + "step. Look at what the project itself runs: its CI configuration, its README, its build "
@@ -238,7 +237,7 @@ internal static class TestCommandProposer
     /// <param name="runId">The proposer run's id.</param>
     /// <param name="stageName">Which proposer ran.</param>
     /// <param name="reportFile">The run's report, which carries the measured usage.</param>
-    internal static async Task PublishCostAsync(
+    private static async Task PublishCostAsync(
         IRelayEventSink? sink, string rootPath, string runId, string stageName, string reportFile)
     {
         if (sink is null || !File.Exists(reportFile))

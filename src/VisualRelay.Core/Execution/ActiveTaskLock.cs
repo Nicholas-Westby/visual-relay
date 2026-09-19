@@ -70,7 +70,7 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
         {
             try
             {
-                using var claim = new FileStream(
+                await using var claim = new FileStream(
                     infoPath, FileMode.CreateNew, FileAccess.Write,
                     FileShare.Read | FileShare.Delete);
                 await claim.WriteAsync(payload, cancellationToken);

@@ -86,7 +86,7 @@ public sealed class RelayDriverManifestAbsolutePathTests
 
         var stage6 = runner.Invocations.First(i => i.Stage.Number == 6);
         Assert.Contains("src/New.cs", stage6.Manifest);
-        Assert.DoesNotContain(stage6.Manifest, entry => ManifestPaths.IsRooted(entry));
+        Assert.DoesNotContain(stage6.Manifest, ManifestPaths.IsRooted);
     }
 
     [Fact]

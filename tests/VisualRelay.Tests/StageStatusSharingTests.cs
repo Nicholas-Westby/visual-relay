@@ -27,7 +27,7 @@ public sealed class StageStatusSharingTests : IDisposable
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
     private static StageStatusEntry[] Entries(string status) =>
-        [new StageStatusEntry(1, "Ideate", status)];
+        [new(1, "Ideate", status)];
 
     /// <summary>
     /// Named for BOTH sides on purpose. Its first Windows run failed on the writer while
@@ -43,17 +43,18 @@ public sealed class StageStatusSharingTests : IDisposable
         await StageStatusRecord.WriteAsync(_dir, Entries("Done"));
 
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var token = stop.Token;
         var writer = Task.Run(async () =>
         {
-            while (!stop.IsCancellationRequested)
+            while (!token.IsCancellationRequested)
                 await StageStatusRecord.WriteAsync(_dir, Entries("Running"), CancellationToken.None);
-        });
+        }, TestContext.Current.CancellationToken);
 
         var readers = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
         {
-            while (!stop.IsCancellationRequested)
+            while (!token.IsCancellationRequested)
                 StageStatusRecord.Read(_dir);
-        }));
+        }, TestContext.Current.CancellationToken));
 
         // The assertion is that nothing above throws, on either side. On Windows an
         // unshared read against a replacing move throws, and so does an unretried
