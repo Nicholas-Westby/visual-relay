@@ -38,6 +38,54 @@ You can then run `./visual-relay` in that folder the next time you want to launc
 Visual Relay runs on Windows, but the sandbox every command runs in is Linux: `nono`
 enforcing the same profile through the WSL2 kernel, exactly as on macOS and Linux. So
 there are two halves to install — Visual Relay on Windows, and the sandbox inside a
+WSL2 distro. Visual Relay sets up the second half itself.
+
+1. Install the .NET 10 SDK on Windows. (Run from a terminal, the launcher offers to
+   install a per-user copy for you instead.)
+
+   ```powershell
+   winget install Microsoft.DotNet.SDK.10
+   ```
+
+2. Clone the repo and run it through `visual-relay.cmd` (nix doesn't run on Windows, so
+   dependencies are installed globally). Typing `./visual-relay` in PowerShell runs
+   `visual-relay.ps1`, which PowerShell's default execution policy refuses; the `.cmd`
+   passes the policy flag for you:
+
+   ```powershell
+   cd ~/repositories # or wherever you keep your repos
+   git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
+   cd visual-relay
+   .\visual-relay.cmd launch
+   ```
+
+3. The first launch checks the WSL side and offers to set up whatever is missing:
+
+   - No WSL: it installs WSL itself. Windows asks you to approve that as an
+     administrator, and a restart follows; launch again afterwards for the rest.
+   - No distro: it installs Ubuntu, with a Linux user named after yours.
+   - Then git, and nono 0.75.0, which Visual Relay pins and checks against a SHA-256
+     before installing.
+
+   Only the WSL install needs administrator rights; the rest takes about two minutes.
+   `.\visual-relay.cmd setup-wsl` runs the same setup on its own. Set `VR_WSL_DISTRO=<name>`
+   to use a distro other than the WSL default; setup installs Ubuntu under that name if it
+   does not exist yet. To install WSL yourself instead, run `wsl --install -d Ubuntu` in an
+   elevated PowerShell and reboot.
+
+`--depth 1` does a shallow clone (latest commit only) for a faster, smaller
+download; omit it to fetch the full history.
+
+`./visual-relay` is a tiny launcher that provisions its own toolchain via
+[Nix](https://nixos.org) (this avoids global installs).
+
+You can then run `./visual-relay` in that folder the next time you want to launch it.
+
+# Install (Windows)
+
+Visual Relay runs on Windows, but the sandbox every command runs in is Linux: `nono`
+enforcing the same profile through the WSL2 kernel, exactly as on macOS and Linux. So
+there are two halves to install — Visual Relay on Windows, and the sandbox inside a
 WSL2 distro. Visual Relay sets up the distro half itself; only WSL needs you.
 
 1. Install WSL in an elevated PowerShell, then reboot. This is the one step that needs
