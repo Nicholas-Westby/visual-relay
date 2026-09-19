@@ -11,6 +11,10 @@ internal static partial class ProcessCapture
     // can never wedge the run to the timeout cap (see the reap-then-drain in RunAsync).
     private const int DrainGraceMs = 4000;
 
+    /// <summary>Appended when the drain above ran out with the command's output still open.</summary>
+    private const string DrainCutNote =
+        "[visual-relay: stopped reading 4 s after the command exited, with its output still open; the output above may be incomplete]";
+
     private static readonly string[] LeakedAppleSdkEnvNames = ["DEVELOPER_DIR", "SDKROOT"];
 
     /// <summary>
@@ -208,7 +212,17 @@ internal static partial class ProcessCapture
                 try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
                 await ReapTreeAsync(treeControl);
             }
-            await Task.WhenAny(process.WaitForExitAsync(CancellationToken.None), Task.Delay(TimeSpan.FromMilliseconds(DrainGraceMs), tp, CancellationToken.None));
+            var drained = process.WaitForExitAsync(CancellationToken.None);
+            if (await Task.WhenAny(drained, Task.Delay(TimeSpan.FromMilliseconds(DrainGraceMs), tp, CancellationToken.None)) != drained)
+            {
+                // The command has exited and its output is still open: a background process
+                // holding the pipe, or readers too starved of threads to finish in time. The
+                // capture has to stop somewhere, but not silently: measured on macOS, a
+                // parallel run returned exit 0 with EMPTY output, indistinguishable from a
+                // command that printed nothing.
+                lock (outputLock) { output.AppendLine(DrainCutNote); }
+            }
+
             lock (outputLock) { return (process.ExitCode, output.ToString(), false); }
         }
         finally

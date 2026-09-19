@@ -32,6 +32,32 @@ public sealed class ProcessCaptureReapOptOutTests
     }
 
     /// <summary>
+    /// With nothing reaping it, a background grandchild keeps the output pipe open after
+    /// the command exits. The capture stops waiting after its drain grace, as it must, and
+    /// now says so in the output rather than handing back what it had as if it were all
+    /// there was. The same cut happens when the pool is too busy to finish reading in
+    /// time: a parallel run on macOS returned exit 0 with empty output twice on 2026-09-18.
+    /// </summary>
+    [Fact]
+    public async Task ReapFalse_OutputHeldOpenPastTheDrainGrace_IsMarkedIncomplete()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "a POSIX shell backgrounds the pipe holder");
+        var tp = new ManualTimeProvider();
+        var drainStarted = tp.TimerScheduledAsync(TimeSpan.FromMilliseconds(4000));
+
+        var run = ProcessCapture.RunAsync(
+            "/bin/sh", "-c \"echo started; sleep 5 & exit 0\"", "/tmp", TimeSpan.FromHours(1),
+            CancellationToken.None, reapProcessTree: false, timeProvider: tp);
+        await drainStarted.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        tp.Advance(TimeSpan.FromSeconds(5));
+        var (exitCode, output, timedOut) = await run;
+
+        Assert.False(timedOut, "the command exited; only the reading was cut short");
+        Assert.Equal(0, exitCode);
+        Assert.Contains("may be incomplete", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The default (reaping) path behaves identically for a trivial child — the
     /// control case that proves the opt-out above changes nothing observable.
     /// </summary>

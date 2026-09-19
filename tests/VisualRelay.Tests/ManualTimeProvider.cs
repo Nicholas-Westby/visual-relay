@@ -15,7 +15,25 @@ internal sealed class ManualTimeProvider : TimeProvider
 {
     private long _ticks;
     private readonly List<TimerEntry> _timers = new();
+    private readonly List<(TimeSpan Due, TaskCompletionSource Scheduled)> _awaited = new();
     private readonly object _lock = new();
+
+    /// <summary>
+    /// Completes when a timer due <paramref name="dueTime"/> after it was set is scheduled.
+    /// Code under test often sets a timer only once something real has happened, such as a
+    /// child process exiting, and advancing the clock before then fires nothing; this lets a
+    /// test advance exactly when that timer exists, instead of guessing with a delay.
+    /// </summary>
+    public Task TimerScheduledAsync(TimeSpan dueTime)
+    {
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_lock)
+        {
+            _awaited.Add((dueTime, scheduled));
+        }
+
+        return scheduled.Task;
+    }
 
     /// <summary>The virtual "now" expressed as a UTC <see cref="DateTimeOffset"/>.</summary>
     public override DateTimeOffset GetUtcNow() =>
@@ -88,6 +106,12 @@ internal sealed class ManualTimeProvider : TimeProvider
 
                 if (!owner._timers.Contains(this))
                     owner._timers.Add(this);
+
+                foreach (var waiter in owner._awaited.Where(w => w.Due == dueTime).ToList())
+                {
+                    owner._awaited.Remove(waiter);
+                    waiter.Scheduled.TrySetResult();
+                }
 
                 return true;
             }
