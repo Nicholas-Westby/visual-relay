@@ -16,6 +16,7 @@ public sealed class ControlApiBootstrapStatusTests
     [AvaloniaFact]
     public async Task Bootstrap_StateStatusText_CarriesTheUncommittedConfigNote()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         using var repo = TestRepository.Create();
         var vm = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         var api = new ControlApi(vm);

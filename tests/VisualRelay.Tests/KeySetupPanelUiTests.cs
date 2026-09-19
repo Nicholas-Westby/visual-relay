@@ -68,6 +68,7 @@ public sealed class KeySetupPanelUiTests
     [AvaloniaFact]
     public async Task WithoutHfToken_RunIsBlockedWithMessage_BrowsingStillWorks()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -275,6 +276,7 @@ public sealed class KeySetupPanelUiTests
     [AvaloniaFact]
     public async Task HfGateMessage_AppearsInStatusText_WhenRunIsBlocked()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);

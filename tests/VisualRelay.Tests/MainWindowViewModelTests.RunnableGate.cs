@@ -157,6 +157,7 @@ public sealed partial class MainWindowViewModelTests
     [Fact]
     public async Task EnsureRunnableAsync_GitHasNoIdentity_RefusesBeforeTheGuardRuns()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", [], guardCmd: "swift build");
         repo.WriteTask("alpha", "# Alpha\n");

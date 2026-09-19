@@ -15,6 +15,7 @@ public sealed class ConfigInitEmptyStateUiTests
     [AvaloniaFact]
     public async Task InitEmptyState_TypingAndClickingThroughControls_WritesConfigAndFlipsVisibility()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         // ── Arrange: config-less repo with one task ──
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");

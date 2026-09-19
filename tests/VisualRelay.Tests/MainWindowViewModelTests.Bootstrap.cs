@@ -13,6 +13,7 @@ public sealed partial class MainWindowViewModelTests
     [Fact]
     public async Task BootstrapProjectCommand_EmptyFolder_MakesItRunnable()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         using var repo = TestRepository.Create(); // empty: no git, no config
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
@@ -35,6 +36,7 @@ public sealed partial class MainWindowViewModelTests
     [Fact]
     public async Task BootstrapProjectCommand_StatusText_KeepsTheConfigNoteAfterItsRefresh()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         using var repo = TestRepository.Create();
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
@@ -51,6 +53,7 @@ public sealed partial class MainWindowViewModelTests
     [Fact]
     public async Task BootstrapProjectCommand_WithAForeignHook_ReportsTheWarningAndTheConfigNote()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         using var repo = TestRepository.Create();
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
@@ -73,6 +76,7 @@ public sealed partial class MainWindowViewModelTests
     [Fact]
     public async Task BootstrapProjectCommand_StatusText_NamesTheDetectedLanguages()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         using var repo = TestRepository.Create();
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
@@ -184,6 +188,7 @@ public sealed partial class MainWindowViewModelTests
     [Fact]
     public async Task EnsureRunnableAsync_UpgradesPlaceholder_WhenToolchainAppears()
     {
+        await MachineSandbox.SkipUnlessUsableAsync();
         using var repo = TestRepository.Create();
         // Greenfield: bootstrap to a placeholder, then a "scaffold task" added a toolchain
         // marker. The injected validation runner keeps the upgrade hermetic: no npm needed.
