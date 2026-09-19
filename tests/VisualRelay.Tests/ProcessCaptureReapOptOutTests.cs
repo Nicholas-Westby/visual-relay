@@ -44,17 +44,39 @@ public sealed class ProcessCaptureReapOptOutTests
         Assert.SkipWhen(OperatingSystem.IsWindows(), "a POSIX shell backgrounds the pipe holder");
         var tp = new ManualTimeProvider();
         var drainStarted = tp.TimerScheduledAsync(TimeSpan.FromMilliseconds(4000));
+        // The holder blocks forever and nothing here reaps it, so the shell records its pid
+        // before exiting and the test kills it.
+        var pidFile = Path.Combine(Path.GetTempPath(), $"vr-drain-holder-{Guid.NewGuid():N}.pid");
+        try
+        {
+            var run = ProcessCapture.RunAsync(
+                "/bin/sh", $"-c \"echo started; tail -f /dev/null & echo $! > '{pidFile}'; exit 0\"", "/tmp",
+                TimeSpan.FromHours(1), CancellationToken.None, reapProcessTree: false, timeProvider: tp);
+            await drainStarted.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            tp.Advance(TimeSpan.FromSeconds(5));
+            var (exitCode, output, timedOut) = await run;
 
-        var run = ProcessCapture.RunAsync(
-            "/bin/sh", "-c \"echo started; sleep 5 & exit 0\"", "/tmp", TimeSpan.FromHours(1),
-            CancellationToken.None, reapProcessTree: false, timeProvider: tp);
-        await drainStarted.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
-        tp.Advance(TimeSpan.FromSeconds(5));
-        var (exitCode, output, timedOut) = await run;
+            Assert.False(timedOut, "the command exited; only the reading was cut short");
+            Assert.Equal(0, exitCode);
+            Assert.Contains("may be incomplete", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(pidFile) && int.TryParse(File.ReadAllText(pidFile).Trim(), out var pid))
+            {
+                try
+                {
+                    using var holder = System.Diagnostics.Process.GetProcessById(pid);
+                    holder.Kill();
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                {
+                    // Already gone.
+                }
+            }
 
-        Assert.False(timedOut, "the command exited; only the reading was cut short");
-        Assert.Equal(0, exitCode);
-        Assert.Contains("may be incomplete", output, StringComparison.Ordinal);
+            File.Delete(pidFile);
+        }
     }
 
     /// <summary>
