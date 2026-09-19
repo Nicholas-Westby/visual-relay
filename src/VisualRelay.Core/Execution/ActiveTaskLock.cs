@@ -32,6 +32,14 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
 
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(10);
 
+    /// <summary>
+    /// How long a claim may stay unparseable before it counts as abandoned. Writing one
+    /// takes a buffered write and a flush straight after creating it, so this is thousands
+    /// of times longer than any live holder needs, and short enough that a holder which
+    /// died between the two steps blocks the repository only briefly.
+    /// </summary>
+    private static readonly TimeSpan HalfWrittenGrace = TimeSpan.FromSeconds(10);
+
     private readonly string _directory;
     private bool _released;
 
@@ -177,6 +185,15 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
     /// unreadable claim therefore costs almost nothing and never costs the wrong thing,
     /// whereas reclaiming on one hands the repository to two tasks at once.
     /// </para>
+    /// <para>
+    /// An UNPARSEABLE claim is the same case by another route, and used to be treated as
+    /// abandoned. A holder creates its claim and then writes it, so for a moment every
+    /// claim is empty; POSIX lets a racer read that and delete it while the holder has it
+    /// open, and the racer then took the lock beside the holder. Measured on macOS, six
+    /// callers racing: 39 rounds in 1000 had two or more inside at once, peak 3. So a
+    /// claim that does not parse stands until it has stayed that way far longer than a
+    /// write takes, which only a holder that died between the two steps leaves behind.
+    /// </para>
     /// </summary>
     private static bool ReclaimedStaleClaim(string infoPath)
     {
@@ -192,7 +209,7 @@ internal sealed class ActiveTaskLock : IAsyncDisposable
         }
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or FormatException or InvalidOperationException)
         {
-            return TryDelete(infoPath);
+            return DateTime.UtcNow - File.GetLastWriteTimeUtc(infoPath) > HalfWrittenGrace && TryDelete(infoPath);
         }
 
         try

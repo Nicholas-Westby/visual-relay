@@ -79,6 +79,44 @@ public sealed class ActiveTaskLockExclusionTests : IDisposable
     }
 
     /// <summary>
+    /// A holder creates its claim and then writes it, so for a moment the claim exists
+    /// and is empty. A racer reading it then found it unparseable, deleted it as
+    /// abandoned and took the lock beside its live holder: 39 overlapping rounds in 1000
+    /// of the six-caller race run alone, peak 3. POSIX lets the racer read and delete a
+    /// file the holder has open; on Windows the holder's handle refuses the read.
+    /// </summary>
+    [Fact]
+    public async Task AClaimStillBeingWritten_IsHeld()
+    {
+        var activeDir = Path.Combine(_root, ".relay", "ACTIVE");
+        Directory.CreateDirectory(activeDir);
+        await using var writing = new FileStream(Path.Combine(activeDir, "info.json"),
+            FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ActiveTaskLock.AcquireAsync(_root, "racer", CancellationToken.None));
+    }
+
+    /// <summary>
+    /// A claim that has stayed unparseable for far longer than any holder takes to write
+    /// one was abandoned between the two steps, by a process that died there, and is
+    /// cleared rather than blocking the repository for good.
+    /// </summary>
+    [Fact]
+    public async Task AClaimLeftHalfWrittenLongAgo_IsReclaimed()
+    {
+        var activeDir = Path.Combine(_root, ".relay", "ACTIVE");
+        Directory.CreateDirectory(activeDir);
+        var info = Path.Combine(activeDir, "info.json");
+        await File.WriteAllTextAsync(info, "", TestContext.Current.CancellationToken);
+        File.SetLastWriteTimeUtc(info, DateTime.UtcNow - TimeSpan.FromHours(1));
+
+        await using var acquired = await ActiveTaskLock.AcquireAsync(_root, "next", CancellationToken.None);
+
+        Assert.Contains("\"next\"", await File.ReadAllTextAsync(info, TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
     /// The contract is that acquiring either returns a lock or REFUSES; a raw filesystem
     /// exception is neither. Measured on Windows: <c>FileMode.CreateNew</c> reports an
     /// existing target as IOException normally but as UnauthorizedAccessException when
