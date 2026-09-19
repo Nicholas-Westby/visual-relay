@@ -139,7 +139,7 @@ public sealed class WslConfinementProbeTests(ITestOutputHelper output)
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "the WSL sandbox is the Windows arm");
         NonoIntegration.SkipIfNotOptedIn("VR_RUN_NONO_INTEGRATION=1 required for the real WSL probes.");
-        var wsl = WslContextResolver.TryGetCurrent();
+        var wsl = NonoIntegration.ThisMachinesWsl();
         Assert.SkipUnless(wsl is not null, "no usable WSL2 distro with nono on this host");
         return wsl!;
     }

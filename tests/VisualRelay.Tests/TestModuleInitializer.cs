@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using VisualRelay.Core.Execution.Wsl;
 
 [assembly: AssemblyFixture(typeof(VisualRelay.Tests.PipelineTestFixture))]
 [assembly: AssemblyFixture(typeof(VisualRelay.Tests.CachedSyntaxTreesFixture))]
@@ -43,6 +44,10 @@ internal static class TestModuleInitializer
         Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", tempDir);
         RedirectedXdgConfigHome = tempDir;
         RaiseThreadPoolFloor();
+        // No test sees this machine's WSL unless it asks: the real-WSL tests probe it
+        // through NonoIntegration.ThisMachinesWsl, and everything else resolves a Windows
+        // host with no distro instead of queueing behind a live probe it never wanted.
+        WslContextResolver.ResolveAsNoWslForTests();
     }
 
     /// <summary>

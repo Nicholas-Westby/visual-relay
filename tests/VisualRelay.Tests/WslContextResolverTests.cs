@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Execution.Wsl;
 
 namespace VisualRelay.Tests;
@@ -69,6 +70,21 @@ public sealed class WslContextResolverTests
         Assert.Null(await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
         Assert.Null(await WslContextResolver.ProbedForTestsAsync());
         Assert.Same(WslProbe.Empty, WslContextResolver.UnusableProbe);
+    }
+
+    /// <summary>
+    /// Outside any scope a test sees a machine with no WSL, whatever machine runs the
+    /// suite: the test assembly sets that before any test runs. Only Windows reads the
+    /// memo, so only there can this fail, and there it did in effect: the first live
+    /// probe, started by whichever test first asked for this machine's host, took 25 to
+    /// 60 s under load and queued everything behind it.
+    /// </summary>
+    [Fact]
+    public async Task OutsideAScope_TheTestProcessHasNoWsl()
+    {
+        Assert.Null(WslContextResolver.TryGetCurrent());
+        Assert.Null(await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
+        Assert.Null(SandboxHost.Current.Wsl);
     }
 
     /// <summary>
@@ -149,8 +165,9 @@ public sealed class WslContextResolverTests
     }
 
     /// <summary>
-    /// Outside a scope the memo is the real probe, which on Windows would probe the
-    /// machine running the suite, so the test seam refuses rather than doing that.
+    /// Outside a scope there is no memo of the test's own to read: the process-wide one
+    /// belongs to the process, and in the application it is the real probe of the machine.
+    /// The test seam refuses rather than reading it.
     /// </summary>
     [Fact]
     public async Task ReadingTheMemoOutsideAScope_IsRefused()

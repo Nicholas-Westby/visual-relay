@@ -57,7 +57,7 @@ public sealed class BaselineGuardGateTests
             BaselineGuardRunnerFactory = _ => new ScriptedTestRunner(new TestRunResult(1, "error: no toolchain")),
             IsHuggingFaceConfigured = true,
             // The gates before the guard are stated, not read off this machine: on Windows the tool
-            // gate would otherwise probe the WSL of whatever machine runs the suite.
+            // gate would otherwise see the test process's host, which has no distro, and refuse.
             SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(
                 new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u"))),
             GitIdentityCheck = (_, _) => Task.FromResult<string?>(null),
