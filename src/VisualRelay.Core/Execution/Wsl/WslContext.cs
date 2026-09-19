@@ -10,56 +10,32 @@ namespace VisualRelay.Core.Execution.Wsl;
 public sealed record WslContext(string WslExePath, string Distro, string NonoPath, string DistroHome, string? UserPath = null);
 
 /// <summary>
-/// Process-wide resolution of the <see cref="WslContext"/>. The override wins when
-/// set (the CLI gate sets it from its own successful probe; tests set it to run
-/// the Windows arm anywhere); otherwise there is no context off Windows, and on
-/// Windows the machine is probed once through the real runner and the result is
-/// kept for the life of the process, usable probes only.
+/// Resolution of the <see cref="WslContext"/>. The override wins when set (the CLI
+/// gate sets it from its own successful probe); otherwise there is no context off
+/// Windows, and on Windows the machine is probed once through the real runner and
+/// the result is kept for the life of the process, usable probes only.
+/// <para>
+/// The application has exactly one such resolution. A test that needs a different
+/// one opens its own with <see cref="IsolateForTests"/>, which only the async flow
+/// that opened it can see. Tests used to write the process-wide one instead, and a
+/// parallel run let one test's "no distro" reach another test's refusal: six Windows
+/// facts failed in 12 ms each on 2026-09-18 because of it. Tests cannot call
+/// <see cref="Override"/> (the test project's BannedSymbols.txt), so in a test process
+/// the process-wide resolution only ever holds this machine's real answer, which
+/// every test reading it would get anyway.
+/// </para>
 /// </summary>
-public static class WslContextResolver
+public static partial class WslContextResolver
 {
     private static readonly TimeSpan ProbeStepTimeout = TimeSpan.FromSeconds(60);
-    private static readonly object Gate = new();
-    private static Lazy<Task<WslContext?>> _probed = NewProbe(ProbeAsync);
-    private static WslContext? _override;
 
-    // The one probe, memoized as a TASK both accessors share. It is started on the
-    // thread pool because the blocking accessor is reachable from the UI thread:
-    // probing inline would make the UI thread the continuation its own awaits are
-    // queued to, and the wait would never end.
-    // The prober is CAPTURED here rather than looked up when the memo first resolves.
-    // It used to be read from a shared field inside this lambda, outside the lock that
-    // wrote it and long after the memo was built, so the memo was not bound to the
-    // prober installed with it: whatever was current at first resolution won. A test
-    // that installed a fixture and a caller that resolved after something restored the
-    // real prober would disagree about which one ran, and the fixture's own counter
-    // would never move. Capturing binds the two together and retires the field.
-    private static Lazy<Task<WslContext?>> NewProbe(Func<CancellationToken, Task<WslProbe>> prober) =>
-        new(
-            () => Task.Run(async () => FromProbe(await prober(CancellationToken.None).ConfigureAwait(false))),
-            LazyThreadSafetyMode.ExecutionAndPublication);
+    /// <summary>The application's resolution: the real probe, run at most once per process.</summary>
+    private static readonly Resolution Process = new(ProbeAsync, null);
 
-    /// <summary>
-    /// The memo, read under the same lock that replaces it. The field was written under
-    /// <c>Gate</c> and read OUTSIDE it at every call site, including
-    /// <see cref="TryGetCurrent"/> and <see cref="TryGetCurrentAsync"/>, which are how
-    /// the running application resolves its sandbox host. A caller could therefore
-    /// resolve a stale Lazy and run a probe the memo was supposed to have answered.
-    /// <para>
-    /// Nothing in the application swaps the prober, so its window is much narrower than
-    /// the suite's — narrower, not absent, and the unsynchronised read is a defect on
-    /// its own terms without needing a sighting. Where it WAS seen is the suite, where
-    /// a fixture does swap it: the probe test failed taking 468 ms against a 9 ms
-    /// baseline, which is the duration of a real six-step wsl.exe probe rather than of
-    /// a memo read. That duration is what identified this; the assertion text said
-    /// nothing. Whether it explains that one sighting is unproven — a memory-visibility
-    /// race resists being made deterministic, and it was not reproducible on macOS.
-    /// </para>
-    /// </summary>
-    private static Lazy<Task<WslContext?>> Probed
-    {
-        get { lock (Gate) { return _probed; } }
-    }
+    /// <summary>A test's own resolution, set only by <see cref="IsolateForTests"/>.</summary>
+    private static readonly AsyncLocal<Resolution?> Isolated = new();
+
+    private static Resolution Current => Isolated.Value ?? Process;
 
     /// <summary>
     /// The resolved context, blocking on the one probe when it is still running.
@@ -67,13 +43,11 @@ public static class WslContextResolver
     /// </summary>
     public static WslContext? TryGetCurrent()
     {
-        lock (Gate)
-        {
-            if (_override is not null)
-                return _override;
-        }
+        var resolution = Current;
+        if (resolution.OverrideContext is { } context)
+            return context;
 
-        return OperatingSystem.IsWindows() ? Probed.Value.GetAwaiter().GetResult() : null;
+        return OperatingSystem.IsWindows() ? resolution.Probed.Value.GetAwaiter().GetResult() : null;
     }
 
     /// <summary>
@@ -84,78 +58,76 @@ public static class WslContextResolver
     /// <returns>The context, or null when there is none.</returns>
     public static async Task<WslContext?> TryGetCurrentAsync(CancellationToken cancellationToken = default)
     {
-        lock (Gate)
-        {
-            if (_override is not null)
-                return _override;
-        }
+        var resolution = Current;
+        if (resolution.OverrideContext is { } context)
+            return context;
 
         if (!OperatingSystem.IsWindows())
             return null;
 
-        return await Probed.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await resolution.Probed.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Installs a scripted prober and discards the memo, or restores the real one.
-    /// The probe runs a real wsl.exe and only on Windows, so the memoization itself
-    /// is otherwise unobservable from a test.
+    /// Gives the calling test its own resolution until the returned scope is disposed:
+    /// its own <paramref name="override"/>, its own memoised probe run through
+    /// <paramref name="prober"/>, and its own last probe. Only the async flow that opened
+    /// the scope sees it, so a test running beside this one on another thread resolves
+    /// exactly what it would have without it.
     /// </summary>
-    /// <param name="prober">The prober to run, or null to restore the real probe.</param>
-    internal static void UseProberForTests(Func<CancellationToken, Task<WslProbe>>? prober)
+    /// <param name="override">The context the accessors return first, or null for none.</param>
+    /// <param name="prober">
+    /// What the memo runs. Defaults to a machine with no WSL, which is also what every
+    /// platform other than Windows answers, so a test that states no prober behaves the
+    /// same everywhere and never probes the real machine.
+    /// </param>
+    /// <returns>The scope; disposing it restores whatever the flow saw before.</returns>
+    internal static IDisposable IsolateForTests(
+        WslContext? @override = null, Func<CancellationToken, Task<WslProbe>>? prober = null)
     {
-        lock (Gate)
-        {
-            _probed = NewProbe(prober ?? ProbeAsync);
-        }
+        var outer = Isolated.Value;
+        Isolated.Value = new Resolution(prober ?? (_ => Task.FromResult(WslProbe.Empty)), @override);
+        return new IsolationScope(outer);
     }
 
-    /// <summary>The memoized probe task, platform checks and override skipped.</summary>
-    internal static Task<WslContext?> ProbedForTestsAsync() => Probed.Value;
+    /// <summary>
+    /// The calling test's memoised probe, platform checks and override skipped. Off
+    /// Windows the accessors never read the memo, so this is how a test observes it.
+    /// Refused outside <see cref="IsolateForTests"/>: the process-wide memo is the real
+    /// probe, and on Windows reading it would probe the machine running the suite.
+    /// </summary>
+    internal static Task<WslContext?> ProbedForTestsAsync() =>
+        (Isolated.Value ?? throw new InvalidOperationException(
+            "ProbedForTestsAsync reads a test's own memo; open WslContextResolver.IsolateForTests first."))
+        .Probed.Value;
 
     /// <summary>Sets (or with null clears) the override that <see cref="TryGetCurrent"/> returns first.</summary>
-    public static void Override(WslContext? context)
-    {
-        lock (Gate)
-        {
-            _override = context;
-        }
-    }
+    public static void Override(WslContext? context) => Current.OverrideContext = context;
 
     /// <summary>
-    /// The last probe this resolver ran, kept beside the context so a refusal can say
+    /// The last probe this resolution ran, kept beside the context so a refusal can say
     /// WHICH check failed. Without it every Windows surface could only report "not
     /// installed or not on PATH", which names neither the distro nor the fix.
     /// </summary>
-    public static WslProbe? LastProbe
-    {
-        get { lock (Gate) { return _lastProbe; } }
-    }
+    private static WslProbe? LastProbe => Current.RecordedProbe;
 
     /// <summary>
     /// The probe that explains a host with NO resolved distro. That is the last one
     /// this resolver ran, unless it reports a usable distro: a usable probe cannot
-    /// explain a missing context (and in a test process is simply somebody else's
-    /// probe), so the empty one stands in and the gate still names a real first
-    /// failing check rather than deciding there is nothing wrong.
+    /// explain a missing context, so the empty one stands in and the gate still names
+    /// a real first failing check rather than deciding there is nothing wrong.
     /// </summary>
     public static WslProbe UnusableProbe =>
         LastProbe is { IsUsable: false } probe ? probe : WslProbe.Empty;
 
-    private static WslProbe? _lastProbe;
-
-    /// <summary>The context a usable probe resolves to; null for any unusable probe.</summary>
-    public static WslContext? FromProbe(WslProbe probe)
-    {
-        lock (Gate)
-        {
-            _lastProbe = probe;
-        }
-
-        return probe.IsUsable
+    /// <summary>
+    /// The context a usable probe resolves to; null for any unusable probe. Records
+    /// nothing: only a resolution's own memo sets its <see cref="LastProbe"/>.
+    /// </summary>
+    public static WslContext? FromProbe(WslProbe probe) =>
+        probe.IsUsable
             ? new WslContext(probe.WslExePath!, probe.DistroName!, probe.NonoPath!, probe.DistroHome!, probe.UserPath)
             : null;
-    }
 
     /// <summary>
     /// Probes the real machine: wsl.exe from PATH or the Windows system directory,

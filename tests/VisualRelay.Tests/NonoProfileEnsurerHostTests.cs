@@ -9,10 +9,9 @@ namespace VisualRelay.Tests;
 /// <see cref="SandboxHost"/> it is handed, never by the OS the tests run on: the WSL host
 /// writes inside the distro, the local host writes the XDG path even while a WSL context
 /// is resolved, and only a call handed no host asks what this machine is. The share write
-/// is injected, so the distro arm runs here without a share. Two facts set the process-wide
-/// resolved context, so the class shares the collection that owns it and always clears it.
+/// is injected, so the distro arm runs here without a share. Two facts resolve a context,
+/// each in its own resolution (<see cref="WslContextResolver.IsolateForTests"/>).
 /// </summary>
-[Collection("WslContext")]
 public sealed class NonoProfileEnsurerHostTests
 {
     private static readonly WslContext Context =
@@ -71,9 +70,9 @@ public sealed class NonoProfileEnsurerHostTests
         var env = Env(xdg);
         var localPath = Path.Combine(xdg, "visual-relay", "vr-guard.json");
         var writes = new List<(string Path, string Content)>();
+        using var wsl = WslContextResolver.IsolateForTests(@override: Context);
         try
         {
-            WslContextResolver.Override(Context);
             // The override is live: a Windows host resolved now carries it and places the profile in the distro.
             var windows = await SandboxHost.ResolveAsync(isWindows: true, TestContext.Current.CancellationToken);
             Assert.Equal(LinuxPlacement, windows.ProfilePath);
@@ -90,7 +89,6 @@ public sealed class NonoProfileEnsurerHostTests
         }
         finally
         {
-            WslContextResolver.Override(null);
             TestFileSystem.DeleteDirectoryResilient(xdg);
         }
     }
@@ -107,10 +105,9 @@ public sealed class NonoProfileEnsurerHostTests
         var env = Env(xdg);
         var expected = OperatingSystem.IsWindows() ? LinuxPlacement : Path.Combine(xdg, "visual-relay", "vr-guard.json");
         var writes = new List<(string Path, string Content)>();
+        using var wsl = WslContextResolver.IsolateForTests(@override: Context);
         try
         {
-            WslContextResolver.Override(Context);
-
             Assert.Equal(expected, NonoProfileEnsurer.ResolveProfilePath(env));
             Assert.Equal(expected, await NonoProfileEnsurer.EnsureAsync(
                 env, host: null, Recorder(writes), TestContext.Current.CancellationToken));
@@ -118,7 +115,6 @@ public sealed class NonoProfileEnsurerHostTests
         }
         finally
         {
-            WslContextResolver.Override(null);
             TestFileSystem.DeleteDirectoryResilient(xdg);
         }
     }

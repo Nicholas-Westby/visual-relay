@@ -3,12 +3,15 @@ using VisualRelay.Core.Execution.Wsl;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// The process-wide resolved WSL context. Its override is static state, so the
-/// facts that touch it share one collection and always clear it again.
+/// Resolving the WSL context. Every fact that needs a resolution other than this
+/// machine's opens its own with <see cref="WslContextResolver.IsolateForTests"/>, which
+/// only its own async flow can see, so these run beside any other test.
 /// </summary>
-[Collection("WslContext")]
 public sealed class WslContextResolverTests
 {
+    private static readonly WslContext Context =
+        new(WslProbeFixtures.WslExe, "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+
     [Fact]
     public void FromProbe_Usable_CarriesTheFourLaunchFacts()
     {
@@ -26,25 +29,17 @@ public sealed class WslContextResolverTests
         Assert.Null(WslContextResolver.FromProbe(WslProbeFixtures.NoWsl()));
     }
 
+    /// <summary>
+    /// The override beats the probe. The probe here finds a different, usable distro,
+    /// so on Windows the probe's answer would be a different context, and off Windows
+    /// there would be none.
+    /// </summary>
     [Fact]
-    public void Override_WinsUntilCleared()
+    public void TheOverride_WinsOverTheProbe()
     {
-        var context = new WslContext(WslProbeFixtures.WslExe, "Ubuntu", "/usr/local/bin/nono", "/home/alice");
-        try
-        {
-            WslContextResolver.Override(context);
+        using var wsl = WslContextResolver.IsolateForTests(@override: Context, prober: DebianMachine);
 
-            Assert.Same(context, WslContextResolver.TryGetCurrent());
-        }
-        finally
-        {
-            WslContextResolver.Override(null);
-        }
-
-        // Off Windows there is nothing to probe, so a cleared override yields null.
-        // (On Windows TryGetCurrent would probe the real machine once.)
-        if (!OperatingSystem.IsWindows())
-            Assert.Null(WslContextResolver.TryGetCurrent());
+        Assert.Same(Context, WslContextResolver.TryGetCurrent());
     }
 
     /// <summary>
@@ -54,89 +49,117 @@ public sealed class WslContextResolverTests
     [Fact]
     public async Task TryGetCurrentAsync_AnswersFromTheOverride()
     {
-        var context = new WslContext(WslProbeFixtures.WslExe, "Ubuntu", "/usr/local/bin/nono", "/home/alice");
-        try
-        {
-            WslContextResolver.Override(context);
+        using var wsl = WslContextResolver.IsolateForTests(@override: Context, prober: DebianMachine);
 
-            Assert.Same(context, await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
-        }
-        finally
-        {
-            WslContextResolver.Override(null);
-        }
-
-        if (!OperatingSystem.IsWindows())
-            Assert.Null(await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
+        Assert.Same(Context, await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
     }
 
     /// <summary>
-    /// One probe per process, however many callers ask and whichever accessor they
-    /// use. The sync accessor blocks on the SAME task the async one awaits, and that
-    /// task runs on the thread pool — which is what keeps a blocked UI thread from
-    /// being the continuation the probe is waiting for.
+    /// With no override and no prober stated there is no context on any platform: off
+    /// Windows nothing is probed, and on Windows the scope's machine has no WSL rather
+    /// than being the machine running the suite. The memo is resolved too, so a default
+    /// that ran the real probe would leave its own probe behind rather than the empty one.
     /// </summary>
     [Fact]
-    public async Task TheProbe_RunsOnceForEveryCaller_OnBothAccessors()
+    public async Task AScopeThatStatesNothing_HasNoContextOnAnyPlatform()
+    {
+        using var wsl = WslContextResolver.IsolateForTests();
+
+        Assert.Null(WslContextResolver.TryGetCurrent());
+        Assert.Null(await WslContextResolver.TryGetCurrentAsync(TestContext.Current.CancellationToken));
+        Assert.Null(await WslContextResolver.ProbedForTestsAsync());
+        Assert.Same(WslProbe.Empty, WslContextResolver.UnusableProbe);
+    }
+
+    /// <summary>
+    /// Mapping a probe records nothing. Tests call it outside any scope, so if it wrote
+    /// the last probe, the refusal of whichever test read it next would name this one's
+    /// failing check.
+    /// </summary>
+    [Fact]
+    public void FromProbe_LeavesTheRefusalWordingAlone()
+    {
+        using var wsl = WslContextResolver.IsolateForTests();
+
+        WslContextResolver.FromProbe(WslProbeFixtures.NonoMissing());
+
+        Assert.Same(WslProbe.Empty, WslContextResolver.UnusableProbe);
+    }
+
+    /// <summary>
+    /// What the CLI gate calls. Tests are barred from it because outside a scope it sets
+    /// the application's override, which every test running at the time would resolve;
+    /// inside one it sets only that scope's, which is the one place it is tested.
+    /// </summary>
+    [Fact]
+    public void Override_SetsTheOverrideOfTheResolutionInUse()
+    {
+        using var wsl = WslContextResolver.IsolateForTests(prober: DebianMachine);
+
+#pragma warning disable RS0030 // Inside IsolateForTests this writes only this test's resolution.
+        WslContextResolver.Override(Context);
+#pragma warning restore RS0030
+
+        Assert.Same(Context, WslContextResolver.TryGetCurrent());
+    }
+
+    /// <summary>
+    /// One probe per resolution, however many callers ask. The callers run on other
+    /// threads, started from inside the scope, and still get the scope's memo: work a
+    /// test starts is part of the test. The memo's task runs on the thread pool, which
+    /// is what keeps a blocked UI thread from being the continuation it waits for.
+    /// </summary>
+    [Fact]
+    public async Task TheProbe_RunsOnceForEveryCaller()
     {
         var probes = 0;
-        WslContextResolver.UseProberForTests(_ =>
+        using var wsl = WslContextResolver.IsolateForTests(prober: _ =>
         {
             Interlocked.Increment(ref probes);
             return Task.FromResult(WslProbeFixtures.Usable());
         });
-        try
-        {
-            var asked = await Task.WhenAll(
-                Enumerable.Range(0, 8).Select(_ => Task.Run(
-                    WslContextResolver.ProbedForTestsAsync, TestContext.Current.CancellationToken)));
 
-            // Named, because the two probe-count checks are otherwise indistinguishable
-            // in a failure and this test has failed twice on Windows without either of us
-            // being able to say which line went. Duration used to separate the cases — a
-            // real six-step probe is hundreds of milliseconds — but a later failure came
-            // in at 47 ms against passes spanning 10 to 67 ms, so that signal does not
-            // survive at this scale and the values have to carry it instead.
-            Assert.True(probes == 1, $"eight callers should share one probe; ran {probes}");
-            Assert.All(asked, context => Assert.Equal("Ubuntu", context!.Distro));
-            var again = await WslContextResolver.ProbedForTestsAsync();
-            Assert.True(ReferenceEquals(asked[0], again),
-                "a later caller got a different context, so the memo was replaced mid-test");
-            Assert.True(probes == 1, $"the memo should still hold; ran {probes} probes in total");
-        }
-        finally
-        {
-            WslContextResolver.UseProberForTests(null);
-        }
+        var asked = await Task.WhenAll(
+            Enumerable.Range(0, 8).Select(_ => Task.Run(
+                WslContextResolver.ProbedForTestsAsync, TestContext.Current.CancellationToken)));
+
+        // Named, because the two probe-count checks are otherwise indistinguishable in a
+        // failure, and this test once failed twice on Windows without anyone being able
+        // to say which line went.
+        Assert.True(probes == 1, $"eight callers should share one probe; ran {probes}");
+        Assert.All(asked, context => Assert.Equal("Ubuntu", context!.Distro));
+        var again = await WslContextResolver.ProbedForTestsAsync();
+        Assert.True(ReferenceEquals(asked[0], again),
+            "a later caller got a different context, so the memo was replaced mid-test");
+        Assert.True(probes == 1, $"the memo should still hold; ran {probes} probes in total");
     }
 
     /// <summary>
-    /// A prober installed while callers are already asking must be the one they get.
-    /// The memo field was written under the lock and read outside it, so a reader could
-    /// resolve the PREVIOUS Lazy — on Windows the real wsl.exe probe — after a fixture
-    /// had replaced it. This drives the swap and the reads together; it cannot make a
-    /// stale read certain, so it is a guard on the contract rather than a reproduction.
+    /// Closing a scope gives the flow back the one it had, not no resolution at all, so
+    /// a helper that isolates inside a test that already did leaves the test's intact.
     /// </summary>
     [Fact]
-    public async Task AProberInstalledWhileCallersAsk_IsTheOneTheyGet()
+    public async Task ClosingANestedScope_RestoresTheOuterOne()
     {
-        try
-        {
-            for (var round = 0; round < 40; round++)
-            {
-                var distro = $"Round{round}";
-                WslContextResolver.UseProberForTests(
-                    _ => Task.FromResult(WslProbeFixtures.Usable(distro)));
+        using var outer = WslContextResolver.IsolateForTests(prober: _ => Task.FromResult(WslProbeFixtures.Usable("Outer")));
+        using (WslContextResolver.IsolateForTests(prober: _ => Task.FromResult(WslProbeFixtures.Usable("Inner"))))
+            Assert.Equal("Inner", (await WslContextResolver.ProbedForTestsAsync())?.Distro);
 
-                var asked = await Task.WhenAll(Enumerable.Range(0, 8)
-                    .Select(_ => Task.Run(WslContextResolver.ProbedForTestsAsync)));
-
-                Assert.All(asked, context => Assert.Equal(distro, context!.Distro));
-            }
-        }
-        finally
-        {
-            WslContextResolver.UseProberForTests(null);
-        }
+        Assert.Equal("Outer", (await WslContextResolver.ProbedForTestsAsync())?.Distro);
     }
+
+    /// <summary>
+    /// Outside a scope the memo is the real probe, which on Windows would probe the
+    /// machine running the suite, so the test seam refuses rather than doing that.
+    /// </summary>
+    [Fact]
+    public async Task ReadingTheMemoOutsideAScope_IsRefused()
+    {
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(WslContextResolver.ProbedForTestsAsync);
+
+        Assert.Contains("IsolateForTests", refusal.Message, StringComparison.Ordinal);
+    }
+
+    private static Task<WslProbe> DebianMachine(CancellationToken _) =>
+        Task.FromResult(WslProbeFixtures.Usable("Debian"));
 }
