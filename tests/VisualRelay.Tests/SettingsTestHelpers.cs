@@ -63,10 +63,14 @@ internal static class SettingsTestHelpers
     /// </remarks>
     public static async Task<SettingsWindow> OpenSettingsAsync(MainWindow window)
     {
-        ClickSettingsButton(window);
         var vm = (MainWindowViewModel)window.DataContext!;
-        await (vm.LastSettingsOpen
-            ?? throw new InvalidOperationException("Clicking the cog did not start opening the settings."));
+        var before = vm.LastSettingsOpen;
+        ClickSettingsButton(window);
+        // The refresh this click started, never one an earlier open left behind.
+        var refresh = vm.LastSettingsOpen;
+        if (refresh is null || ReferenceEquals(refresh, before))
+            throw new InvalidOperationException("Clicking the cog did not start opening the settings.");
+        await refresh;
         Dispatcher.UIThread.RunJobs();
         return window.OwnedWindows.OfType<SettingsWindow>().SingleOrDefault()
             ?? throw new InvalidOperationException(
