@@ -16,7 +16,7 @@ public sealed record WslSetupHost(
     /// the release download, for a distro that cannot reach GitHub. Its SHA-256 is checked
     /// against the pin all the same.
     /// </summary>
-    public const string LocalNonoDebEnvVar = "VR_NONO_DEB";
+    private const string LocalNonoDebEnvVar = "VR_NONO_DEB";
 
     /// <summary>How long one wsl.exe call may take: a distro download on a slow line is the long one.</summary>
     private static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(30);

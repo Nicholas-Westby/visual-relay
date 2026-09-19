@@ -80,7 +80,8 @@ public sealed class WslSetupOfferTests
     {
         var result = await OfferAsync(WslProbeFixtures.NonoMissing(), "y", failing: WslSetupScripts.Nono);
 
-        Assert.Equal((1, (WslProbe?)null), result);
+        Assert.Equal(1, result?.ExitCode);
+        Assert.Null(result?.Ready);
     }
 
     private Task<(int ExitCode, WslProbe? Ready)?> OfferAsync(
