@@ -3,8 +3,8 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// <summary>
 /// The Windows analogue of the CLI's nono gate: on Windows the sandbox is nono
 /// inside a WSL2 distro and every workspace git call runs there too, so the launch
-/// needs WSL, a WSL2 distro, nono resolvable inside it, Landlock active there and
-/// git installed there. Pure: decides from a <see cref="WslProbe"/>, names the FIRST
+/// needs WSL and the Virtual Machine Platform it runs on, a WSL2 distro, nono
+/// resolvable inside it, Landlock active there and git installed there. Pure: decides from a <see cref="WslProbe"/>, names the FIRST
 /// failing check with its exact fix, and always ends with the toolchain consequence,
 /// because the loud part of this design is that a Windows-only toolchain cannot be
 /// driven any more.
@@ -53,12 +53,11 @@ public static class WslGate
                 + $"`wsl --install -d {SuggestedDistro}` again. Then run `wsl -d {SuggestedDistro}` once to create your "
                 + "Linux user.");
 
+        // Windows' pending restart is machine-wide, so it is only ever named as what may be enough.
         if (p.VmPlatformMissing)
-            return p.RestartPending
-                ? ("WSL cannot start Linux until Windows restarts: the Virtual Machine Platform it runs on is not running yet.",
-                    "Restart Windows, then start Visual Relay again.")
-                : ("WSL is installed, but the Virtual Machine Platform it runs Linux on is turned off.",
-                    "Turn it on: run `wsl --install --no-distribution` in an elevated PowerShell, then restart Windows.");
+            return ("WSL is installed, but the Virtual Machine Platform it runs Linux on is not running"
+                    + (p.RestartPending ? "; Windows is waiting for a restart, which may be all it needs." : "."),
+                "Turn it on: run `wsl --install --no-distribution` in an elevated PowerShell, then restart Windows.");
 
         if (p.DistroName is null && p.RequestedDistro is not null)
             return ($"the WSL distro '{p.RequestedDistro}' selected by {WslProber.DistroEnvVar} is not installed "

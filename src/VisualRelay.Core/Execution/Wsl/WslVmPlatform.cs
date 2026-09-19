@@ -16,7 +16,8 @@ namespace VisualRelay.Core.Execution.Wsl;
 /// </param>
 /// <param name="RestartPending">
 /// True when Windows is waiting for a restart to finish installing or removing a component
-/// (Component Based Servicing's <c>RebootPending</c> key), as it is after the platform is turned on.
+/// (Component Based Servicing's <c>RebootPending</c> key), as it is after the platform is turned
+/// on, and also after an update: the key is machine-wide and does not say which install is waiting.
 /// </param>
 public sealed record WslVmPlatform(bool Running, bool RestartPending)
 {

@@ -37,8 +37,9 @@ public sealed record WslProbe(
 
     /// <summary>
     /// True when Windows is waiting for a restart to finish installing or removing a component
-    /// (<see cref="WslVmPlatform.RestartPending"/>). Read only with <see cref="VmPlatformMissing"/>,
-    /// which that restart is what fixes once the platform has been turned on.
+    /// (<see cref="WslVmPlatform.RestartPending"/>), read only with <see cref="VmPlatformMissing"/>.
+    /// A hint and never a verdict: an update waiting for a restart sets it too, so it cannot
+    /// prove the platform is only waiting, and the plan never depends on it.
     /// </summary>
     public bool RestartPending { get; init; }
 

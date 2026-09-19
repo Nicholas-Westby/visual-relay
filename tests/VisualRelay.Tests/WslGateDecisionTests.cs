@@ -71,7 +71,7 @@ public sealed class WslGateDecisionTests
     [InlineData(nameof(WslProbeFixtures.GitMissing), true)]
     [InlineData(nameof(WslProbeFixtures.InboxStubOnly), true)]
     [InlineData(nameof(WslProbeFixtures.VmPlatformOff), true)]
-    [InlineData(nameof(WslProbeFixtures.VmPlatformAwaitingRestart), false)]
+    [InlineData(nameof(WslProbeFixtures.VmPlatformAwaitingRestart), true)]
     [InlineData(nameof(WslProbeFixtures.NoWsl), false)]
     [InlineData(nameof(WslProbeFixtures.Wsl1), false)]
     [InlineData(nameof(WslProbeFixtures.LandlockInactive), false)]
@@ -142,15 +142,20 @@ public sealed class WslGateDecisionTests
         Assert.Contains("restart", message);
     }
 
-    /// <summary>A restart is the one thing setup cannot do, so it is not offered, and nothing else is suggested.</summary>
+    /// <summary>
+    /// Windows' pending restart is machine-wide: an update waiting for one sets it too, so it
+    /// cannot prove the platform is only waiting. It is named as what a restart may fix, on the
+    /// line the launch offer shows, and the fix is still offered, so nobody is left restarting
+    /// in a loop while the platform stays off.
+    /// </summary>
     [Fact]
-    public void AVmPlatformAwaitingRestart_AsksForTheRestart_AndNothingElse()
+    public void AVmPlatformAwaitingRestart_SaysARestartMayBeEnough_AndStillOffersTheFix()
     {
         var (_, message) = WslGate.Decide(WslProbeFixtures.VmPlatformAwaitingRestart());
 
-        Assert.Contains("Restart Windows", message);
-        Assert.DoesNotContain("setup-wsl", message);
-        Assert.DoesNotContain("wsl --install", message);
+        Assert.Contains("restart", message!.Split('\n')[0]);
+        Assert.Contains(@"run `.\visual-relay.cmd setup-wsl`", message);
+        Assert.Contains("wsl --install --no-distribution", message);
     }
 
     [Fact]

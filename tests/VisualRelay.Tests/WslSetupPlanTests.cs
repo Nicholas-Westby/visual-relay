@@ -92,12 +92,15 @@ public sealed class WslSetupPlanTests
     /// <summary>
     /// WSL that answers without its Virtual Machine Platform gets the same elevated install,
     /// which turns the platform on, and nothing else: a distro install would exit 0 having
-    /// installed nothing until Windows restarts.
+    /// installed nothing until Windows restarts. A pending restart changes nothing here: it
+    /// is machine-wide, so it cannot prove the platform is only waiting for it.
     /// </summary>
-    [Fact]
-    public void WslWithoutItsVmPlatform_GetsTheElevatedInstall_AndNothingElseYet()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WslWithoutItsVmPlatform_GetsTheElevatedInstall_AndNothingElseYet(bool restartPending)
     {
-        var plan = WslSetupPlan.For(WslProbeFixtures.VmPlatformOff(), User);
+        var plan = WslSetupPlan.For(WslProbeFixtures.VmPlatformOff() with { RestartPending = restartPending }, User);
 
         Assert.Null(plan.Blocker);
         var step = Assert.Single(plan.Steps);
@@ -131,7 +134,6 @@ public sealed class WslSetupPlanTests
     private static readonly Dictionary<string, WslProbe> BlockedProbes = new()
     {
         ["no wsl.exe"] = WslProbeFixtures.NoWsl(),
-        ["restart pending"] = WslProbeFixtures.VmPlatformAwaitingRestart(),
         ["wsl1"] = WslProbeFixtures.Wsl1(),
         ["landlock inactive"] = WslProbeFixtures.LandlockInactive(),
         ["home unknown"] = WslProbeFixtures.HomeUnknown(),

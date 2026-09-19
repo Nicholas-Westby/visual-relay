@@ -46,12 +46,22 @@ public sealed class WslSetupTests
     /// <summary>
     /// WSL's first install needs a restart before WSL can run a distro, so setup stops there,
     /// says how to finish, and plans nothing that could only be guessed at before WSL answers:
-    /// the one probe given here would run out if it tried.
+    /// the one probe given here would run out if it tried. The same holds for WSL without its
+    /// Virtual Machine Platform, including while Windows waits for a restart (2026-09-19: the
+    /// state the user's first run left behind), since that restart may be an update's.
     /// </summary>
-    [Fact]
-    public async Task InstallingWsl_StopsAtTheRestartThatFinishesIt()
+    [Theory]
+    [InlineData(nameof(WslProbeFixtures.InboxStubOnly))]
+    [InlineData(nameof(WslProbeFixtures.VmPlatformOff))]
+    [InlineData(nameof(WslProbeFixtures.VmPlatformAwaitingRestart))]
+    public async Task InstallingWsl_StopsAtTheRestartThatFinishesIt(string fixture)
     {
-        var exitCode = await RunAsync([WslProbeFixtures.InboxStubOnly()]);
+        var exitCode = await RunAsync([fixture switch
+        {
+            nameof(WslProbeFixtures.InboxStubOnly) => WslProbeFixtures.InboxStubOnly(),
+            nameof(WslProbeFixtures.VmPlatformOff) => WslProbeFixtures.VmPlatformOff(),
+            _ => WslProbeFixtures.VmPlatformAwaitingRestart(),
+        }]);
 
         Assert.Equal(3, exitCode);
         Assert.Contains("approve", _log[0]);
@@ -59,19 +69,6 @@ public sealed class WslSetupTests
             _log.Where(line => line.StartsWith("wsl.exe", StringComparison.Ordinal)));
         Assert.Contains("Restart Windows", _log[^1]);
         Assert.Contains("setup-wsl", _log[^1]);
-    }
-
-    /// <summary>
-    /// The state the user's first run left on 2026-09-19: the platform turned on, Windows not yet
-    /// restarted. Nothing setup can run would help, so it runs nothing and asks for the restart.
-    /// </summary>
-    [Fact]
-    public async Task APendingRestart_RunsNothing_AndAsksForTheRestart()
-    {
-        var exitCode = await RunAsync([WslProbeFixtures.VmPlatformAwaitingRestart()]);
-
-        Assert.Equal(127, exitCode);
-        Assert.Contains("Restart Windows", Assert.Single(_log));
     }
 
     /// <summary>A step can exit 0 and still leave the sandbox unusable, as a kernel without Landlock does.</summary>

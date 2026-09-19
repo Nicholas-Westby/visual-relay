@@ -60,9 +60,9 @@ public sealed record InstallNonoStep(string Distro) : WslSetupStep
 /// 2026-09-19: a new distro, a user, git and nono in about 130 s, with no UAC prompt, no reboot and
 /// no question asked). WSL itself is installed through the Windows administrator prompt when the
 /// inbox wsl.exe is there to install it, and so is the Virtual Machine Platform it runs on when that
-/// is off. A Windows without even that wsl.exe, a pending restart, a WSL1 distro, Landlock and an
-/// unreadable home are left to the user, with the gate's own fix, because each needs an older
-/// Windows updated, a restart, a kernel, or a decision that is theirs.
+/// is off. A Windows without even that wsl.exe, a WSL1 distro, Landlock and an unreadable home are
+/// left to the user, with the gate's own fix, because each needs an older Windows updated, a
+/// kernel, or a decision that is theirs.
 /// </summary>
 public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, string? Blocker)
 {
@@ -95,10 +95,11 @@ public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, str
         // Nothing about a distro can be known before WSL answers, so installing WSL is the whole plan.
         if (probe.WslPlatformMissing)
             return [new InstallWslStep()];
-        // The same install turns the platform on; once it is on, only a restart is left, and
-        // that is the user's to do. A distro install before then exits 0 having installed nothing.
+        // The same install turns the platform on, and a distro install before it runs exits 0
+        // having installed nothing. It is planned even while Windows waits for a restart: that
+        // wait is machine-wide (an update sets it too), so it cannot prove the platform is on.
         if (probe.VmPlatformMissing)
-            return probe.RestartPending ? null : [new InstallWslStep()];
+            return [new InstallWslStep()];
 
         if (probe.DistroName is not { } distro)
         {

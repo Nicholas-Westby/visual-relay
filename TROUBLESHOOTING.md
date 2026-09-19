@@ -272,8 +272,7 @@ test command could only be checked on the Windows host, where the pipeline will 
 |--------------------|------------|
 | WSL is not installed (Windows 11 ships a wsl.exe that only offers to install WSL) | `.\visual-relay.cmd setup-wsl` installs it once you approve the Windows administrator prompt, then asks for a restart; or `wsl --install -d Ubuntu` in an elevated PowerShell, reboot, then `wsl -d Ubuntu` once to create your Linux user |
 | WSL is not installed (wsl.exe was not found) | a Windows without even the inbox wsl.exe needs updating first; then the same as above |
-| WSL is installed, but the Virtual Machine Platform it runs Linux on is turned off | `.\visual-relay.cmd setup-wsl` turns it on once you approve the Windows administrator prompt, then asks for a restart; or `wsl --install --no-distribution` in an elevated PowerShell, then restart. Removing WSL's app can leave its files behind, so `wsl --version` still answers while no distro can start |
-| WSL cannot start Linux until Windows restarts | restart Windows: the Virtual Machine Platform has been turned on and runs only after a restart. Until then `wsl --install` of a distro exits 0 having installed nothing |
+| WSL is installed, but the Virtual Machine Platform it runs Linux on is not running | `.\visual-relay.cmd setup-wsl` turns it on once you approve the Windows administrator prompt, then asks for a restart; or `wsl --install --no-distribution` in an elevated PowerShell, then restart. Removing WSL's app can leave its files behind, so `wsl --version` still answers while no distro can start, and until the platform runs `wsl --install` of a distro exits 0 having installed nothing. When the message adds that Windows is waiting for a restart, restarting may be all it needs: the platform may already be on, though an update waiting for a restart looks the same |
 | no WSL distro is installed | `.\visual-relay.cmd setup-wsl`, or the same as above |
 | the WSL distro `<name>` selected by `VR_WSL_DISTRO` is not installed | `.\visual-relay.cmd setup-wsl` installs Ubuntu under that name; or point `VR_WSL_DISTRO` at an installed distro (unset it to use the default) |
 | `<name>` is a WSL1 distro | `wsl --set-version <name> 2` |
@@ -295,8 +294,7 @@ what is missing:
 - no WSL, or WSL without the Virtual Machine Platform it runs on: runs
   `wsl --install --no-distribution` once you approve the Windows administrator prompt, in a
   window of its own, then stops so you can restart. That is the only step that needs
-  administrator rights; run it again after the restart for the rest. When the platform is on
-  but Windows has not restarted since, it runs nothing and asks for the restart.
+  administrator rights; run it again after the restart for the rest.
 - no distro: installs Ubuntu (under the `VR_WSL_DISTRO` name, if one is set) and creates a
   Linux user named after your Windows user as its default. WSL signs that user in without a
   password, so it has none; to use `sudo`, give it one with `wsl -d <name> -u root passwd <user>`.
