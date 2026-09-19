@@ -59,11 +59,15 @@ public sealed partial class MainWindowViewModelTests
     /// the real resolution is a wsl.exe probe that only exists on Windows. The
     /// message is the WSL gate's own, naming the first failing check and its fix,
     /// rather than the generic "not installed or not on PATH" line that named
-    /// neither the distro nor anything to do about it.
+    /// neither the distro nor anything to do about it. The resolution is the test's
+    /// own, so the message explains the empty probe on every machine: on Windows the
+    /// process-wide one is the real machine's, whose first failing check varies (a
+    /// pending restart names no install command at all).
     /// </summary>
     [Fact]
     public async Task EnsureRunnableAsync_WindowsHostWithoutADistro_PrintsTheWslGatesMessage()
     {
+        using var wsl = WslContextResolver.IsolateForTests();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
