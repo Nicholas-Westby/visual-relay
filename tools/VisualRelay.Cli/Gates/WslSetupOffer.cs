@@ -26,7 +26,7 @@ public static class WslSetupOffer
 
         var problem = WslGate.Decide(probe).Message!.Split('\n')[0];
         await output.WriteLineAsync(problem);
-        await output.WriteLineAsync("Visual Relay can set this up for you, with no administrator rights needed:");
+        await output.WriteLineAsync($"Visual Relay can set this up for you. {WslSetup.Approval(plan)}:");
         await output.WriteLineAsync(WslSetup.Describe(plan));
         await output.WriteAsync("Set it up now? [y/N] ");
         await output.FlushAsync(ct);

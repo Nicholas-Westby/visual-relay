@@ -8,6 +8,21 @@ public abstract record WslSetupStep
 {
     /// <summary>What the step does, in words for the plan the user sees before anything runs.</summary>
     public abstract string Description { get; }
+
+    /// <summary>True when Windows asks the user to approve the step as an administrator.</summary>
+    public virtual bool NeedsAdministrator => false;
+}
+
+/// <summary>
+/// Installs WSL itself, through the Windows administrator prompt, without a distro: the distro
+/// is set up by the next run, once the restart WSL's first install needs has happened.
+/// </summary>
+public sealed record InstallWslStep : WslSetupStep
+{
+    public override string Description =>
+        "install WSL itself (Windows asks you to approve this as an administrator, and a restart follows)";
+
+    public override bool NeedsAdministrator => true;
 }
 
 /// <summary>Installs a distro WSL can download (<paramref name="Image"/>) and registers it as <paramref name="Name"/>.</summary>
@@ -38,13 +53,14 @@ public sealed record InstallNonoStep(string Distro) : WslSetupStep
 }
 
 /// <summary>
-/// What <c>setup-wsl</c> would do, decided from a <see cref="WslProbe"/> alone: the steps a distro
+/// What <c>setup-wsl</c> would do, decided from a <see cref="WslProbe"/> alone: the steps a machine
 /// still needs, or the reason it cannot proceed. Everything inside a distro can be done without
 /// Windows administrator rights once WSL itself is present (measured on Windows 11 on
 /// 2026-09-19: a new distro, a user, git and nono in about 130 s, with no UAC prompt, no reboot and
-/// no question asked). WSL itself, a WSL1 distro, Landlock and an unreadable home are left to the
-/// user, with the gate's own fix, because each needs administrator rights, a kernel, or a decision
-/// that is theirs.
+/// no question asked). WSL itself is installed through the Windows administrator prompt when the
+/// inbox wsl.exe is there to install it. A Windows without even that, a WSL1 distro, Landlock and
+/// an unreadable home are left to the user, with the gate's own fix, because each needs an older
+/// Windows updated, a kernel, or a decision that is theirs.
 /// </summary>
 public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, string? Blocker)
 {
@@ -63,17 +79,20 @@ public sealed partial record WslSetupPlan(IReadOnlyList<WslSetupStep> Steps, str
             : new WslSetupPlan([], WslGate.Decide(probe).Message);
 
     /// <summary>
-    /// True when setup has something to do for <paramref name="probe"/> and nothing it leaves
-    /// to the user stands in the way. The gate asks this to decide whether to offer
-    /// <c>setup-wsl</c>, which is why the answer never goes through the gate's own message.
+    /// The steps setup would take for <paramref name="probe"/>, or none when it cannot or need
+    /// not do anything. The gate asks this to decide whether and how to offer <c>setup-wsl</c>,
+    /// which is why the answer never goes through the gate's own message.
     /// </summary>
-    internal static bool CanFinish(WslProbe probe) => StepsFor(probe, FallbackUser) is { Count: > 0 };
+    internal static IReadOnlyList<WslSetupStep> OfferableSteps(WslProbe probe) => StepsFor(probe, FallbackUser) ?? [];
 
     /// <summary>The steps <paramref name="probe"/> calls for, or null when what it found is not setup's to fix.</summary>
     private static IReadOnlyList<WslSetupStep>? StepsFor(WslProbe probe, string linuxUser)
     {
-        if (!probe.WslExeFound || probe.WslPlatformMissing)
+        if (!probe.WslExeFound)
             return null;
+        // Nothing about a distro can be known before WSL answers, so installing WSL is the whole plan.
+        if (probe.WslPlatformMissing)
+            return [new InstallWslStep()];
 
         if (probe.DistroName is not { } distro)
         {

@@ -40,6 +40,25 @@ public sealed class WslSetupTests
         var shown = _log.FindIndex(line => plan.Steps.All(step => line.Contains(step.Description)));
         Assert.True(shown >= 0, "the plan was never shown:\n" + string.Join('\n', _log));
         Assert.True(shown < _log.FindIndex(line => line.StartsWith("wsl.exe", StringComparison.Ordinal)));
+        Assert.Contains("None of this needs administrator rights", _log[shown]);
+    }
+
+    /// <summary>
+    /// WSL's first install needs a restart before WSL can run a distro, so setup stops there,
+    /// says how to finish, and plans nothing that could only be guessed at before WSL answers:
+    /// the one probe given here would run out if it tried.
+    /// </summary>
+    [Fact]
+    public async Task InstallingWsl_StopsAtTheRestartThatFinishesIt()
+    {
+        var exitCode = await RunAsync([WslProbeFixtures.InboxStubOnly()]);
+
+        Assert.Equal(3, exitCode);
+        Assert.Contains("approve", _log[0]);
+        Assert.Equal(["wsl.exe as administrator --install --no-distribution"],
+            _log.Where(line => line.StartsWith("wsl.exe", StringComparison.Ordinal)));
+        Assert.Contains("Restart Windows", _log[^1]);
+        Assert.Contains("setup-wsl", _log[^1]);
     }
 
     /// <summary>A step can exit 0 and still leave the sandbox unusable, as a kernel without Landlock does.</summary>
@@ -91,6 +110,11 @@ public sealed class WslSetupTests
             {
                 _log.Add("wsl.exe " + string.Join(' ', argv));
                 return Task.FromResult(failing is not null && argv.Contains(failing) ? (1, "failed\n") : (0, ""));
+            },
+            (argv, _) =>
+            {
+                _log.Add("wsl.exe as administrator " + string.Join(' ', argv));
+                return Task.FromResult((0, ""));
             },
             User, LocalNonoDeb: null);
         return WslSetup.RunAsync(host, _log.Add, CancellationToken.None);

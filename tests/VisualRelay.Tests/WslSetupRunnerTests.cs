@@ -22,6 +22,7 @@ public sealed class WslSetupRunnerTests
         var outcome = await RunAsync(NewUbuntu, wsl);
 
         Assert.Null(outcome.Failure);
+        Assert.Empty(wsl.AdministratorCalls);
         Assert.Collection(wsl.Calls,
             call => Assert.Equal(["--install", "Ubuntu", "--no-launch"], call),
             call => Assert.Equal(AsRoot("Ubuntu", WslSetupScripts.CreateUser, User), call),
@@ -30,6 +31,31 @@ public sealed class WslSetupRunnerTests
             call => Assert.Equal(AsRoot("Ubuntu", WslSetupScripts.Packages), call),
             call => Assert.Equal(AsRoot("Ubuntu", WslSetupScripts.Nono, NonoRelease.Version,
                 NonoRelease.Amd64DebSha256, NonoRelease.Arm64DebSha256, NonoRelease.DebUrlPrefix, ""), call));
+    }
+
+    [Fact]
+    public async Task WslItself_IsInstalledWithAdministratorApproval_AndNothingElseRunsThatWay()
+    {
+        var plan = WslSetupPlan.For(WslProbeFixtures.InboxStubOnly(), User);
+        var wsl = new AnsweringWsl();
+
+        var outcome = await RunAsync(plan, wsl);
+
+        Assert.Null(outcome.Failure);
+        Assert.Equal([["--install", "--no-distribution"]], wsl.AdministratorCalls);
+        Assert.Empty(wsl.Calls);
+    }
+
+    /// <summary>3010 is how a Windows installer says "done, restart to finish".</summary>
+    [Fact]
+    public async Task AnInstallerAskingForARestart_HasSucceeded()
+    {
+        var plan = WslSetupPlan.For(WslProbeFixtures.InboxStubOnly(), User);
+        var wsl = new AnsweringWsl { AdministratorExitCode = 3010 };
+
+        var outcome = await RunAsync(plan, wsl);
+
+        Assert.Null(outcome.Failure);
     }
 
     [Fact]
@@ -62,7 +88,7 @@ public sealed class WslSetupRunnerTests
     {
         var lines = new List<string>();
 
-        await WslSetupRunner.RunAsync(NewUbuntu, new AnsweringWsl().RunAsync, lines.Add, null, CancellationToken.None);
+        await WslSetupRunner.RunAsync(NewUbuntu, new AnsweringWsl().Host(null), lines.Add, CancellationToken.None);
 
         Assert.Equal(NewUbuntu.Steps.Select((step, i) => $"[{i + 1}/4] {step.Description}"), lines);
     }
@@ -129,7 +155,7 @@ public sealed class WslSetupRunnerTests
     }
 
     private static Task<WslSetupOutcome> RunAsync(WslSetupPlan plan, AnsweringWsl wsl, string? localNonoDeb = null) =>
-        WslSetupRunner.RunAsync(plan, wsl.RunAsync, _ => { }, localNonoDeb, CancellationToken.None);
+        WslSetupRunner.RunAsync(plan, wsl.Host(localNonoDeb), _ => { }, CancellationToken.None);
 
     private static string[] AsRoot(string distro, string script, params string[] args) =>
         ["-d", distro, "-u", "root", "--exec", "sh", "-c", script, "vr-setup", .. args];
@@ -141,9 +167,25 @@ public sealed class WslSetupRunnerTests
 
         public string FailureOutput { get; init; } = "Reading package lists...\nE: Unable to locate package git\n";
 
+        public int AdministratorExitCode { get; init; }
+
         public List<IReadOnlyList<string>> Calls { get; } = [];
 
-        public Task<(int ExitCode, string Output)> RunAsync(IReadOnlyList<string> argv, CancellationToken ct)
+        public List<IReadOnlyList<string>> AdministratorCalls { get; } = [];
+
+        /// <summary>The runner never probes, so a probe here would be a defect.</summary>
+        public WslSetupHost Host(string? localNonoDeb) => new(
+            _ => throw new InvalidOperationException("the runner probed"),
+            RunAsync,
+            (argv, _) =>
+            {
+                AdministratorCalls.Add(argv.ToList());
+                return Task.FromResult((AdministratorExitCode, ""));
+            },
+            User,
+            localNonoDeb);
+
+        private Task<(int ExitCode, string Output)> RunAsync(IReadOnlyList<string> argv, CancellationToken ct)
         {
             Calls.Add(argv.ToList());
             return Task.FromResult(Fails(argv) ? (100, FailureOutput) : (0, "ok\n"));

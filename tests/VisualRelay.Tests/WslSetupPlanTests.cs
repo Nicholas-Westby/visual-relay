@@ -6,7 +6,8 @@ namespace VisualRelay.Tests;
 /// What <c>setup-wsl</c> would do for a machine, decided from the probe alone. Everything a
 /// distro needs can be done without Windows administrator rights once WSL itself is present
 /// (measured on Windows 11, 2026-09-19: a new distro, a user, git and nono in about 130 s,
-/// no UAC prompt, no reboot, no questions); WSL itself, Landlock and a WSL1 distro cannot.
+/// no UAC prompt, no reboot, no questions). WSL itself is installed through the Windows
+/// administrator prompt and then needs a restart; Landlock and a WSL1 distro stay manual.
 /// </summary>
 public sealed class WslSetupPlanTests
 {
@@ -74,7 +75,30 @@ public sealed class WslSetupPlanTests
         Assert.Null(plan.Blocker);
     }
 
-    /// <summary>What needs Windows administrator rights, a kernel or the user's own decision is left to them.</summary>
+    /// <summary>
+    /// A Windows whose wsl.exe is only the inbox stub gets WSL installed and nothing else yet:
+    /// the distro can only be planned once WSL answers, which is after the restart.
+    /// </summary>
+    [Fact]
+    public void AWindowsWithoutWsl_GetsWslItselfInstalled_AndNothingElseYet()
+    {
+        var plan = WslSetupPlan.For(WslProbeFixtures.InboxStubOnly(), User);
+
+        Assert.Null(plan.Blocker);
+        var step = Assert.Single(plan.Steps);
+        Assert.IsType<InstallWslStep>(step);
+    }
+
+    [Fact]
+    public void OnlyInstallingWslItself_NeedsAdministratorApproval()
+    {
+        var steps = WslSetupPlan.For(WslProbeFixtures.InboxStubOnly(), User).Steps
+            .Concat(WslSetupPlan.For(WslProbeFixtures.NoDistro(), User).Steps);
+
+        Assert.All(steps, step => Assert.Equal(step is InstallWslStep, step.NeedsAdministrator));
+    }
+
+    /// <summary>What needs a kernel, an older Windows or the user's own decision is left to them.</summary>
     [Theory]
     [MemberData(nameof(Blocked))]
     public void WhatSetupCannotDo_IsLeftToTheUserWithTheGatesOwnFix(string name)
@@ -92,7 +116,6 @@ public sealed class WslSetupPlanTests
     private static readonly Dictionary<string, WslProbe> BlockedProbes = new()
     {
         ["no wsl.exe"] = WslProbeFixtures.NoWsl(),
-        ["inbox stub only"] = WslProbeFixtures.InboxStubOnly(),
         ["wsl1"] = WslProbeFixtures.Wsl1(),
         ["landlock inactive"] = WslProbeFixtures.LandlockInactive(),
         ["home unknown"] = WslProbeFixtures.HomeUnknown(),

@@ -48,6 +48,18 @@ public sealed class WslSetupOfferTests
         Assert.EndsWith("Set it up now? [y/N] ", asked);
     }
 
+    [Fact]
+    public async Task InstallingWslItself_IsOffered_SayingWindowsWillAskForApproval()
+    {
+        var result = await OfferAsync(WslProbeFixtures.InboxStubOnly(), "y");
+
+        Assert.Contains("approve", _output.ToString());
+        Assert.DoesNotContain("no administrator rights", _output.ToString());
+        Assert.Equal(["as administrator --install --no-distribution"], _calls);
+        Assert.Equal(3, result?.ExitCode);
+        Assert.Null(result?.Ready);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("n")]
@@ -93,6 +105,11 @@ public sealed class WslSetupOfferTests
             {
                 _calls.Add(string.Join(' ', argv));
                 return Task.FromResult(failing is not null && argv.Contains(failing) ? (1, "failed\n") : (0, ""));
+            },
+            (argv, _) =>
+            {
+                _calls.Add("as administrator " + string.Join(' ', argv));
+                return Task.FromResult((0, ""));
             },
             "alice", LocalNonoDeb: null);
         return WslSetupOffer.OfferAsync(probe, host, interactive, new StringReader(answer is null ? "" : answer + "\n"),

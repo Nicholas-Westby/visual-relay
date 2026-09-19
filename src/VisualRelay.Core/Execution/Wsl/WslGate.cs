@@ -22,6 +22,10 @@ public static class WslGate
     private const string SetupOffer =
         @"Visual Relay can set this up for you, with no administrator rights needed: run `.\visual-relay.cmd setup-wsl`.";
 
+    /// <summary>The same offer, for when the job includes installing WSL itself.</summary>
+    private const string SetupOfferWithApproval =
+        @"Visual Relay can set this up for you: run `.\visual-relay.cmd setup-wsl` and approve the Windows administrator prompt; a restart follows.";
+
     /// <summary>0 with no message when the probe is usable; else 127 with the message to print.</summary>
     public static (int ExitCode, string? Message) Decide(WslProbe probe)
     {
@@ -30,8 +34,9 @@ public static class WslGate
 
         var (problem, fix) = FirstFailingCheck(probe);
         var message = $"visual-relay: {problem}\n\n";
-        if (WslSetupPlan.CanFinish(probe))
-            message += $"{Indent(SetupOffer)}\n\n";
+        var steps = WslSetupPlan.OfferableSteps(probe);
+        if (steps.Count > 0)
+            message += $"{Indent(steps.Any(step => step.NeedsAdministrator) ? SetupOfferWithApproval : SetupOffer)}\n\n";
         message += Indent(fix);
         if (!string.IsNullOrWhiteSpace(probe.Diagnostics))
             message += $"\n\n{Indent("Probe details:\n" + probe.Diagnostics)}";

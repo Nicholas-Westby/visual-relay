@@ -56,17 +56,17 @@ public sealed class WslGateDecisionTests
     }
 
     /// <summary>
-    /// What <c>setup-wsl</c> can finish without administrator rights, the gate offers before
-    /// the manual fix. It never offers it for what setup leaves to the user: WSL itself, a
-    /// WSL1 distro, Landlock, or a distro whose first run never finished.
+    /// What <c>setup-wsl</c> can finish, the gate offers before the manual fix. It never offers
+    /// it for what setup leaves to the user: a Windows without even the inbox wsl.exe, a WSL1
+    /// distro, Landlock, or a distro whose first run never finished.
     /// </summary>
     [Theory]
     [InlineData(nameof(WslProbeFixtures.NoDistro), true)]
     [InlineData(nameof(WslProbeFixtures.RequestedDistroMissing), true)]
     [InlineData(nameof(WslProbeFixtures.NonoMissing), true)]
     [InlineData(nameof(WslProbeFixtures.GitMissing), true)]
+    [InlineData(nameof(WslProbeFixtures.InboxStubOnly), true)]
     [InlineData(nameof(WslProbeFixtures.NoWsl), false)]
-    [InlineData(nameof(WslProbeFixtures.InboxStubOnly), false)]
     [InlineData(nameof(WslProbeFixtures.Wsl1), false)]
     [InlineData(nameof(WslProbeFixtures.LandlockInactive), false)]
     [InlineData(nameof(WslProbeFixtures.HomeUnknown), false)]
@@ -79,6 +79,16 @@ public sealed class WslGateDecisionTests
         if (offered)
             Assert.True(offer < message.IndexOf("\n\n", message.IndexOf("\n\n", StringComparison.Ordinal) + 2, StringComparison.Ordinal),
                 "the offer comes before the manual fix:\n" + message);
+    }
+
+    [Fact]
+    public void InstallingWslItself_IsOffered_WithTheApprovalItNeeds()
+    {
+        var (_, message) = WslGate.Decide(WslProbeFixtures.InboxStubOnly());
+
+        Assert.Contains(@"run `.\visual-relay.cmd setup-wsl`", message);
+        Assert.Contains("approve", message);
+        Assert.DoesNotContain("no administrator rights", message);
     }
 
     [Fact]

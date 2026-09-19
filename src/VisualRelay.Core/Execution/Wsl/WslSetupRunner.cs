@@ -4,10 +4,11 @@ namespace VisualRelay.Core.Execution.Wsl;
 public sealed record WslSetupOutcome(string? Failure);
 
 /// <summary>
-/// Carries out a <see cref="WslSetupPlan"/> through an injected wsl.exe runner, the same
+/// Carries out a <see cref="WslSetupPlan"/> through the host's wsl.exe runners, which have the
 /// delegate shape <see cref="WslProber"/> takes: each step becomes its wsl.exe calls, run in
-/// plan order, and the first call that fails stops the run with a message naming the step,
-/// the exit code and the end of its output.
+/// plan order (a step that <see cref="WslSetupStep.NeedsAdministrator"/> through the runner that
+/// asks Windows for approval), and the first call that fails stops the run with a message
+/// naming the step, the exit code and the end of its output.
 /// </summary>
 public static class WslSetupRunner
 {
@@ -16,22 +17,22 @@ public static class WslSetupRunner
 
     private const int OutputTailLines = 20;
 
+    /// <summary>How a Windows installer says it succeeded and needs a restart to finish.</summary>
+    private const int SucceededRestartNeeded = 3010;
+
     public static async Task<WslSetupOutcome> RunAsync(
-        WslSetupPlan plan,
-        Func<IReadOnlyList<string>, CancellationToken, Task<(int ExitCode, string Output)>> runWsl,
-        Action<string> report,
-        string? localNonoDeb,
-        CancellationToken ct)
+        WslSetupPlan plan, WslSetupHost host, Action<string> report, CancellationToken ct)
     {
         string? installedHere = null;
         for (var i = 0; i < plan.Steps.Count; i++)
         {
             var step = plan.Steps[i];
             report($"[{i + 1}/{plan.Steps.Count}] {step.Description}");
-            foreach (var argv in CommandsFor(step, localNonoDeb))
+            var run = step.NeedsAdministrator ? host.RunWslAsAdministrator : host.RunWsl;
+            foreach (var argv in CommandsFor(step, host.LocalNonoDeb))
             {
-                var (exitCode, output) = await runWsl(argv, ct);
-                if (exitCode != 0)
+                var (exitCode, output) = await run(argv, ct);
+                if (exitCode != 0 && !(step.NeedsAdministrator && exitCode == SucceededRestartNeeded))
                     return new WslSetupOutcome(Failure(i + 1, plan.Steps.Count, step, exitCode, output, installedHere));
             }
 
@@ -44,6 +45,7 @@ public static class WslSetupRunner
 
     private static IReadOnlyList<string[]> CommandsFor(WslSetupStep step, string? localNonoDeb) => step switch
     {
+        InstallWslStep => [["--install", "--no-distribution"]],
         InstallDistroStep s when s.Image == s.Name => [["--install", s.Image, "--no-launch"]],
         InstallDistroStep s => [["--install", s.Image, "--name", s.Name, "--no-launch"]],
         // A new default user takes effect only once the distro starts again.
