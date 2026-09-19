@@ -23,6 +23,7 @@ public sealed class CliCommandRouterTests
     [InlineData("install-hooks")]
     [InlineData("launch")]
     [InlineData("run")]
+    [InlineData("setup-wsl")]
     public void Recognizes_EveryKnownSubcommand(string cmd)
     {
         Assert.True(CommandRouter.IsKnown(cmd), $"'{cmd}' should be a known subcommand");

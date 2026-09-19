@@ -38,7 +38,7 @@ public sealed partial class RunAllModesTests
         {
             "launch", "run", "build", "test", "format", "screenshot",
             "run-task", "init", "check", "inspect",
-            "guards", "install-hooks", "bump-version",
+            "guards", "install-hooks", "bump-version", "setup-wsl",
         };
 
         foreach (var cmd in knownCommands)

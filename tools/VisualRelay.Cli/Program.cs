@@ -38,6 +38,7 @@ return cmd switch
     "audit" => PassthroughCommand.Audit(paths, rest),
     "install-hooks" => await InstallHooksCommand.RunAsync(paths, new GitInvoker()),
     "bump-version" => BumpVersionCommand.Run(paths),
+    "setup-wsl" => await SetupWslCommand.RunAsync(rest),
     _ => Unknown(),
 };
 

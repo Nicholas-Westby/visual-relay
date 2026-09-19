@@ -150,7 +150,7 @@ public static partial class WslContextResolver
             ct);
     }
 
-    private static string? FindWslExe()
+    internal static string? FindWslExe()
     {
         var onPath = PathExecutables.Find("wsl.exe");
         if (onPath is not null)

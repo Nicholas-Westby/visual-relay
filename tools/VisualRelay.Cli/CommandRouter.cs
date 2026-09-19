@@ -12,7 +12,7 @@ public static class CommandRouter
     [
         "launch", "run", "build", "test", "format", "screenshot",
         "run-task", "init", "check", "inspect", "gen-sample",
-        "guards", "audit", "install-hooks", "bump-version",
+        "guards", "audit", "install-hooks", "bump-version", "setup-wsl",
     ];
 
     public static bool IsKnown(string? command) =>
@@ -20,5 +20,5 @@ public static class CommandRouter
 
     public static string UsageLine =>
         "usage: ./visual-relay [launch|build|test [serial] [Filter]|format|screenshot|run-task|init|" +
-        "install-hooks|bump-version|check|inspect|guards|audit|gen-sample]";
+        "install-hooks|bump-version|check|inspect|guards|audit|gen-sample|setup-wsl]";
 }

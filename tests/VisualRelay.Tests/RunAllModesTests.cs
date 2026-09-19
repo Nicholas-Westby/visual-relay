@@ -90,7 +90,7 @@ public sealed partial class RunAllModesTests
         {
             "launch", "run", "build", "test", "format", "screenshot",
             "run-task", "init", "check", "inspect", "gen-sample",
-            "guards", "install-hooks", "bump-version",
+            "guards", "install-hooks", "bump-version", "setup-wsl",
         };
 
         foreach (var cmd in expected)
@@ -112,7 +112,7 @@ public sealed partial class RunAllModesTests
         {
             "launch", "build", "test", "format", "screenshot", "run-task",
             "init", "install-hooks", "bump-version", "check", "inspect",
-            "guards",
+            "guards", "setup-wsl",
         };
 
         foreach (var cmd in mustAppear)
