@@ -17,22 +17,52 @@ namespace VisualRelay.Domain;
 public static class LineEndings
 {
     /// <summary>
-    /// <paramref name="text"/> in the endings of the file at <paramref name="path"/>:
-    /// CRLF when that file has any, LF when it has none or does not exist.
+    /// <paramref name="text"/> in the endings of the file at <paramref name="path"/>, or LF
+    /// when there is no such file, including one that disappears while this looks.
     /// </summary>
-    public static string ForFile(string path, string text) =>
-        Match(File.Exists(path) ? File.ReadAllText(path) : null, text);
+    public static string ForFile(string path, string text)
+    {
+        string? existing;
+        try
+        {
+            existing = File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            existing = null;
+        }
+
+        return Match(existing, text);
+    }
 
     /// <summary>
-    /// <paramref name="text"/> in the endings <paramref name="existing"/> uses: CRLF when
-    /// it has any, LF when it has none or is null. Only CRLF and LF are line breaks here;
-    /// a lone CR is part of the text and stays as it is.
+    /// <paramref name="text"/> in the endings most of <paramref name="existing"/>'s lines
+    /// use: CRLF when more of its breaks are CRLF than LF alone, else LF, and LF when it is
+    /// null. A majority rather than "any CRLF", so one stray CR written into a text does not
+    /// turn the file's next rewrite into CRLF throughout. Only CRLF and LF are line breaks
+    /// here; a lone CR is part of the text and stays as it is.
     /// </summary>
     public static string Match(string? existing, string text)
     {
         var lf = text.Replace("\r\n", "\n", StringComparison.Ordinal);
-        return existing?.Contains("\r\n", StringComparison.Ordinal) == true
+        return existing is not null && IsMostlyCrlf(existing)
             ? lf.Replace("\n", "\r\n", StringComparison.Ordinal)
             : lf;
+    }
+
+    private static bool IsMostlyCrlf(string text)
+    {
+        int crlf = 0, lfAlone = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '\n')
+                continue;
+            if (i > 0 && text[i - 1] == '\r')
+                crlf++;
+            else
+                lfAlone++;
+        }
+
+        return crlf > lfAlone;
     }
 }

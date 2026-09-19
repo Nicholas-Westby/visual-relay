@@ -10,8 +10,10 @@ public sealed class LineEndingsTests
     [InlineData("x\r\ny\r\n", "a\nb\n", "a\r\nb\r\n")]
     // Text that is already mixed ends up in one set of endings, with no doubled CR.
     [InlineData("x\r\n", "a\r\nb\nc", "a\r\nb\r\nc")]
-    // A file with any CRLF was checked out CRLF; one stray LF line does not change that.
+    // Mostly CRLF was checked out CRLF; one stray LF line does not change that.
     [InlineData("x\r\ny\nz\r\n", "a\nb\n", "a\r\nb\r\n")]
+    // And the reverse: one CRLF that a stray CR left in an LF file does not flip it.
+    [InlineData("x\ny\nz\r\n", "a\nb\n", "a\nb\n")]
     public void Match_UsesTheEndingsTheExistingTextHas(string? existing, string text, string expected)
     {
         Assert.Equal(expected, LineEndings.Match(existing, text));

@@ -50,9 +50,9 @@ public sealed class RelayConfigWriterLineEndingTests
 
         await WriteThrough[writer](repo.Root);
 
-        var bytes = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
-        Assert.Contains("\r\n", bytes, StringComparison.Ordinal);
-        Assert.DoesNotContain("\n", bytes.Replace("\r\n", "", StringComparison.Ordinal), StringComparison.Ordinal);
+        var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+        Assert.Contains("\r\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", text.Replace("\r\n", "", StringComparison.Ordinal), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -75,9 +75,9 @@ public sealed class RelayConfigWriterLineEndingTests
 
         var path = RelayConfigWriter.Write(repo.Root, "go test ./...");
 
-        var bytes = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
-        Assert.EndsWith("}\n", bytes, StringComparison.Ordinal);
-        Assert.DoesNotContain("\r", bytes, StringComparison.Ordinal);
+        var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+        Assert.EndsWith("}\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\r", text, StringComparison.Ordinal);
     }
 
     private static string SeedConfig(string root, string text)
