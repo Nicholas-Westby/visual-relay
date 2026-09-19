@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Init;
 
@@ -59,7 +60,7 @@ public static partial class RelayConfigWriter
         }
 
         var path = Path.Combine(relayDir, "config.json");
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
         return path;
     }
 
@@ -105,7 +106,7 @@ public static partial class RelayConfigWriter
             json["guardCmd"] = guardCmd;
         }
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 
     /// <summary>
@@ -120,7 +121,7 @@ public static partial class RelayConfigWriter
 
         json["subagentTimeoutMs"] = milliseconds;
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 
     /// <summary>
@@ -135,7 +136,7 @@ public static partial class RelayConfigWriter
 
         json["testTimeoutMs"] = milliseconds;
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 
     /// <summary>
@@ -182,7 +183,7 @@ public static partial class RelayConfigWriter
             }
         }
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 
     /// <summary>
@@ -229,7 +230,7 @@ public static partial class RelayConfigWriter
             }
         }
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 
     /// <summary>
@@ -247,10 +248,22 @@ public static partial class RelayConfigWriter
             obj[tier] = model;
         json["tierModelOverrides"] = obj;
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
+
+    // LF throughout: the options' NewLine sets every break the serializer writes, and
+    // it defaults to Environment.NewLine, so on Windows every line was CRLF.
+    private static readonly JsonSerializerOptions ConfigJson = new() { WriteIndented = true, NewLine = "\n" };
+
+    /// <summary>
+    /// The config text to write at <paramref name="path"/>, in the endings that file
+    /// already has (<see cref="LineEndings"/>). The config can be tracked: VR's own
+    /// repository tracks it, and the <c>.relay/.gitignore</c> VR writes un-ignores it.
+    /// </summary>
+    internal static string ConfigText(string path, JsonNode json) =>
+        LineEndings.ForFile(path, json.ToJsonString(ConfigJson) + "\n");
 
     /// <summary>
     /// Reads the existing <c>.relay/config.json</c> as a <see cref="JsonObject"/>,

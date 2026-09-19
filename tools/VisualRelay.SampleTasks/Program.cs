@@ -231,7 +231,7 @@ void Write(string relativePath, string content)
 {
     var path = Path.Combine(target, relativePath);
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-    File.WriteAllText(path, content.TrimEnd() + Environment.NewLine);
+    File.WriteAllText(path, content.TrimEnd() + "\n");
 }
 
 void MakeExecutable(string relativePath)

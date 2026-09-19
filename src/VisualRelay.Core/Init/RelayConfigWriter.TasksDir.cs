@@ -16,6 +16,6 @@ public static partial class RelayConfigWriter
 
         json["tasksDir"] = tasksDir;
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 }

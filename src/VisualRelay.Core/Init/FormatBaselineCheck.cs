@@ -59,8 +59,7 @@ internal static class FormatBaselineCheck
                 config["guardCmd"] = string.Join(" && ", remaining);
         }
 
-        await File.WriteAllTextAsync(path,
-            config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine, cancellationToken);
+        await File.WriteAllTextAsync(path, RelayConfigWriter.ConfigText(path, config), cancellationToken);
         return result.TimedOut
             ? $"formatCmd `{formatCmd}` left out: `{check}` did not finish within the setup check's time limit, "
               + "so the clean checkout was not shown to pass it; add it back once it does."

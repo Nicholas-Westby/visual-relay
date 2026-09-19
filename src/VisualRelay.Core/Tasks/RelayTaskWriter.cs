@@ -107,7 +107,7 @@ public static class RelayTaskWriter
         var nestedDir = Path.Combine(tasksDir, slug);
         Directory.CreateDirectory(nestedDir);
         var filePath = BuildNestedMarkdownPath(tasksDir, slug);
-        await File.WriteAllTextAsync(filePath, markdown);
+        await File.WriteAllTextAsync(filePath, LineEndings.ForFile(filePath, markdown));
         return filePath;
     }
 
@@ -116,7 +116,7 @@ public static class RelayTaskWriter
     /// </summary>
     public static async Task SaveAsync(RelayTaskItem task, string markdown)
     {
-        await File.WriteAllTextAsync(task.MarkdownPath, markdown);
+        await File.WriteAllTextAsync(task.MarkdownPath, LineEndings.ForFile(task.MarkdownPath, markdown));
     }
 
     /// <summary>
@@ -196,7 +196,7 @@ public static class RelayTaskWriter
         // Self-rename: update content only.
         if (string.Equals(newSlug, task.Id, StringComparison.Ordinal))
         {
-            await File.WriteAllTextAsync(task.MarkdownPath, newMarkdown);
+            await File.WriteAllTextAsync(task.MarkdownPath, LineEndings.ForFile(task.MarkdownPath, newMarkdown));
             return task.MarkdownPath;
         }
 
@@ -233,7 +233,7 @@ public static class RelayTaskWriter
         }
 
         // Write the new content.
-        await File.WriteAllTextAsync(newMdPath, newMarkdown);
+        await File.WriteAllTextAsync(newMdPath, LineEndings.ForFile(newMdPath, newMarkdown));
 
         // Migrate run history if it exists for the old slug.
         var oldRelayDir = Path.Combine(rootPath, ".relay", task.Id);

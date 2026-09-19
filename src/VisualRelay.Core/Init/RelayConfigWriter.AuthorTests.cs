@@ -37,7 +37,7 @@ public static partial class RelayConfigWriter
         // silently drop the overrides existing repositories already rely on.
         json["testPaths"] ??= new JsonArray();
 
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        File.WriteAllText(path, ConfigText(path, json));
     }
 
     private static JsonArray ToArray(IEnumerable<string> values)
