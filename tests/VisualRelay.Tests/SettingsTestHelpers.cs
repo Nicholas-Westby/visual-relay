@@ -46,32 +46,31 @@ internal static class SettingsTestHelpers
     /// it to avoid leaking an open dialog into the shared headless dispatcher.
     /// </summary>
     /// <remarks>
-    /// The settings-button handler (<c>TopBar.OnSettingsClick</c>) is async void:
-    /// the <see cref="SettingsWindow"/> is created and shown after an await gap
-    /// (<c>RefreshKeyStatesAsync</c>). <c>Dispatcher.UIThread.RunJobs</c>
-    /// does not pump async continuations, so we spin the dispatcher with brief
-    /// sleeps until the owned window appears (or a short timeout elapses).
+    /// The settings-button handler (<c>TopBar.OnSettingsClick</c>) is async void: the
+    /// <see cref="SettingsWindow"/> is created and shown after its key refresh, so the
+    /// refresh is awaited through <see cref="MainWindowViewModel.LastSettingsOpen"/> and one
+    /// <c>RunJobs</c> then runs the handler's continuation, which shows the dialog.
+    /// <para>
+    /// This used to spin the dispatcher against a 5 s clock, and failed about 1 Windows run
+    /// in 5 with the refresh already done. The headless UI thread is itself a thread-pool
+    /// thread (the session runs its loop inside <c>Task.Run</c>), so the refresh's file read,
+    /// queued from it, lands in that thread's own local queue. The spinning thread never
+    /// runs its own queue, and other threads take from it only when the global queue is
+    /// empty, which under the parallel phase can be seconds. Awaiting has no deadline to
+    /// lose that race to: a dialog that never appears still fails, straight after the
+    /// refresh, and a refresh that never finishes is the suite watchdog's to report.
+    /// </para>
     /// </remarks>
-    public static SettingsWindow OpenSettings(MainWindow window)
+    public static async Task<SettingsWindow> OpenSettingsAsync(MainWindow window)
     {
         ClickSettingsButton(window);
-        // The cog handler is async void: the SettingsWindow appears only after an
-        // await gap (RefreshKeyStatesAsync does file IO on a threadpool thread and
-        // posts its continuation back to the dispatcher). RunJobs pumps that
-        // continuation; Thread.Yield hands the core to the threadpool thread so its
-        // work completes even under parallel load. The loop is time-bounded rather
-        // than a fixed 50 turns so a busy machine gets more scheduler turns before
-        // giving up. Prefer scoping a fact down (ShowScopedSettings) over this path.
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTime.UtcNow < deadline)
-        {
-            Dispatcher.UIThread.RunJobs();
-            if (window.OwnedWindows.OfType<SettingsWindow>().FirstOrDefault() is { } sw)
-                return sw;
-            Thread.Yield(); // scheduler hand-off, not a wall-clock wait; loop re-pumps
-        }
-        throw new InvalidOperationException(
-            "SettingsWindow did not appear in OwnedWindows after clicking the cog.");
+        var vm = (MainWindowViewModel)window.DataContext!;
+        await (vm.LastSettingsOpen
+            ?? throw new InvalidOperationException("Clicking the cog did not start opening the settings."));
+        Dispatcher.UIThread.RunJobs();
+        return window.OwnedWindows.OfType<SettingsWindow>().SingleOrDefault()
+            ?? throw new InvalidOperationException(
+                "SettingsWindow did not appear in OwnedWindows after the cog's key refresh finished.");
     }
 
     /// <summary>

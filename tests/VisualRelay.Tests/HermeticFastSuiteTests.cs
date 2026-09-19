@@ -8,7 +8,13 @@ namespace VisualRelay.Tests;
 /// <see cref="HermeticHttpHandler"/> factory refuses every connect that would
 /// leave the machine, and still lets the loopback traffic the control-API and
 /// readiness-probe tests depend on through.
+/// <para>
+/// Isolated: the requests run against a fixed 5 s client timeout. In a parallel run on Windows
+/// the loopback request took 1.1 to 3.6 s in 9 of 20 runs and under 0.5 s in the rest, and one
+/// was caught at 5,085 ms against the 5,000.
+/// </para>
 /// </summary>
+[Collection("Isolated")]
 public sealed class HermeticFastSuiteTests
 {
     // ── Refusal tests ──────────────────────────────────────────────────────

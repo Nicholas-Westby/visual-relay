@@ -20,8 +20,8 @@ public sealed class KeySetupPanelUiTests
     private IDisposable SeedUserEnv(TestRepository repo, string content) =>
         SettingsTestHelpers.SeedUserEnv(_env, repo, content);
     private void EnsureNoUserEnv() => SettingsTestHelpers.EnsureNoUserEnv(_env);
-    private static SettingsWindow OpenSettings(MainWindow window) =>
-        SettingsTestHelpers.OpenSettings(window);
+    private static Task<SettingsWindow> OpenSettingsAsync(MainWindow window) =>
+        SettingsTestHelpers.OpenSettingsAsync(window);
     [AvaloniaFact]
     public async Task PanelRendersAllFourProviders_WithCorrectSetUnsetState_FromSeededEnv()
     {
@@ -36,7 +36,7 @@ public sealed class KeySetupPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var dialog = OpenSettings(window);
+        var dialog = await OpenSettingsAsync(window);
         Assert.True(vm.IsSettingsOpen);
         Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
 
@@ -121,7 +121,7 @@ public sealed class KeySetupPanelUiTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(vm.IsHuggingFaceConfigured);
-        var dialog = OpenSettings(window);
+        var dialog = await OpenSettingsAsync(window);
         Assert.True(vm.IsSettingsOpen);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
@@ -201,7 +201,7 @@ public sealed class KeySetupPanelUiTests
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show(); Dispatcher.UIThread.RunJobs();
-        var dialog = OpenSettings(window);
+        var dialog = await OpenSettingsAsync(window);
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
         var itemsControl = SettingsTestHelpers.FindLiveTierItems(panel);
         Assert.NotNull(itemsControl);

@@ -6,7 +6,12 @@ namespace VisualRelay.Tests;
 /// published self-contained <c>init/VisualRelay.Init</c> binary; otherwise run the
 /// Init tool with an absolute <c>--project</c> path; forward ORIGINAL_CWD when no
 /// path is given; and pass an explicit path through when supplied.
+/// <para>
+/// Isolated for the same reason as <see cref="CliNonoGateTests"/>: the harness gives each
+/// spawned CLI a fixed 30 s that the parallel phase's queueing can eat into.
+/// </para>
 /// </summary>
+[Collection("Isolated")]
 public sealed class CliInitCommandTests
 {
     [Fact]

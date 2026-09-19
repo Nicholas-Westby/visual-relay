@@ -51,7 +51,7 @@ public sealed partial class SettingsPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var dialog = SettingsTestHelpers.OpenSettings(window);
+        var dialog = await SettingsTestHelpers.OpenSettingsAsync(window);
         Assert.True(vm.IsSettingsOpen);
         Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
 

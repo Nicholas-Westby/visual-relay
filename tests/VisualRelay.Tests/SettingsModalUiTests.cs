@@ -38,7 +38,7 @@ public sealed class SettingsModalUiTests
 
         // The cog opens a modal SettingsWindow (not a flyout): it is an owned,
         // resizable window carrying the same MainWindowViewModel DataContext.
-        var dialog = SettingsTestHelpers.OpenSettings(window);
+        var dialog = await SettingsTestHelpers.OpenSettingsAsync(window);
         Assert.True(dialog.CanResize);
         Assert.Same(vm, dialog.DataContext);
 
@@ -81,7 +81,7 @@ public sealed class SettingsModalUiTests
         Dispatcher.UIThread.RunJobs();
 
         // First click — opens the modal.
-        var dialog = SettingsTestHelpers.OpenSettings(window);
+        var dialog = await SettingsTestHelpers.OpenSettingsAsync(window);
         Assert.True(vm.IsSettingsOpen);
 
         // Second click — must be a no-op; still exactly one owned window.

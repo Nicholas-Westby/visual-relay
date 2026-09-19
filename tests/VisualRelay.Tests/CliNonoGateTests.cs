@@ -7,7 +7,12 @@ namespace VisualRelay.Tests;
 /// exit non-zero with an install message and never reach the app; and when nono
 /// is present the launch must reach the app without pulling any profile pack
 /// first — vr-guard inherits nono's built-in default and nothing else.
+/// <para>
+/// Isolated: the harness gives the spawned CLI a fixed 30 s, and in a parallel run on Windows
+/// the one fact that runs there took 3.6 to 13.2 s across 20 runs for the same work.
+/// </para>
 /// </summary>
+[Collection("Isolated")]
 public sealed class CliNonoGateTests
 {
     // The CLI child probes the real WSL distro on Windows, and no PATH stub or seam can empty it.

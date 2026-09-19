@@ -18,7 +18,13 @@ namespace VisualRelay.Tests;
 /// stdout/stderr lines as fast as possible.  Without the lock the race
 /// would corrupt the buffer on the first few runs; with the lock all
 /// iterations must complete cleanly.
+///
+/// Isolated: the deadline that bites is not <see cref="RunTimeout"/> but
+/// <see cref="ProcessCapture"/>'s own 4 s drain after the child exits. In the
+/// parallel phase on macOS the third row took 5.1 to 8.2 s for well under a
+/// second of work, and it failed twice on 2026-09-18 with empty output.
 /// </summary>
+[Collection("Isolated")]
 public sealed class ProcessCaptureConcurrencyTests
 {
     // Number of interleaved line pairs emitted by the child process.

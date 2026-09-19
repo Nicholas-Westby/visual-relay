@@ -55,8 +55,15 @@ public partial class MainWindowViewModel
     public async Task OpenSettingsAsync()
     {
         IsSettingsOpen = true;
-        await RefreshKeyStatesAsync();
+        await (LastSettingsOpen = RefreshKeyStatesAsync());
     }
+
+    /// <summary>
+    /// The key refresh the last <see cref="OpenSettingsAsync"/> started. The cog handler
+    /// that calls it is async void, so a test awaits the dialog's arrival through this
+    /// rather than polling for the window against a clock.
+    /// </summary>
+    internal Task? LastSettingsOpen { get; private set; }
 
     /// <summary>Marks the settings modal as closed (mirrors the window closing).</summary>
     public void CloseSettings() => IsSettingsOpen = false;
