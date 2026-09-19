@@ -15,8 +15,8 @@ namespace VisualRelay.Tests;
 public sealed class FolderPickerWslTranslationTests
 {
     [Theory]
-    [InlineData(@"\\wsl$\Ubuntu\home\alice\my repo")]
-    [InlineData(@"\\wsl.localhost\Ubuntu\home\alice\répo")]
+    [InlineData(@"\\wsl$\VrNoSuchDistro\home\alice\my repo")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\alice\répo")]
     public void Decide_UncPick_IsKeptAsTheUncRoot(string picked)
     {
         var pick = FolderPickerWslTranslation.Decide(picked, isWindows: true);
@@ -39,7 +39,7 @@ public sealed class FolderPickerWslTranslationTests
     [Fact]
     public void Decide_UncPickUnderADrvFsMount_IsRefusedToo()
     {
-        var pick = FolderPickerWslTranslation.Decide(@"\\wsl.localhost\Ubuntu\mnt\c\Users\alice\repo", isWindows: true);
+        var pick = FolderPickerWslTranslation.Decide(@"\\wsl.localhost\VrNoSuchDistro\mnt\c\Users\alice\repo", isWindows: true);
 
         Assert.Null(pick.Root);
         Assert.Contains("DrvFs", pick.Message);
@@ -81,7 +81,7 @@ public sealed class FolderPickerWslTranslationTests
     {
         var viewModel = new MainWindowViewModel();
         var rootBefore = viewModel.RootPath;
-        viewModel.UseFolderPicker(new FixedFolderPicker(@"\\wsl.localhost\Ubuntu\mnt\c\Users\alice\repo"));
+        viewModel.UseFolderPicker(new FixedFolderPicker(@"\\wsl.localhost\VrNoSuchDistro\mnt\c\Users\alice\repo"));
 
         await viewModel.BrowseCommand.ExecuteAsync(null);
 

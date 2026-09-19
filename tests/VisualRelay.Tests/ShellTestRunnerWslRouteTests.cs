@@ -16,9 +16,9 @@ namespace VisualRelay.Tests;
 public sealed class ShellTestRunnerWslRouteTests
 {
     private const string WslExe = @"C:\Windows\System32\wsl.exe";
-    private const string Root = @"\\wsl.localhost\Ubuntu\home\alice\repo";
+    private const string Root = @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo";
 
-    private static readonly WslContext Context = new(WslExe, "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+    private static readonly WslContext Context = new(WslExe, "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     [Fact]
     public void ResolveLaunch_UncRootWithAContext_RunsTheShellInsideTheDistroWithoutNono()
@@ -26,7 +26,7 @@ public sealed class ShellTestRunnerWslRouteTests
         var launch = ShellTestRunner.ResolveLaunch("dotnet test", Root, loginShell: false, SandboxHost.Windows(Context));
 
         Assert.Equal(WslExe, launch.FileName);
-        Assert.Equal(new[] { "-d", "Ubuntu", "--exec", "/bin/sh", "-c", WslLauncher.Envelope, "vr" }, launch.Arguments.Take(7));
+        Assert.Equal(new[] { "-d", "VrNoSuchDistro", "--exec", "/bin/sh", "-c", WslLauncher.Envelope, "vr" }, launch.Arguments.Take(7));
         Assert.EndsWith("-bootstrap.pid", launch.Arguments[7]);
         Assert.Equal(new[] { "/home/alice/repo", "env", "/bin/sh", "-c", "dotnet test" }, launch.Arguments.Skip(8));
         Assert.DoesNotContain("nono", launch.Arguments);

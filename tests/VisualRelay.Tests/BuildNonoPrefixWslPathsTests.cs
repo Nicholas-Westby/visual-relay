@@ -76,7 +76,7 @@ public sealed class BuildNonoPrefixWslPathsTests
     }
 
     [Theory]
-    [InlineData(@"\\wsl.localhost\Debian\home\alice\.npm")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchOtherDistro\home\alice\.npm")]
     [InlineData(@"relative\dir")]
     [InlineData("")]
     public void MapGrant_OnTheWslHost_HasNoAnswerForAPathTheDistroCannotReach(string path)

@@ -151,13 +151,13 @@ public sealed class WslTreeCopyScriptTests : IDisposable
     [Fact]
     public void Launch_RunsTheScriptInTheDistroWithEveryNameAsItsOwnArgument()
     {
-        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u");
+        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/bin/nono", "/home/u");
 
         var launch = WslTreeCopy.IgnoredEntries(context, "/home/u/repo", "/home/u/.cache/wt/x", 64L * 1024 * 1024, ["a b", "c"]);
 
         Assert.Equal(context.WslExePath, launch.FileName);
         Assert.Equal(
-            ["-d", "Ubuntu", "--exec", "/bin/sh", "-c", WslTreeCopy.IgnoredEntriesScript, "vr-overlay",
+            ["-d", "VrNoSuchDistro", "--exec", "/bin/sh", "-c", WslTreeCopy.IgnoredEntriesScript, "vr-overlay",
              "/home/u/repo", "/home/u/.cache/wt/x", "65536", "256", "a b", "c"],
             launch.Arguments);
     }
@@ -165,20 +165,20 @@ public sealed class WslTreeCopyScriptTests : IDisposable
     [Fact]
     public void InDistro_BothPathsInTheResolvedDistro_AreTheirLinuxPaths()
     {
-        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u");
+        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/bin/nono", "/home/u");
 
         var paths = WslTreeCopy.InDistro(SandboxHost.Windows(context),
-            @"\\wsl.localhost\Ubuntu\home\u\FreshRSS", @"\\wsl.localhost\Ubuntu\home\u\.cache\visual-relay\wt\x");
+            @"\\wsl.localhost\VrNoSuchDistro\home\u\FreshRSS", @"\\wsl.localhost\VrNoSuchDistro\home\u\.cache\visual-relay\wt\x");
 
         Assert.Equal((context, "/home/u/FreshRSS", "/home/u/.cache/visual-relay/wt/x"), paths);
     }
 
     [Theory]
-    [InlineData(@"\\wsl.localhost\Debian\home\u\repo", @"\\wsl.localhost\Ubuntu\home\u\wt")]
-    [InlineData(@"C:\repo", @"\\wsl.localhost\Ubuntu\home\u\wt")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchOtherDistro\home\u\repo", @"\\wsl.localhost\VrNoSuchDistro\home\u\wt")]
+    [InlineData(@"C:\repo", @"\\wsl.localhost\VrNoSuchDistro\home\u\wt")]
     public void InDistro_APathOutsideTheResolvedDistro_KeepsTheAppSideCopy(string source, string dest)
     {
-        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u");
+        var context = new WslContext(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/bin/nono", "/home/u");
 
         Assert.Null(WslTreeCopy.InDistro(SandboxHost.Windows(context), source, dest));
         Assert.Null(WslTreeCopy.InDistro(SandboxHost.Local, "/home/u/repo", "/home/u/wt"));

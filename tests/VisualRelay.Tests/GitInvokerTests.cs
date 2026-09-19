@@ -195,7 +195,7 @@ public sealed class GitInvokerTests
     // ── WSL routing: decided inside the invoker, never at a call site ──
 
     private static readonly WslContext Wsl =
-        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        new(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     [Fact]
     public async Task RunAsync_UncRoot_RunsGitInsideTheDistroThroughTheInjectedRunner()
@@ -204,7 +204,7 @@ public sealed class GitInvokerTests
         var invoker = new GitInvoker(Wsl, (launch, _) => { launches.Add(launch); return Task.FromResult((0, "M x.txt", false)); });
 
         var result = await invoker.RunAsync(
-            @"\\wsl.localhost\Ubuntu\home\alice\repo", ["status", "--porcelain"], CancellationToken.None,
+            @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", ["status", "--porcelain"], CancellationToken.None,
             environment: new Dictionary<string, string> { ["RELAY_COMMIT_TOKEN"] = "t" });
 
         Assert.Equal((0, "M x.txt", false), result);
@@ -212,7 +212,7 @@ public sealed class GitInvokerTests
         Assert.Equal(Wsl.WslExePath, launch.FileName);
         string[] expected =
         [
-            "-d", "Ubuntu", "--exec", "env", "RELAY_COMMIT_TOKEN=t",
+            "-d", "VrNoSuchDistro", "--exec", "env", "RELAY_COMMIT_TOKEN=t",
             "git", "-C", "/home/alice/repo", "status", "--porcelain",
         ];
         Assert.Equal(expected, launch.Arguments);
@@ -227,7 +227,7 @@ public sealed class GitInvokerTests
         await invoker.RunAsync("/home/alice/repo", ["log", "-1"], CancellationToken.None);
 
         var launch = Assert.Single(launches);
-        string[] expected = ["-d", "Ubuntu", "--exec", "git", "-C", "/home/alice/repo", "log", "-1"];
+        string[] expected = ["-d", "VrNoSuchDistro", "--exec", "git", "-C", "/home/alice/repo", "log", "-1"];
         Assert.Equal(expected, launch.Arguments);
     }
 
@@ -246,12 +246,12 @@ public sealed class GitInvokerTests
             (launch, _) => { launches.Add(launch); return Task.FromResult((0, "", false)); });
 
         await invoker.RunAsync(
-            @"\\wsl.localhost\Ubuntu\home\alice\repo", ["commit", "-m", "x"], CancellationToken.None,
+            @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", ["commit", "-m", "x"], CancellationToken.None,
             environment: new Dictionary<string, string> { ["RELAY_COMMIT_TOKEN"] = "t" });
 
         string[] expected =
         [
-            "-d", "Ubuntu", "--exec", "env", "RELAY_COMMIT_TOKEN=t", $"PATH={loginPath}",
+            "-d", "VrNoSuchDistro", "--exec", "env", "RELAY_COMMIT_TOKEN=t", $"PATH={loginPath}",
             "git", "-C", "/home/alice/repo", "commit", "-m", "x",
         ];
         Assert.Equal(expected, Assert.Single(launches).Arguments);

@@ -43,7 +43,7 @@ public sealed class GitIdentityGateTests
     public async Task IdentityMissingInsideWsl_SaysTheFixGoesInsideTheDistro()
     {
         var refusal = await GitIdentityGate.CheckAsync(
-            @"\\wsl.localhost\Ubuntu\home\u\repo", new ScriptedGit(128, "Author identity unknown\n"), insideWsl: true);
+            @"\\wsl.localhost\VrNoSuchDistro\home\u\repo", new ScriptedGit(128, "Author identity unknown\n"), insideWsl: true);
 
         Assert.Contains("inside the WSL distro", refusal);
     }

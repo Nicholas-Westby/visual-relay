@@ -14,10 +14,10 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class WorktreeNamespaceTests
 {
-    private const string UncRoot = @"\\wsl.localhost\Ubuntu\home\alice\repo";
+    private const string UncRoot = @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo";
 
     private static readonly SandboxHost WindowsHost = SandboxHost.Windows(
-        new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice"));
+        new WslContext(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice"));
 
     [Fact]
     public void WindowsHost_UncRoot_PutsTheWorktreeInsideTheDistro()
@@ -29,8 +29,8 @@ public sealed class WorktreeNamespaceTests
         Assert.StartsWith("/home/alice/.cache/visual-relay/wt/", worktree.Git, StringComparison.Ordinal);
         Assert.EndsWith("/run-1/task-a", worktree.Git, StringComparison.Ordinal);
         // The same directory, named as .NET opens it.
-        Assert.Equal(WslPath.ToUnc("Ubuntu", worktree.Git), worktree.Io);
-        Assert.StartsWith(@"\\wsl.localhost\Ubuntu\home\alice\.cache\", worktree.Io, StringComparison.Ordinal);
+        Assert.Equal(WslPath.ToUnc("VrNoSuchDistro", worktree.Git), worktree.Io);
+        Assert.StartsWith(@"\\wsl.localhost\VrNoSuchDistro\home\alice\.cache\", worktree.Io, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public sealed class WorktreeNamespaceTests
         var index = WorktreeNamespace.TempIndexFor(UncRoot, WindowsHost).Child("git-index-abc");
 
         Assert.Equal("/tmp/visual-relay/git-index-abc", index.Git);
-        Assert.Equal(@"\\wsl.localhost\Ubuntu\tmp\visual-relay\git-index-abc", index.Io);
+        Assert.Equal(@"\\wsl.localhost\VrNoSuchDistro\tmp\visual-relay\git-index-abc", index.Io);
     }
 
     /// <summary>
@@ -89,7 +89,7 @@ public sealed class WorktreeNamespaceTests
         var windows = WorktreeNamespace.TempFileFor(UncRoot, WindowsHost, "conform-msg-abc.txt");
 
         Assert.Equal("/tmp/visual-relay/conform-msg-abc.txt", windows.Git);
-        Assert.Equal(@"\\wsl.localhost\Ubuntu\tmp\visual-relay\conform-msg-abc.txt", windows.Io);
+        Assert.Equal(@"\\wsl.localhost\VrNoSuchDistro\tmp\visual-relay\conform-msg-abc.txt", windows.Io);
 
         var local = WorktreeNamespace.TempFileFor(
             Path.Combine(Path.GetTempPath(), "vr-repo"), SandboxHost.Local, "conform-msg-abc.txt");
@@ -119,7 +119,7 @@ public sealed class WorktreeNamespaceTests
     [Fact]
     public void ForGit_TranslatesAUncWorktreePath_OnlyOnTheWindowsHost()
     {
-        const string unc = @"\\wsl.localhost\Ubuntu\home\alice\.cache\visual-relay\wt\abc123\run\task";
+        const string unc = @"\\wsl.localhost\VrNoSuchDistro\home\alice\.cache\visual-relay\wt\abc123\run\task";
 
         Assert.Equal(
             "/home/alice/.cache/visual-relay/wt/abc123/run/task", WorktreeNamespace.ForGit(unc, WindowsHost));

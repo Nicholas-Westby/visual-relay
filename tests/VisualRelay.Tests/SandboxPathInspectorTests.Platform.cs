@@ -15,10 +15,10 @@ namespace VisualRelay.Tests;
 public sealed partial class SandboxPathInspectorTests
 {
     private static readonly WslContext Wsl =
-        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        new(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     private const string LinuxProfile = "/home/alice/.config/visual-relay/vr-guard.json";
-    private const string UncWorkspace = @"\\wsl.localhost\Ubuntu\home\alice\repo";
+    private const string UncWorkspace = @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo";
 
     [Theory]
     [InlineData(SandboxPlatform.Linux, "$XDG_CACHE_HOME/NuGet", "~/Library/Caches/NuGet")]
@@ -94,9 +94,9 @@ public sealed partial class SandboxPathInspectorTests
         Assert.True(result.IsAvailable);
         Assert.All(launches, launch => Assert.Equal(Wsl.WslExePath, launch.FileName));
         Assert.All(launches, launch => Assert.Equal(WslExeEnvironment.Variables, launch.Environment));
-        string[] show = ["-d", "Ubuntu", "--exec", "/usr/local/bin/nono", "profile", "show", LinuxProfile, "--json"];
+        string[] show = ["-d", "VrNoSuchDistro", "--exec", "/usr/local/bin/nono", "profile", "show", LinuxProfile, "--json"];
         Assert.Equal(show, launches[0].Arguments);
-        string[] group = ["-d", "Ubuntu", "--exec", "/usr/local/bin/nono", "profile", "groups", "deny_credentials", "--json"];
+        string[] group = ["-d", "VrNoSuchDistro", "--exec", "/usr/local/bin/nono", "profile", "groups", "deny_credentials", "--json"];
         Assert.Contains(launches, launch => launch.Arguments.SequenceEqual(group));
         // The enforced platform is Linux, and ~ is the distro user's home.
         Assert.Contains(result.BlockedPaths, e => e.Source == "deny_keychains_linux");

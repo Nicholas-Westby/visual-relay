@@ -13,7 +13,7 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class HookInstallerWslTests
 {
-    private const string UncHook = @"\\wsl.localhost\Ubuntu\home\alice\repo\.git\hooks\pre-commit";
+    private const string UncHook = @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo\.git\hooks\pre-commit";
     private const string LinuxHook = "/home/alice/repo/.git/hooks/pre-commit";
 
     [Fact]
@@ -22,7 +22,7 @@ public sealed class HookInstallerWslTests
         var launch = HookInstaller.WslChmodLaunch(UncHook);
 
         Assert.NotNull(launch);
-        string[] expected = ["-d", "Ubuntu", "--exec", "chmod", "+x", LinuxHook];
+        string[] expected = ["-d", "VrNoSuchDistro", "--exec", "chmod", "+x", LinuxHook];
         Assert.Equal(expected, launch.Arguments);
         Assert.Equal(WslExeEnvironment.Variables, launch.Environment);
     }
@@ -55,7 +55,7 @@ public sealed class HookInstallerWslTests
         Assert.NotNull(warning);
         Assert.Contains("chmod", warning);
         Assert.Contains("cannot access", warning);
-        Assert.Contains("Ubuntu", warning);
+        Assert.Contains("VrNoSuchDistro", warning);
         Assert.Contains("not be active", warning);
     }
 

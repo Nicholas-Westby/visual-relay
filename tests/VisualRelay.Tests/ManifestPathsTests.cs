@@ -55,7 +55,7 @@ public sealed class ManifestPathsTests
     public void TryResolve_ADistroPathUnderAUncRoot_IsMadeRelative()
     {
         Assert.True(ManifestPaths.TryResolve(
-            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            @"\\wsl.localhost\VrNoSuchDistro\home\enjay\repo",
             "/home/enjay/repo/src/x.rs",
             out var repoRelative,
             out var rejection));
@@ -68,8 +68,8 @@ public sealed class ManifestPathsTests
     public void TryResolve_AUncPathUnderAUncRoot_IsMadeRelative()
     {
         Assert.True(ManifestPaths.TryResolve(
-            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
-            @"\\wsl.localhost\Ubuntu\home\enjay\repo\src\x.rs",
+            @"\\wsl.localhost\VrNoSuchDistro\home\enjay\repo",
+            @"\\wsl.localhost\VrNoSuchDistro\home\enjay\repo\src\x.rs",
             out var repoRelative,
             out _));
 
@@ -80,7 +80,7 @@ public sealed class ManifestPathsTests
     public void TryResolve_ADistroPathOutsideAUncRoot_IsStillRejected()
     {
         Assert.False(ManifestPaths.TryResolve(
-            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            @"\\wsl.localhost\VrNoSuchDistro\home\enjay\repo",
             "/home/enjay/other/x.rs",
             out _,
             out var rejection));
@@ -98,7 +98,7 @@ public sealed class ManifestPathsTests
     public void TryResolve_ADrvFsPathUnderAUncRoot_IsRejected()
     {
         Assert.False(ManifestPaths.TryResolve(
-            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            @"\\wsl.localhost\VrNoSuchDistro\home\enjay\repo",
             "/mnt/c/dev/elsewhere/x.cs",
             out _,
             out var rejection));
@@ -117,7 +117,7 @@ public sealed class ManifestPathsTests
     public void TryResolve_ADotDotEscapeFromTheDistroSpelling_IsRejected()
     {
         Assert.False(ManifestPaths.TryResolve(
-            @"\\wsl.localhost\Ubuntu\home\enjay\repo",
+            @"\\wsl.localhost\VrNoSuchDistro\home\enjay\repo",
             "/home/enjay/repo/../.ssh/id_rsa",
             out _,
             out var rejection));

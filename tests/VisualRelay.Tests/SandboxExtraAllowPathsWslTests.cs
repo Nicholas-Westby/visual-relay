@@ -13,20 +13,20 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class SandboxExtraAllowPathsWslTests
 {
-    private static readonly WslContext Ubuntu = new("wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/enjay");
+    private static readonly WslContext VrNoSuchDistro = new("wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/enjay");
 
     [Theory]
     [InlineData("/home/enjay/.nuget/NuGet", "/home/enjay/.nuget/NuGet")]
     [InlineData("~/.nuget/NuGet", "/home/enjay/.nuget/NuGet")]
     [InlineData("$HOME/.nuget/NuGet", "/home/enjay/.nuget/NuGet")]
-    [InlineData(@"\\wsl.localhost\Ubuntu\home\enjay\.cache\tool", "/home/enjay/.cache/tool")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\enjay\.cache\tool", "/home/enjay/.cache/tool")]
     [InlineData("/home/enjay//.m2/./repository/", "/home/enjay/.m2/repository")]
     public async Task AnEntryUnderTheDistroHome_IsGrantedInItsLinuxForm(string entry, string expected)
     {
         using var repo = TestRepository.Create();
         await WriteConfigAsync(repo, entry);
 
-        var result = await LoadInDistroAsync(repo, Ubuntu);
+        var result = await LoadInDistroAsync(repo, VrNoSuchDistro);
 
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.Equal([expected], result.Config.SandboxExtraAllowPaths!);
@@ -36,7 +36,7 @@ public sealed class SandboxExtraAllowPathsWslTests
     [InlineData("/etc/nuget")]
     [InlineData("/home/other/.nuget")]
     [InlineData("/home/enjay-other/.nuget")]
-    [InlineData(@"\\wsl.localhost\Debian\home\enjay\.cache")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchOtherDistro\home\enjay\.cache")]
     [InlineData(@"C:\Users\enjay\.nuget")]
     [InlineData("~/.ssh")]
     [InlineData("/home/enjay/.aws/credentials")]
@@ -46,7 +46,7 @@ public sealed class SandboxExtraAllowPathsWslTests
         using var repo = TestRepository.Create();
         await WriteConfigAsync(repo, entry);
 
-        var result = await LoadInDistroAsync(repo, Ubuntu);
+        var result = await LoadInDistroAsync(repo, VrNoSuchDistro);
 
         Assert.Equal(RelayConfigStatus.Malformed, result.Status);
         Assert.Contains("sandboxExtraAllowPaths", result.Diagnostic, StringComparison.Ordinal);
@@ -58,7 +58,7 @@ public sealed class SandboxExtraAllowPathsWslTests
         using var repo = TestRepository.Create();
         await WriteConfigAsync(repo, "/opt/tool");
 
-        var result = await LoadInDistroAsync(repo, Ubuntu);
+        var result = await LoadInDistroAsync(repo, VrNoSuchDistro);
 
         Assert.Contains("/home/enjay", result.Diagnostic, StringComparison.Ordinal);
     }
@@ -70,10 +70,10 @@ public sealed class SandboxExtraAllowPathsWslTests
         var entry = Path.Combine(repo.Root, "build-cache");
         await WriteConfigAsync(repo, entry);
 
-        var result = await LoadInDistroAsync(repo, Ubuntu);
+        var result = await LoadInDistroAsync(repo, VrNoSuchDistro);
 
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
-        Assert.Equal([SandboxHost.Windows(Ubuntu).MapGrant(entry)!], result.Config.SandboxExtraAllowPaths!);
+        Assert.Equal([SandboxHost.Windows(VrNoSuchDistro).MapGrant(entry)!], result.Config.SandboxExtraAllowPaths!);
     }
 
     [Fact]

@@ -12,12 +12,12 @@ namespace VisualRelay.Tests;
 public sealed class GitRoutingTests
 {
     private static readonly WslContext Context =
-        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        new(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     [Theory]
-    [InlineData(@"\\wsl$\Debian\home\u\my repo", "Debian", "/home/u/my repo")]
-    [InlineData(@"\\wsl.localhost\Ubuntu\home\u\répo", "Ubuntu", "/home/u/répo")]
-    [InlineData("//wsl.localhost/Ubuntu/home/u/repo/", "Ubuntu", "/home/u/repo")]
+    [InlineData(@"\\wsl$\VrNoSuchOtherDistro\home\u\my repo", "VrNoSuchOtherDistro", "/home/u/my repo")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\u\répo", "VrNoSuchDistro", "/home/u/répo")]
+    [InlineData("//wsl.localhost/VrNoSuchDistro/home/u/repo/", "VrNoSuchDistro", "/home/u/repo")]
     public void Decide_UncRoot_RunsInTheDistroThePathNames(string root, string distro, string linuxRoot)
     {
         var expected = new GitRoute.Wsl(distro, linuxRoot);
@@ -29,7 +29,7 @@ public sealed class GitRoutingTests
 
     [Fact]
     public void Decide_LinuxRoot_WithAContext_RunsInTheContextDistro() =>
-        Assert.Equal(new GitRoute.Wsl("Ubuntu", "/home/alice/repo"), GitRouting.Decide("/home/alice/repo", Context));
+        Assert.Equal(new GitRoute.Wsl("VrNoSuchDistro", "/home/alice/repo"), GitRouting.Decide("/home/alice/repo", Context));
 
     [Fact]
     public void Decide_LinuxRoot_WithoutAContext_IsNative() =>
@@ -47,12 +47,12 @@ public sealed class GitRoutingTests
     [Fact]
     public void Launch_RunsGitAgainstTheLinuxRootThroughAPlainExec()
     {
-        var route = new GitRoute.Wsl("Ubuntu", "/home/alice/my repo");
+        var route = new GitRoute.Wsl("VrNoSuchDistro", "/home/alice/my repo");
 
         var launch = GitRouting.Launch(route, Context.WslExePath, ["status", "--porcelain"], null);
 
         Assert.Equal(Context.WslExePath, launch.FileName);
-        string[] expected = ["-d", "Ubuntu", "--exec", "git", "-C", "/home/alice/my repo", "status", "--porcelain"];
+        string[] expected = ["-d", "VrNoSuchDistro", "--exec", "git", "-C", "/home/alice/my repo", "status", "--porcelain"];
         Assert.Equal(expected, launch.Arguments);
         Assert.Equal(WslExeEnvironment.Variables, launch.Environment);
     }
@@ -68,11 +68,11 @@ public sealed class GitRoutingTests
             ["RELAY_NONCE"] = "abc 123",
         };
 
-        var launch = GitRouting.Launch(new GitRoute.Wsl("Ubuntu", "/home/alice/repo"), "wsl.exe", ["commit", "-m", "x"], environment);
+        var launch = GitRouting.Launch(new GitRoute.Wsl("VrNoSuchDistro", "/home/alice/repo"), "wsl.exe", ["commit", "-m", "x"], environment);
 
         string[] expected =
         [
-            "-d", "Ubuntu", "--exec", "env", "RELAY_COMMIT_TOKEN=abc 123", "RELAY_NONCE=abc 123",
+            "-d", "VrNoSuchDistro", "--exec", "env", "RELAY_COMMIT_TOKEN=abc 123", "RELAY_NONCE=abc 123",
             "git", "-C", "/home/alice/repo", "commit", "-m", "x",
         ];
         Assert.Equal(expected, launch.Arguments);
@@ -82,7 +82,7 @@ public sealed class GitRoutingTests
     public void Launch_EmptyEnvironment_AddsNoEnvPrefix()
     {
         var launch = GitRouting.Launch(
-            new GitRoute.Wsl("Ubuntu", "/home/alice/repo"), "wsl.exe", ["log"], new Dictionary<string, string>());
+            new GitRoute.Wsl("VrNoSuchDistro", "/home/alice/repo"), "wsl.exe", ["log"], new Dictionary<string, string>());
 
         Assert.Equal("git", launch.Arguments[3]);
     }
@@ -95,7 +95,7 @@ public sealed class GitRoutingTests
         var environment = new Dictionary<string, string> { [name] = "v" };
 
         Assert.Throws<ArgumentException>(() =>
-            GitRouting.Launch(new GitRoute.Wsl("Ubuntu", "/r"), "wsl.exe", ["status"], environment));
+            GitRouting.Launch(new GitRoute.Wsl("VrNoSuchDistro", "/r"), "wsl.exe", ["status"], environment));
     }
 
     [Fact]

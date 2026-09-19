@@ -99,9 +99,9 @@ public sealed class SandboxedTestRunnerWslLaunchTests
         var sut = new SandboxedTestRunner(new ShellTestRunner(), TestConfig(), host: Host);
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => sut.ResolveLaunch("go test ./...", @"\\wsl.localhost\Debian\home\alice\repo"));
+            () => sut.ResolveLaunch("go test ./...", @"\\wsl.localhost\VrNoSuchOtherDistro\home\alice\repo"));
 
-        Assert.Contains("'Debian'", ex.Message);
+        Assert.Contains("'VrNoSuchOtherDistro'", ex.Message);
         Assert.Contains("'VrNoSuchDistro'", ex.Message);
         Assert.Contains("VR_WSL_DISTRO", ex.Message);
     }

@@ -4,7 +4,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Pure path translation between the Windows view of a WSL distro
-/// (<c>\\wsl$\D\...</c> and <c>\\wsl.localhost\D\...</c>), the Linux path VR hands
+/// (<c>\\wsl$\VrNoSuchD\...</c> and <c>\\wsl.localhost\VrNoSuchD\...</c>), the Linux path VR hands
 /// to <c>wsl.exe</c>, and the DrvFs mount a Windows drive appears under inside the
 /// distro. One place, both directions, spaces and non-ASCII preserved verbatim.
 /// </summary>
@@ -13,16 +13,16 @@ public sealed class WslPathTests
     // ── UNC → (distro, linux path) ────────────────────────────────────────
 
     [Theory]
-    [InlineData(@"\\wsl$\Ubuntu\home\u\repo", "Ubuntu", "/home/u/repo")]
-    [InlineData(@"\\wsl.localhost\Ubuntu\home\u\repo", "Ubuntu", "/home/u/repo")]
-    [InlineData(@"\\WSL.LOCALHOST\Ubuntu-22.04\home\u\repo", "Ubuntu-22.04", "/home/u/repo")]
-    [InlineData(@"\\wsl$\D\a b\ü", "D", "/a b/ü")]
-    [InlineData(@"\\wsl.localhost\D\a b\ü", "D", "/a b/ü")]
-    [InlineData(@"\\wsl.localhost\D\a b\ü\", "D", "/a b/ü")]
-    [InlineData("//wsl$/D/a b/ü", "D", "/a b/ü")]
-    [InlineData(@"\\wsl$\D/a b\ü//", "D", "/a b/ü")]
-    [InlineData(@"\\wsl$\D", "D", "/")]
-    [InlineData(@"\\wsl$\D\", "D", "/")]
+    [InlineData(@"\\wsl$\VrNoSuchDistro\home\u\repo", "VrNoSuchDistro", "/home/u/repo")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\u\repo", "VrNoSuchDistro", "/home/u/repo")]
+    [InlineData(@"\\WSL.LOCALHOST\VrNoSuchDistro-22.04\home\u\repo", "VrNoSuchDistro-22.04", "/home/u/repo")]
+    [InlineData(@"\\wsl$\VrNoSuchD\a b\ü", "VrNoSuchD", "/a b/ü")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchD\a b\ü", "VrNoSuchD", "/a b/ü")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchD\a b\ü\", "VrNoSuchD", "/a b/ü")]
+    [InlineData("//wsl$/VrNoSuchD/a b/ü", "VrNoSuchD", "/a b/ü")]
+    [InlineData(@"\\wsl$\VrNoSuchD/a b\ü//", "VrNoSuchD", "/a b/ü")]
+    [InlineData(@"\\wsl$\VrNoSuchD", "VrNoSuchD", "/")]
+    [InlineData(@"\\wsl$\VrNoSuchD\", "VrNoSuchD", "/")]
     public void TryParseUnc_AcceptsBothPrefixes_SpacesNonAsciiAndEitherSlash(
         string path, string distro, string linux)
     {
@@ -40,8 +40,8 @@ public sealed class WslPathTests
     [InlineData(@"\\wsl$")]
     [InlineData(@"\\wsl$\")]
     [InlineData(@"\\wsl$\\x")]
-    [InlineData(@"\\wsl$\D\a\..\b")]
-    [InlineData(@"\\wsl.localhost\D\..")]
+    [InlineData(@"\\wsl$\VrNoSuchD\a\..\b")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchD\..")]
     [InlineData(@"\\wsl$\..\x")]
     public void TryParseUnc_RejectsRelativePathsEmptyDistroAndDotDot(string path)
     {
@@ -55,14 +55,14 @@ public sealed class WslPathTests
     [Fact]
     public void ToUnc_UsesTheLocalhostFormWithBackslashes()
     {
-        Assert.Equal(@"\\wsl.localhost\D\a b\ü", WslPath.ToUnc("D", "/a b/ü"));
+        Assert.Equal(@"\\wsl.localhost\VrNoSuchD\a b\ü", WslPath.ToUnc("VrNoSuchD", "/a b/ü"));
     }
 
     [Fact]
     public void ToUnc_DistroRootAndTrailingSlash_HaveNoTrailingSeparator()
     {
-        Assert.Equal(@"\\wsl.localhost\D", WslPath.ToUnc("D", "/"));
-        Assert.Equal(@"\\wsl.localhost\D\x", WslPath.ToUnc("D", "/x/"));
+        Assert.Equal(@"\\wsl.localhost\VrNoSuchD", WslPath.ToUnc("VrNoSuchD", "/"));
+        Assert.Equal(@"\\wsl.localhost\VrNoSuchD\x", WslPath.ToUnc("VrNoSuchD", "/x/"));
     }
 
     [Theory]
@@ -71,7 +71,7 @@ public sealed class WslPathTests
     [InlineData("/a/../b")]
     public void ToUnc_RejectsRelativeOrDotDotLinuxPaths(string linux)
     {
-        Assert.Throws<ArgumentException>(() => WslPath.ToUnc("D", linux));
+        Assert.Throws<ArgumentException>(() => WslPath.ToUnc("VrNoSuchD", linux));
     }
 
     [Fact]
@@ -86,12 +86,12 @@ public sealed class WslPathTests
         // The folder picker may hand back the legacy \\wsl$ form; VR stores the
         // Linux path and re-renders the modern \\wsl.localhost form, and parsing
         // that again must land on the same facts.
-        const string picked = @"\\wsl$\Ubuntu\home\alice\my repo\ü";
+        const string picked = @"\\wsl$\VrNoSuchDistro\home\alice\my repo\ü";
         Assert.True(WslPath.TryParseUnc(picked, out var distro, out var linux));
 
         var unc = WslPath.ToUnc(distro, linux);
 
-        Assert.Equal(@"\\wsl.localhost\Ubuntu\home\alice\my repo\ü", unc);
+        Assert.Equal(@"\\wsl.localhost\VrNoSuchDistro\home\alice\my repo\ü", unc);
         Assert.True(WslPath.TryParseUnc(unc, out var distro2, out var linux2));
         Assert.Equal((distro, linux), (distro2, linux2));
     }
@@ -117,7 +117,7 @@ public sealed class WslPathTests
     [InlineData("C:")]
     [InlineData(@"\x")]
     [InlineData("/home/u")]
-    [InlineData(@"\\wsl$\D\x")]
+    [InlineData(@"\\wsl$\VrNoSuchD\x")]
     [InlineData(@"\\server\share")]
     [InlineData(@"1:\x")]
     public void TryDriveToMnt_RejectsRelativeAndUncPaths(string windows)

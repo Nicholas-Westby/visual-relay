@@ -132,17 +132,17 @@ public sealed partial class MainWindowViewModelTests
         var viewModel = new MainWindowViewModel
         {
             // The workspace path names one distro; the resolved host is another.
-            RootPath = @"\\wsl.localhost\Ubuntu\home\alice\repo",
+            RootPath = @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo",
             IsHuggingFaceConfigured = true,
             SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(
-                new WslContext(@"C:\Windows\System32\wsl.exe", "Debian", "/usr/bin/nono", "/home/alice"))),
+                new WslContext(@"C:\Windows\System32\wsl.exe", "VrNoSuchOtherDistro", "/usr/bin/nono", "/home/alice"))),
         };
 
         var runnable = await viewModel.EnsureRunnableAsync(pendingTaskId: null);
 
         Assert.False(runnable);
-        Assert.Contains("'Ubuntu'", viewModel.StatusText, StringComparison.Ordinal);
-        Assert.Contains("'Debian'", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("'VrNoSuchDistro'", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("'VrNoSuchOtherDistro'", viewModel.StatusText, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -189,7 +189,7 @@ public sealed partial class MainWindowViewModelTests
             IsHuggingFaceConfigured = true,
             // A resolved distro satisfies the tool gate on any OS (a local host on Windows has no nono).
             SandboxHostResolver = () => Task.FromResult(SandboxHost.Windows(
-                new WslContext(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/bin/nono", "/home/u"))),
+                new WslContext(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/bin/nono", "/home/u"))),
             GitIdentityCheck = (root, insideWsl) =>
             {
                 asked = (root, insideWsl);

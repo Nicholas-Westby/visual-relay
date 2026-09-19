@@ -12,7 +12,7 @@ namespace VisualRelay.Tests;
 public sealed class NonoProfileEnsurerWslTests
 {
     private static readonly WslContext Context =
-        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        new(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     [Fact]
     public async Task EnsureInDistro_WritesTheEmbeddedProfileThroughTheShareAndReturnsTheLinuxPath()
@@ -25,7 +25,7 @@ public sealed class NonoProfileEnsurerWslTests
 
         Assert.Equal("/home/alice/.config/visual-relay/vr-guard.json", linuxPath);
         var write = Assert.Single(writes);
-        Assert.Equal(@"\\wsl.localhost\Ubuntu\home\alice\.config\visual-relay\vr-guard.json", write.Path);
+        Assert.Equal(@"\\wsl.localhost\VrNoSuchDistro\home\alice\.config\visual-relay\vr-guard.json", write.Path);
         Assert.Equal(NonoProfileEnsurer.EmbeddedContent, write.Content);
     }
 
@@ -104,8 +104,8 @@ public sealed class NonoProfileEnsurerWslTests
 
         Assert.Contains("[automount]", ex.Message);
         Assert.Contains("wsl.conf", ex.Message);
-        Assert.Contains(@"\\wsl.localhost\Ubuntu\home\alice\.config\visual-relay\vr-guard.json", ex.Message);
-        Assert.Contains("'Ubuntu'", ex.Message);
+        Assert.Contains(@"\\wsl.localhost\VrNoSuchDistro\home\alice\.config\visual-relay\vr-guard.json", ex.Message);
+        Assert.Contains("'VrNoSuchDistro'", ex.Message);
         Assert.Contains("The network path was not found.", ex.Message);
         Assert.IsType<IOException>(ex.InnerException);
     }

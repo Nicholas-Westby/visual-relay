@@ -14,7 +14,7 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class WorktreeNamespaceMismatchTests
 {
-    private const string UbuntuRoot = @"\\wsl.localhost\Ubuntu\home\alice\repo";
+    private const string VrNoSuchDistroRoot = @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo";
 
     private static SandboxHost HostOf(string distro) => SandboxHost.Windows(
         new WslContext(@"C:\Windows\System32\wsl.exe", distro, "/usr/local/bin/nono", "/home/alice"));
@@ -22,34 +22,34 @@ public sealed class WorktreeNamespaceMismatchTests
     [Fact]
     public void ADivergentDistro_IsAMismatchNamingBoth()
     {
-        var reason = WorktreeNamespace.Mismatch(UbuntuRoot, HostOf("Debian"));
+        var reason = WorktreeNamespace.Mismatch(VrNoSuchDistroRoot, HostOf("VrNoSuchOtherDistro"));
 
         Assert.NotNull(reason);
-        Assert.Contains("'Ubuntu'", reason, StringComparison.Ordinal);
-        Assert.Contains("'Debian'", reason, StringComparison.Ordinal);
-        Assert.Contains("VR_WSL_DISTRO=Ubuntu", reason, StringComparison.Ordinal);
+        Assert.Contains("'VrNoSuchDistro'", reason, StringComparison.Ordinal);
+        Assert.Contains("'VrNoSuchOtherDistro'", reason, StringComparison.Ordinal);
+        Assert.Contains("VR_WSL_DISTRO=VrNoSuchDistro", reason, StringComparison.Ordinal);
     }
 
     [Fact]
     public void AUncRootWithNoResolvedDistro_IsAMismatch()
     {
-        var reason = WorktreeNamespace.Mismatch(UbuntuRoot, SandboxHost.Windows(null));
+        var reason = WorktreeNamespace.Mismatch(VrNoSuchDistroRoot, SandboxHost.Windows(null));
 
         Assert.NotNull(reason);
-        Assert.Contains("'Ubuntu'", reason, StringComparison.Ordinal);
+        Assert.Contains("'VrNoSuchDistro'", reason, StringComparison.Ordinal);
     }
 
     [Fact]
     public void TheMatchingDistro_IsNoMismatch()
     {
-        Assert.Null(WorktreeNamespace.Mismatch(UbuntuRoot, HostOf("Ubuntu")));
+        Assert.Null(WorktreeNamespace.Mismatch(VrNoSuchDistroRoot, HostOf("VrNoSuchDistro")));
     }
 
     /// <summary>A drive root is served by Git for Windows and refused by the workspace policy.</summary>
     [Fact]
     public void ADriveRoot_IsNoMismatch()
     {
-        Assert.Null(WorktreeNamespace.Mismatch(@"C:\dev\repo", HostOf("Ubuntu")));
+        Assert.Null(WorktreeNamespace.Mismatch(@"C:\dev\repo", HostOf("VrNoSuchDistro")));
     }
 
     [Fact]
@@ -66,9 +66,9 @@ public sealed class WorktreeNamespaceMismatchTests
     public void ADivergentDistro_RefusesToNameAWorktree()
     {
         var refusal = Assert.Throws<InvalidOperationException>(
-            () => WorktreeNamespace.For(UbuntuRoot, HostOf("Debian")));
+            () => WorktreeNamespace.For(VrNoSuchDistroRoot, HostOf("VrNoSuchOtherDistro")));
 
-        Assert.Contains("'Ubuntu'", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("'VrNoSuchDistro'", refusal.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(Path.GetTempPath(), refusal.Message, StringComparison.Ordinal);
     }
 
@@ -76,23 +76,23 @@ public sealed class WorktreeNamespaceMismatchTests
     public void ADivergentDistro_RefusesToNameATempIndex()
     {
         Assert.Throws<InvalidOperationException>(
-            () => WorktreeNamespace.TempIndexFor(UbuntuRoot, HostOf("Debian")));
+            () => WorktreeNamespace.TempIndexFor(VrNoSuchDistroRoot, HostOf("VrNoSuchOtherDistro")));
     }
 
     [Fact]
     public void AUncRootWithNoResolvedDistro_RefusesToNameAWorktree()
     {
         Assert.Throws<InvalidOperationException>(
-            () => WorktreeNamespace.For(UbuntuRoot, SandboxHost.Windows(null)));
+            () => WorktreeNamespace.For(VrNoSuchDistroRoot, SandboxHost.Windows(null)));
     }
 
     /// <summary>The matching case keeps working: the refusal must not become a blanket one.</summary>
     [Fact]
     public void TheMatchingDistro_StillNamesTheWorktreeInsideIt()
     {
-        var worktree = WorktreeNamespace.For(UbuntuRoot, HostOf("Ubuntu"));
+        var worktree = WorktreeNamespace.For(VrNoSuchDistroRoot, HostOf("VrNoSuchDistro"));
 
-        Assert.Equal("Ubuntu", worktree.Distro);
+        Assert.Equal("VrNoSuchDistro", worktree.Distro);
         Assert.StartsWith("/home/alice/.cache/visual-relay", worktree.Git, StringComparison.Ordinal);
     }
 }

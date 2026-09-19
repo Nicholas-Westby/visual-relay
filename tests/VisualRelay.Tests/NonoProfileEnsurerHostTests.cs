@@ -15,10 +15,10 @@ namespace VisualRelay.Tests;
 public sealed class NonoProfileEnsurerHostTests
 {
     private static readonly WslContext Context =
-        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        new(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     private const string LinuxPlacement = "/home/alice/.config/visual-relay/vr-guard.json";
-    private const string SharePlacement = @"\\wsl.localhost\Ubuntu\home\alice\.config\visual-relay\vr-guard.json";
+    private const string SharePlacement = @"\\wsl.localhost\VrNoSuchDistro\home\alice\.config\visual-relay\vr-guard.json";
 
     [Fact]
     public async Task EnsureAsync_OnTheWslHost_WritesInsideTheDistro_NeverTheLocalPath()

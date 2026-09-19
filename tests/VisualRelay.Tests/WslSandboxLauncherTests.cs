@@ -11,14 +11,14 @@ namespace VisualRelay.Tests;
 public sealed class WslSandboxLauncherTests
 {
     private static readonly WslContext Context =
-        new(@"C:\Windows\System32\wsl.exe", "Ubuntu", "/usr/local/bin/nono", "/home/alice");
+        new(@"C:\Windows\System32\wsl.exe", "VrNoSuchDistro", "/usr/local/bin/nono", "/home/alice");
 
     private static readonly string[] Prefix = ["/usr/local/bin/nono", "run", "--allow-cwd", "--"];
 
     [Theory]
-    [InlineData(@"\\wsl.localhost\Ubuntu\home\alice\repo", "/home/alice/repo")]
-    [InlineData(@"\\wsl$\Ubuntu\home\alice\my repo\", "/home/alice/my repo")]
-    [InlineData("//wsl.localhost/ubuntu/home/alice/répo", "/home/alice/répo")]
+    [InlineData(@"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", "/home/alice/repo")]
+    [InlineData(@"\\wsl$\VrNoSuchDistro\home\alice\my repo\", "/home/alice/my repo")]
+    [InlineData("//wsl.localhost/vrnosuchdistro/home/alice/répo", "/home/alice/répo")]
     public void ResolveWorkspace_UncRootInTheContextsDistro_IsItsLinuxPath(string root, string expected)
     {
         var (linuxWorkspace, error) = WslSandboxLauncher.ResolveWorkspace(Context, root);
@@ -30,12 +30,12 @@ public sealed class WslSandboxLauncherTests
     [Fact]
     public void ResolveWorkspace_UncRootInAnotherDistro_IsRefusedNamingBothDistrosAndTheSelector()
     {
-        var (linuxWorkspace, error) = WslSandboxLauncher.ResolveWorkspace(Context, @"\\wsl.localhost\Debian\home\alice\repo");
+        var (linuxWorkspace, error) = WslSandboxLauncher.ResolveWorkspace(Context, @"\\wsl.localhost\VrNoSuchOtherDistro\home\alice\repo");
 
         Assert.Null(linuxWorkspace);
-        Assert.Contains("'Debian'", error);
-        Assert.Contains("'Ubuntu'", error);
-        Assert.Contains("VR_WSL_DISTRO=Debian", error);
+        Assert.Contains("'VrNoSuchOtherDistro'", error);
+        Assert.Contains("'VrNoSuchDistro'", error);
+        Assert.Contains("VR_WSL_DISTRO=VrNoSuchOtherDistro", error);
     }
 
     [Fact]
@@ -64,10 +64,10 @@ public sealed class WslSandboxLauncherTests
     public void Build_WrapsTheCommandInTheEnvelopeOnTheLinuxWorkspaceWithAFreshPidFile()
     {
         var (first, error) = WslSandboxLauncher.Build(
-            Context, @"\\wsl.localhost\Ubuntu\home\alice\repo", Prefix, "/bin/sh", ["-c", "go test"],
+            Context, @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", Prefix, "/bin/sh", ["-c", "go test"],
             new Dictionary<string, string> { ["CI"] = "1" }, "verify");
         var (second, _) = WslSandboxLauncher.Build(
-            Context, @"\\wsl.localhost\Ubuntu\home\alice\repo", Prefix, "true", [], null, "verify");
+            Context, @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", Prefix, "true", [], null, "verify");
 
         Assert.Null(error);
         Assert.NotNull(first);
@@ -77,7 +77,7 @@ public sealed class WslSandboxLauncherTests
         Assert.NotEqual(first.PidFile, second!.PidFile);
         Assert.Equal(
             WslLauncher.Build(
-                Context.WslExePath, "Ubuntu", "/home/alice/repo", first.PidFile, Prefix, "/bin/sh", ["-c", "go test"],
+                Context.WslExePath, "VrNoSuchDistro", "/home/alice/repo", first.PidFile, Prefix, "/bin/sh", ["-c", "go test"],
                 new Dictionary<string, string> { ["CI"] = "1" }).Arguments,
             first.Launch.Arguments);
         Assert.Equal(Context.WslExePath, first.Launch.FileName);
@@ -89,7 +89,7 @@ public sealed class WslSandboxLauncherTests
         var context = Context with { UserPath = "/home/alice/.cargo/bin:/usr/bin" };
 
         var (launch, _) = WslSandboxLauncher.Build(
-            context, @"\\wsl.localhost\Ubuntu\home\alice\repo", Prefix, "/bin/sh", ["-c", "cargo test"],
+            context, @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", Prefix, "/bin/sh", ["-c", "cargo test"],
             new Dictionary<string, string> { ["CI"] = "1" }, "verify");
 
         Assert.Contains("PATH=/home/alice/.cargo/bin:/usr/bin", launch!.Launch.Arguments);
@@ -100,7 +100,7 @@ public sealed class WslSandboxLauncherTests
     public void Build_WithoutAUserPath_LeavesPathToWsl()
     {
         var (launch, _) = WslSandboxLauncher.Build(
-            Context, @"\\wsl.localhost\Ubuntu\home\alice\repo", Prefix, "true", [], null, "tool");
+            Context, @"\\wsl.localhost\VrNoSuchDistro\home\alice\repo", Prefix, "true", [], null, "tool");
 
         Assert.DoesNotContain(launch!.Launch.Arguments, a => a.StartsWith("PATH=", StringComparison.Ordinal));
     }
