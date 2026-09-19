@@ -19,6 +19,12 @@ public sealed class WslSetupLog(string path)
 
     public string Path => path;
 
+    /// <summary>True once this run has written a call to the log, so there is something to point at.</summary>
+    public bool HasEntries
+    {
+        get { lock (_gate) { return _started; } }
+    }
+
     /// <summary>The log on this machine: <c>%LOCALAPPDATA%\visual-relay\setup-wsl.log</c> on Windows.</summary>
     public static WslSetupLog ThisMachine() => new(System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "visual-relay", "setup-wsl.log"));

@@ -51,8 +51,8 @@ public static class WslSetupRunner
 
         return new WslSetupOutcome(null);
 
-        WslSetupOutcome Stop(string failure) => new(host.LogPath is { } log
-            ? failure + $"\n\n  Every step's full output is in {log}."
+        WslSetupOutcome Stop(string failure) => new(host.Log is { HasEntries: true } log
+            ? failure + $"\n\n  The full log of this run, every wsl.exe call and what it printed, is {log.Path}."
             : failure);
     }
 

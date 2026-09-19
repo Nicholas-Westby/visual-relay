@@ -69,6 +69,45 @@ public sealed class WslSetupLogTests
         Assert.Equal((0, "ok\n"), result);
     }
 
+    /// <summary>The console shows the end of the failed step only; the log has every call in full.</summary>
+    [Fact]
+    public async Task AFailedSetup_SaysWhereItsLogIs()
+    {
+        using var dir = new TempDirectory();
+        var log = new WslSetupLog(Path.Combine(dir.Path, "setup-wsl.log"));
+
+        var failure = await FailedSetupAsync(log);
+
+        Assert.Contains(log.Path, failure);
+    }
+
+    [Fact]
+    public async Task AFailedSetup_NeverPointsAtALogThatCouldNotBeWritten()
+    {
+        using var dir = new TempDirectory();
+        var aFile = Path.Combine(dir.Path, "a-file");
+        await File.WriteAllTextAsync(aFile, "");
+        var log = new WslSetupLog(Path.Combine(aFile, "setup-wsl.log"));
+
+        var failure = await FailedSetupAsync(log);
+
+        Assert.DoesNotContain(log.Path, failure);
+    }
+
+    /// <summary>Sets up a distro without nono through a wsl.exe whose every call fails, recorded in <paramref name="log"/>.</summary>
+    private static async Task<string> FailedSetupAsync(WslSetupLog log)
+    {
+        var host = new WslSetupHost(
+            _ => throw new InvalidOperationException("the runner probed"),
+            log.Recording(Answering(100, "E: no\n"), "wsl.exe"),
+            log.Recording(Answering(100, "E: no\n"), "wsl.exe as administrator"),
+            "alice",
+            LocalNonoDeb: null) { Log = log };
+        var outcome = await WslSetupRunner.RunAsync(
+            WslSetupPlan.For(WslProbeFixtures.NonoMissing(), "alice"), host, _ => { }, CancellationToken.None);
+        return outcome.Failure!;
+    }
+
     private static Func<IReadOnlyList<string>, CancellationToken, Task<(int ExitCode, string Output)>> Answering(
         int exitCode, string output) => (_, _) => Task.FromResult((exitCode, output));
 }

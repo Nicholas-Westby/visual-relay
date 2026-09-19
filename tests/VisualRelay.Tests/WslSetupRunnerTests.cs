@@ -126,19 +126,6 @@ public sealed class WslSetupRunnerTests
         Assert.DoesNotContain("Get:1 ", outcome.Failure);
     }
 
-    /// <summary>The console shows the end of the failed step only; the log has every step in full.</summary>
-    [Fact]
-    public async Task AFailure_SaysWhereTheWholeRunIsLogged()
-    {
-        const string logPath = @"C:\Users\alice\AppData\Local\visual-relay\setup-wsl.log";
-        var wsl = new AnsweringWsl { Fails = call => call.Contains(WslSetupScripts.Packages) };
-
-        var outcome = await WslSetupRunner.RunAsync(
-            NewUbuntu, wsl.Host(null) with { LogPath = logPath }, _ => { }, CancellationToken.None);
-
-        Assert.Contains(logPath, outcome.Failure);
-    }
-
     /// <summary>
     /// A distro this run installed holds nothing of the user's yet, so removing it and
     /// starting over is safe advice. For any other distro that advice would destroy their work.

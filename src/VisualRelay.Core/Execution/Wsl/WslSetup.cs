@@ -29,8 +29,8 @@ public sealed record WslSetupHost(
     /// <summary>How long one wsl.exe call may take: a distro download on a slow line is the long one.</summary>
     private static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(30);
 
-    /// <summary>Where the run's <see cref="WslSetupLog"/> is, for a failure to point at; null when nothing is logged.</summary>
-    public string? LogPath { get; init; }
+    /// <summary>The run's record of every wsl.exe call, for a failure to point at; null when nothing is logged.</summary>
+    public WslSetupLog? Log { get; init; }
 
     /// <summary>
     /// This machine: its own probe (which honours <c>VR_WSL_DISTRO</c>), its wsl.exe with every
@@ -52,7 +52,7 @@ public sealed record WslSetupHost(
             WslSetupPlan.LinuxUserFor(Environment.UserName),
             string.IsNullOrWhiteSpace(localDeb) ? null : localDeb.Trim())
         {
-            LogPath = log.Path,
+            Log = log,
         };
     }
 
